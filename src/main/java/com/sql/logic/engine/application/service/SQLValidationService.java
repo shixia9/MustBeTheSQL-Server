@@ -18,7 +18,7 @@ public class SQLValidationService {
             // Only allow SELECT, SHOW
             if (!(stmt instanceof Select) && 
                 !(stmt instanceof ShowTablesStatement) && !(stmt instanceof ShowIndexStatement)) {
-                throw new IllegalArgumentException("Only SELECT, EXPLAIN, and SHOW queries are allowed for security reasons.");
+                throw new IllegalArgumentException("Only SELECT and SHOW queries are allowed for security reasons.");
             }
             
             // Note: For full safety, we'd also check sub-queries or multiple statements.

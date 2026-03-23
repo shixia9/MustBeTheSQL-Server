@@ -21,6 +21,11 @@ public class SQLExecuteAppService {
     }
 
     public List<Map<String, Object>> executeQuery(String sql) {
+        // Check if SQL is empty
+        if (sql == null || sql.trim().isEmpty()) {
+            throw new IllegalArgumentException("SQL query cannot be empty");
+        }
+
         // 1. Validate SQL to prevent DML/DDL
         sqlValidationService.validateSQL(sql);
         
