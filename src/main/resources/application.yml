@@ -3,16 +3,16 @@ server:
 
 spring:
   application:
-    name: sql-logic-engine-be
+    name: must-be-the-sql-be
   datasource:
-    url: jdbc:mysql://localhost:3306/sql_logic_engine?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=UTC
+    url: jdbc:mysql://106.13.236.175:13306/sql_logic_engine?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=UTC
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY:sk-xxx}
-      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      api-key: sk-LRksJOdzcvC28aZjB6F3D95e37F946E49c96D23aA6D0BfCa
+      base-url: https://api.vveai.com
 
 mybatis-plus:
   mapper-locations: classpath*:mapper/*.xml

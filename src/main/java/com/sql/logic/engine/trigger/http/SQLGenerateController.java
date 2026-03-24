@@ -18,7 +18,11 @@ public class SQLGenerateController {
 
     @PostMapping(value = "/generate/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> generateSqlStream(@RequestBody SqlGenerateRequest request) {
+        if (request.getUserId() == null) {
+            return Flux.error(new IllegalArgumentException("UserId is required"));
+        }
         return sqlGenerateAppService.generateSqlStream(
+                request.getUserId(),
                 request.getUserInput(), 
                 request.getSchemaContext(), 
                 request.getStrategyName()

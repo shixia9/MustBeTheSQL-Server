@@ -9,12 +9,21 @@ import reactor.core.publisher.Flux;
 public class SQLGenerateAppService {
 
     private final LLMStrategyContext llmStrategyContext;
+    private final UserAppService userAppService;
 
-    public SQLGenerateAppService(LLMStrategyContext llmStrategyContext) {
+    public SQLGenerateAppService(LLMStrategyContext llmStrategyContext, UserAppService userAppService) {
         this.llmStrategyContext = llmStrategyContext;
+        this.userAppService = userAppService;
     }
 
-    public Flux<String> generateSqlStream(String userInput, String schemaContext, String strategyName) {
+    public Flux<String> generateSqlStream(Long userId, String userInput, String schemaContext, String strategyName) {
+        // Check user status and deduct AI token quota
+        try {
+            userAppService.checkAndDeductToken(userId);
+        } catch (Exception e) {
+            return Flux.error(e);
+        }
+
         String prompt = buildPrompt(userInput, schemaContext);
         LLMStrategy strategy = llmStrategyContext.getStrategy(strategyName);
         return strategy.generateSqlStream(prompt);

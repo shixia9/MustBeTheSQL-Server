@@ -2,7 +2,7 @@ package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.SQLExecuteAppService;
 import com.sql.logic.engine.trigger.http.dto.SqlExecuteRequest;
-import org.springframework.http.ResponseEntity;
+import com.sql.logic.engine.trigger.http.response.Result;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,12 +19,12 @@ public class SQLExecuteController {
     }
 
     @PostMapping("/execute")
-    public ResponseEntity<?> executeSql(@RequestBody SqlExecuteRequest request) {
+    public Result<List<Map<String, Object>>> executeSql(@RequestBody SqlExecuteRequest request) {
         try {
-            List<Map<String, Object>> result = sqlExecuteAppService.executeQuery(request.getSql());
-            return ResponseEntity.ok(result);
+            List<Map<String, Object>> res = sqlExecuteAppService.executeQuery(request.getSql());
+            return Result.success(res);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return Result.error(400, e.getMessage());
         }
     }
 }

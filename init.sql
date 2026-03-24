@@ -1,6 +1,19 @@
 CREATE DATABASE IF NOT EXISTS sql_logic_engine;
 USE sql_logic_engine;
 
+CREATE TABLE IF NOT EXISTS user_info (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(100) NOT NULL,
+    email VARCHAR(100),
+    status TINYINT(1) DEFAULT 1 COMMENT '0: Banned, 1: Active, 2: Frozen',
+    token_quota INT DEFAULT 100 COMMENT 'Remaining AI tokens',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT IGNORE INTO user_info (id, username, password, email, status, token_quota) VALUES (1, 'admin', 'admin123', 'admin@example.com', 1, 10000);
+
 CREATE TABLE IF NOT EXISTS conversation (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL,
