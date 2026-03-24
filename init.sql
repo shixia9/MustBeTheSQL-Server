@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS conversation_detail (
 CREATE TABLE IF NOT EXISTS db_connection_conf (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL,
+    name VARCHAR(100) NOT NULL,
     db_type VARCHAR(50) NOT NULL,
     host VARCHAR(255) NOT NULL,
     port INT NOT NULL,

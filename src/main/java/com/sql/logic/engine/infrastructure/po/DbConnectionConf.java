@@ -11,6 +11,7 @@ public class DbConnectionConf {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long userId;
+    private String name;
     private String dbType;
     private String host;
     private Integer port;
