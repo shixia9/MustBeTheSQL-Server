@@ -35,10 +35,16 @@ public class UserAppService {
     }
 
     public UserInfo register(String username, String password, String email) {
-        QueryWrapper<UserInfo> query = new QueryWrapper<>();
-        query.eq("username", username);
-        if (userInfoDao.selectCount(query) > 0) {
+        QueryWrapper<UserInfo> usernameQuery = new QueryWrapper<>();
+        usernameQuery.eq("username", username);
+        if (userInfoDao.selectCount(usernameQuery) > 0) {
             throw new IllegalArgumentException("Username already exists");
+        }
+
+        QueryWrapper<UserInfo> emailQuery = new QueryWrapper<>();
+        emailQuery.eq("email", email);
+        if (userInfoDao.selectCount(emailQuery) > 0) {
+            throw new IllegalArgumentException("Email already exists");
         }
 
         UserInfo user = new UserInfo();
