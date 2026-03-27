@@ -1,9 +1,10 @@
 package com.sql.logic.engine.application.service;
 
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import javax.sql.DataSource;
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -11,16 +12,14 @@ import java.util.Map;
 public class SQLExecuteAppService {
 
     private final SQLValidationService sqlValidationService;
-    private final JdbcTemplate jdbcTemplate;
+    private final DatabaseAppService databaseAppService;
 
-    public SQLExecuteAppService(SQLValidationService sqlValidationService, DataSource dataSource) {
+    public SQLExecuteAppService(SQLValidationService sqlValidationService, DatabaseAppService databaseAppService) {
         this.sqlValidationService = sqlValidationService;
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
-        // Set query timeout to 10 seconds to avoid slow queries blocking the system
-        this.jdbcTemplate.setQueryTimeout(10);
+        this.databaseAppService = databaseAppService;
     }
 
-    public List<Map<String, Object>> executeQuery(String sql) {
+    public List<Map<String, Object>> executeQuery(String sql, Long connectionId) {
         // Check if SQL is empty
         if (sql == null || sql.trim().isEmpty()) {
             throw new IllegalArgumentException("SQL query cannot be empty");
@@ -35,7 +34,29 @@ public class SQLExecuteAppService {
             finalSql = sql + " LIMIT 100";
         }
         
-        // 3. Execute
-        return jdbcTemplate.queryForList(finalSql);
+        // 3. Execute dynamically
+        List<Map<String, Object>> results = new ArrayList<>();
+        try (Connection conn = databaseAppService.getConnection(connectionId);
+             Statement stmt = conn.createStatement()) {
+             
+            stmt.setQueryTimeout(10); // 10 seconds timeout
+            
+            try (ResultSet rs = stmt.executeQuery(finalSql)) {
+                ResultSetMetaData metaData = rs.getMetaData();
+                int columnCount = metaData.getColumnCount();
+                
+                while (rs.next()) {
+                    Map<String, Object> row = new HashMap<>();
+                    for (int i = 1; i <= columnCount; i++) {
+                        row.put(metaData.getColumnName(i), rs.getObject(i));
+                    }
+                    results.add(row);
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalArgumentException("SQL Execution Error: " + e.getMessage());
+        }
+        
+        return results;
     }
 }

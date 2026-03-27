@@ -21,10 +21,15 @@ public class SQLExecuteController {
     @PostMapping("/execute")
     public Result<List<Map<String, Object>>> executeSql(@RequestBody SqlExecuteRequest request) {
         try {
-            List<Map<String, Object>> res = sqlExecuteAppService.executeQuery(request.getSql());
-            return Result.success(res);
-        } catch (Exception e) {
+            if (request.getConnectionId() == null) {
+                return Result.error(400, "Connection ID is required");
+            }
+            List<Map<String, Object>> result = sqlExecuteAppService.executeQuery(request.getSql(), request.getConnectionId());
+            return Result.success(result);
+        } catch (IllegalArgumentException e) {
             return Result.error(400, e.getMessage());
+        } catch (Exception e) {
+            return Result.error(500, "Internal server error: " + e.getMessage());
         }
     }
 }
