@@ -3,6 +3,8 @@ O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\d
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\infrastructure\po\ConversationDetail.java
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\trigger\http\SQLExecuteController.java
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\domain\conversation\entity\ConversationDetailEntity.java
+O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\trigger\http\DatabaseController.java
+O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\application\service\DatabaseMetaDataService.java
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\infrastructure\dao\UserInfoDao.java
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\SqlLogicEngineApplication.java
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\infrastructure\llm\OpenAILLMStrategy.java
@@ -27,4 +29,6 @@ O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\i
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\application\service\SQLGenerateAppService.java
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\domain\agent\strategy\LLMStrategyContext.java
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\infrastructure\config\CorsConfig.java
+O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\infrastructure\po\TableMetaData.java
+O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\application\service\DatabaseAppService.java
 O:\git\SQL-Logic-Engine\sql-logic-engine-be\src\main\java\com\sql\logic\engine\infrastructure\po\DbConnectionConf.java

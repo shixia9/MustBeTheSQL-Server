@@ -24,6 +24,8 @@ public class SQLGenerateController {
         return sqlGenerateAppService.generateSqlStream(
                 request.getUserId(),
                 request.getUserInput(), 
+                request.getConnectionId(),
+                request.getTableNames(),
                 request.getSchemaContext(), 
                 request.getStrategyName()
         );

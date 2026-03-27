@@ -5,18 +5,24 @@ import com.sql.logic.engine.domain.agent.strategy.LLMStrategyContext;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
+
 @Service
 public class SQLGenerateAppService {
 
     private final LLMStrategyContext llmStrategyContext;
     private final UserAppService userAppService;
+    private final DatabaseMetaDataService databaseMetaDataService;
 
-    public SQLGenerateAppService(LLMStrategyContext llmStrategyContext, UserAppService userAppService) {
+    public SQLGenerateAppService(LLMStrategyContext llmStrategyContext, 
+                                 UserAppService userAppService,
+                                 DatabaseMetaDataService databaseMetaDataService) {
         this.llmStrategyContext = llmStrategyContext;
         this.userAppService = userAppService;
+        this.databaseMetaDataService = databaseMetaDataService;
     }
 
-    public Flux<String> generateSqlStream(Long userId, String userInput, String schemaContext, String strategyName) {
+    public Flux<String> generateSqlStream(Long userId, String userInput, Long connectionId, List<String> tableNames, String manualSchemaContext, String strategyName) {
         // Check user status and deduct AI token quota
         try {
             userAppService.checkAndDeductToken(userId);
@@ -24,15 +30,44 @@ public class SQLGenerateAppService {
             return Flux.error(e);
         }
 
-        String prompt = buildPrompt(userInput, schemaContext);
+        String dynamicSchemaContext = buildDynamicSchemaContext(connectionId, tableNames);
+        String finalSchemaContext = dynamicSchemaContext;
+        if (manualSchemaContext != null && !manualSchemaContext.isEmpty()) {
+            finalSchemaContext += "\nAdditional Context: " + manualSchemaContext;
+        }
+
+        String prompt = buildPrompt(userInput, finalSchemaContext);
         LLMStrategy strategy = llmStrategyContext.getStrategy(strategyName);
         return strategy.generateSqlStream(prompt);
     }
 
+    private String buildDynamicSchemaContext(Long connectionId, List<String> tableNames) {
+        if (connectionId == null || tableNames == null || tableNames.isEmpty()) {
+            return "No specific database schema provided.";
+        }
+        StringBuilder sb = new StringBuilder("Database Schema Context:\n");
+        for (String tableName : tableNames) {
+            try {
+                String ddl = databaseMetaDataService.getTableDDL(connectionId, tableName);
+                if (ddl != null && !ddl.isEmpty()) {
+                    sb.append(ddl).append("\n\n");
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to fetch DDL for table: " + tableName);
+            }
+        }
+        return sb.toString();
+    }
+
     private String buildPrompt(String userInput, String schemaContext) {
-        return "You are an expert SQL Generator.\n" +
+        return "You are an expert SQL Generator and Database Assistant.\n" +
                "Given the following database schema:\n" + schemaContext + "\n\n" +
-               "Generate a pure SQL query to answer the following user request: " + userInput + "\n" +
-               "Output ONLY the SQL code, nothing else.";
+               "Based on the user's request, generate the correct SQL query and a brief explanation.\n" +
+               "IMPORTANT: You MUST format your response EXACTLY as follows:\n\n" +
+               "```sql\n" +
+               "-- your generated SQL here\n" +
+               "```\n\n" +
+               "Your brief explanation here in markdown format.\n\n" +
+               "User request: " + userInput;
     }
 }
