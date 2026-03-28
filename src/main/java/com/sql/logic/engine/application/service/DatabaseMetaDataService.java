@@ -1,19 +1,23 @@
 package com.sql.logic.engine.application.service;
 
 import org.springframework.stereotype.Service;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+
+import jakarta.annotation.Resource;
+import java.util.concurrent.TimeUnit;
 
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class DatabaseMetaDataService {
 
     private final DatabaseAppService databaseAppService;
     // Cache: connectionId -> (tableName -> DDL)
-    private final Map<Long, Map<String, String>> ddlCache = new ConcurrentHashMap<>();
+    @Resource
+    private Cache<Long, Cache<String, String>> ddlCache;
 
     public DatabaseMetaDataService(DatabaseAppService databaseAppService) {
         this.databaseAppService = databaseAppService;
@@ -39,12 +43,17 @@ public class DatabaseMetaDataService {
 
     public String getTableDDL(Long connectionId, String tableName) {
         // Check cache first
-        Map<String, String> connCache = ddlCache.computeIfAbsent(connectionId, k -> new ConcurrentHashMap<>());
-        if (connCache.containsKey(tableName)) {
-            return connCache.get(tableName);
+        Cache<String, String> connCache = ddlCache.get(connectionId, key -> 
+            Caffeine.newBuilder()
+            .maximumSize(500)
+            .expireAfterWrite(30, TimeUnit.MINUTES)
+            .build()
+        );
+        String ddl = connCache.getIfPresent(tableName);
+        if (ddl != null) {
+            return ddl;
         }
-
-        String ddl = fetchDDLFromDatabase(connectionId, tableName);
+        ddl = fetchDDLFromDatabase(connectionId, tableName);
         if (ddl != null) {
             connCache.put(tableName, ddl);
         }
@@ -52,7 +61,7 @@ public class DatabaseMetaDataService {
     }
     
     public void clearCache(Long connectionId) {
-        ddlCache.remove(connectionId);
+        ddlCache.invalidate(connectionId);
     }
 
     private String fetchDDLFromDatabase(Long connectionId, String tableName) {
