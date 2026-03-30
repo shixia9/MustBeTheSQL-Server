@@ -31,7 +31,7 @@ public class CaffeineCacheConfig {
     public Cache<Long, Cache<String, String>> ddlCache() {
         return Caffeine.newBuilder()
                 .maximumSize(10000)
-                .expireAfterWrite(30, TimeUnit.MINUTES)  // Expires 24 hours after writing
+                .expireAfterWrite(30, TimeUnit.MINUTES)  // Expires 30 minutes after writing
                 .build();
     }
 
