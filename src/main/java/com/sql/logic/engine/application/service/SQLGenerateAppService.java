@@ -64,10 +64,14 @@ public class SQLGenerateAppService {
                "Given the following database schema:\n" + schemaContext + "\n\n" +
                "Based on the user's request, generate the correct SQL query and a brief explanation.\n" +
                "IMPORTANT: You MUST format your response EXACTLY as follows:\n\n" +
-               "```sql\n" +
-               "-- your generated SQL here\n" +
-               "```\n\n" +
-               "Your brief explanation here in markdown format.\n\n" +
+               "First, provide your natural language explanation.\n" +
+               "Then, provide the SQL query enclosed EXACTLY between [SQL_START] and [SQL_END] markers.\n" +
+               "DO NOT use markdown code blocks (```sql) for the SQL query, just use the markers.\n\n" +
+               "Example:\n" +
+               "This query selects all active users.\n" +
+               "[SQL_START]\n" +
+               "SELECT * FROM users WHERE status = 'active';\n" +
+               "[SQL_END]\n\n" +
                "User request: " + userInput;
     }
 }
