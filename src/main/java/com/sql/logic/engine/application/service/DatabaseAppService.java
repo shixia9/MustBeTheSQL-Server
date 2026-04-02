@@ -92,6 +92,23 @@ public class DatabaseAppService {
         return DriverManager.getConnection(jdbcUrl, conf.getUsername(), conf.getPassword());
     }
 
+    public void assertUserCanAccessConnection(Long userId, Long connectionId) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf == null) {
+            throw new IllegalArgumentException("Database connection not found");
+        }
+        boolean ownedByUser = conf.getUserId() != null && conf.getUserId().equals(userId);
+        boolean isSharedTest = conf.getIsTest() != null && conf.getIsTest() == 1;
+        if (!ownedByUser && !isSharedTest) {
+            throw new IllegalArgumentException("Connection not found or permission denied");
+        }
+    }
+
+    public Connection getConnectionForUser(Long userId, Long connectionId) throws SQLException {
+        assertUserCanAccessConnection(userId, connectionId);
+        return getConnection(connectionId);
+    }
+
     private String buildJdbcUrl(DbConnectionConf conf) {
         if ("mysql".equalsIgnoreCase(conf.getDbType())) {
             return String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=UTC", 

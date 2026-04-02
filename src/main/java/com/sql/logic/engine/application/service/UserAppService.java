@@ -60,20 +60,30 @@ public class UserAppService {
         return user;
     }
 
-    public void checkAndDeductToken(Long userId) {
+    public UserInfo getUserById(Long userId) {
         UserInfo user = userInfoDao.selectById(userId);
         if (user == null) {
             throw new IllegalArgumentException("User not found");
         }
+        return user;
+    }
+
+    public void deductToken(UserInfo user) {
+        if (user == null) {
+            throw new IllegalArgumentException("User not found");
+        }
+        if (user.getTokenQuota() == null || user.getTokenQuota() <= 0) {
+            throw new IllegalStateException("Insufficient AI token quota. Please recharge or contact admin.");
+        }
+        user.setTokenQuota(user.getTokenQuota() - 1);
+        userInfoDao.updateById(user);
+    }
+
+    public void checkAndDeductToken(Long userId) {
+        UserInfo user = getUserById(userId);
         if (user.getStatus() != 1) {
             throw new IllegalStateException("User account is not active. Status: " + user.getStatus());
         }
-        if (user.getTokenQuota() <= 0) {
-            throw new IllegalStateException("Insufficient AI token quota. Please recharge or contact admin.");
-        }
-        
-        // Deduct 1 token per request
-        user.setTokenQuota(user.getTokenQuota() - 1);
-        userInfoDao.updateById(user);
+        deductToken(user);
     }
 }
