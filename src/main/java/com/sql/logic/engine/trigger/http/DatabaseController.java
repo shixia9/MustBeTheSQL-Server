@@ -1,6 +1,7 @@
 package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.DatabaseAppService;
+import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
 import com.sql.logic.engine.trigger.http.response.Result;
 import org.springframework.web.bind.annotation.*;
@@ -12,9 +13,27 @@ import java.util.List;
 public class DatabaseController {
 
     private final DatabaseAppService databaseAppService;
+    private final DatabaseMetaDataService databaseMetaDataService;
 
-    public DatabaseController(DatabaseAppService databaseAppService) {
+    public DatabaseController(DatabaseAppService databaseAppService, DatabaseMetaDataService databaseMetaDataService) {
         this.databaseAppService = databaseAppService;
+        this.databaseMetaDataService = databaseMetaDataService;
+    }
+
+    @GetMapping("/{id}/tables")
+    public Result<List<String>> getTables(@PathVariable("id") Long connectionId) {
+        try {
+            List<String> tables = databaseMetaDataService.getTableNames(connectionId);
+            return Result.success(tables);
+        } catch (Exception e) {
+            return Result.error(500, "Failed to get tables: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/{id}/refresh-schema")
+    public Result<Void> refreshSchema(@PathVariable("id") Long connectionId) {
+        databaseMetaDataService.clearCache(connectionId);
+        return Result.success(null);
     }
 
     @GetMapping("/list")
