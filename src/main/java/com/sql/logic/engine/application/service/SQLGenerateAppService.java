@@ -63,11 +63,13 @@ public class SQLGenerateAppService {
         return "You are an expert SQL Generator and Database Assistant.\n" +
                "Given the following database schema:\n" + schemaContext + "\n\n" +
                "Based on the user's request, generate the correct SQL query and a brief explanation.\n" +
-               "IMPORTANT: You MUST format your response EXACTLY as follows:\n\n" +
-               "```sql\n" +
-               "-- your generated SQL here\n" +
-               "```\n\n" +
-               "Your brief explanation here in markdown format.\n\n" +
+               "IMPORTANT: You MUST format your response EXACTLY as a valid JSON object with two keys: \"explain\" and \"sql\".\n" +
+               "DO NOT use markdown code blocks (```json or ```sql) or any other text outside the JSON object.\n" +
+               "Example:\n" +
+               "{\n" +
+               "  \"explain\": \"This query selects all active users.\",\n" +
+               "  \"sql\": \"SELECT * FROM users WHERE status = 'active';\"\n" +
+               "}\n\n" +
                "User request: " + userInput;
     }
 }

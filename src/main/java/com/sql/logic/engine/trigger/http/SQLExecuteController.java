@@ -1,12 +1,11 @@
 package com.sql.logic.engine.trigger.http;
 
+import com.sql.logic.engine.application.exception.BizException;
 import com.sql.logic.engine.application.service.SQLExecuteAppService;
 import com.sql.logic.engine.trigger.http.dto.SqlExecuteRequest;
+import com.sql.logic.engine.trigger.http.dto.SqlExecuteResponse;
 import com.sql.logic.engine.trigger.http.response.Result;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/sql")
@@ -19,13 +18,15 @@ public class SQLExecuteController {
     }
 
     @PostMapping("/execute")
-    public Result<List<Map<String, Object>>> executeSql(@RequestBody SqlExecuteRequest request) {
+    public Result<?> executeSql(@RequestBody SqlExecuteRequest request) {
         try {
-            if (request.getConnectionId() == null) {
-                return Result.error(400, "Connection ID is required");
-            }
-            List<Map<String, Object>> result = sqlExecuteAppService.executeQuery(request.getSql(), request.getConnectionId());
+            SqlExecuteResponse result = sqlExecuteAppService.execute(request);
             return Result.success(result);
+        } catch (BizException e) {
+            if (e.getData() != null) {
+                return Result.error(e.getCode(), e.getMessage(), e.getData());
+            }
+            return Result.error(e.getCode(), e.getMessage());
         } catch (IllegalArgumentException e) {
             return Result.error(400, e.getMessage());
         } catch (Exception e) {
