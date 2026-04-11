@@ -18,9 +18,15 @@ public class OpenAILLMStrategy implements LLMStrategy {
     @Override
     public Flux<String> generateSqlStream(String promptStr) {
         Prompt prompt = new Prompt(promptStr);
-        return chatClient.prompt(prompt)
-                .stream()
-                .content();
+        
+        return Flux.defer(() -> {
+            JsonStreamParser parser = new JsonStreamParser();
+            return chatClient.prompt(prompt)
+                    .stream()
+                    .content()
+                    .flatMapIterable(chunk -> parser.processChunk(chunk))
+                    .concatWith(Flux.defer(() -> Flux.fromIterable(parser.processComplete())));
+        });
     }
 
     @Override
