@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS user_info (
     email VARCHAR(100),
     status TINYINT(1) DEFAULT 1 COMMENT '0: Banned, 1: Active, 2: Frozen',
     token_quota INT DEFAULT 100 COMMENT 'Remaining AI tokens',
+    api_key VARCHAR(255),
+    secret_key VARCHAR(255),
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );

@@ -1,6 +1,7 @@
 package com.sql.logic.engine.application.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.sql.logic.engine.infrastructure.dao.UserInfoDao;
 import com.sql.logic.engine.infrastructure.po.UserInfo;
 import org.springframework.stereotype.Service;
@@ -68,22 +69,59 @@ public class UserAppService {
         return user;
     }
 
-    public void deductToken(UserInfo user) {
-        if (user == null) {
-            throw new IllegalArgumentException("User not found");
+    public void deductTokens(Long userId, int tokens) {
+        if (tokens <= 0) return;
+        
+        UserInfo user = getUserById(userId);
+        
+        // Custom keys check: do not deduct system tokens
+        if (user.getApiKey() != null && !user.getApiKey().trim().isEmpty() 
+            && user.getSecretKey() != null && !user.getSecretKey().trim().isEmpty()) {
+            return;
         }
-        if (user.getTokenQuota() == null || user.getTokenQuota() <= 0) {
-            throw new IllegalStateException("Insufficient AI token quota. Please recharge or contact admin.");
+        
+        UpdateWrapper<UserInfo> updateWrapper = new UpdateWrapper<>();
+        updateWrapper.eq("id", userId)
+                     .ge("token_quota", tokens)
+                     .setSql("token_quota = token_quota - " + tokens);
+                     
+        int updated = userInfoDao.update(null, updateWrapper);
+        if (updated == 0) {
+            // Check if user still exists but has insufficient tokens to cover the exact amount
+            UserInfo checkUser = userInfoDao.selectById(userId);
+            if (checkUser != null && checkUser.getTokenQuota() < tokens) {
+                // Set token_quota to 0 to prevent negative balance
+                UpdateWrapper<UserInfo> zeroWrapper = new UpdateWrapper<>();
+                zeroWrapper.eq("id", userId)
+                           .set("token_quota", 0);
+                userInfoDao.update(null, zeroWrapper);
+                System.err.println("Audit Log: User " + userId + " consumed " + tokens + " tokens but only had " + checkUser.getTokenQuota() + ". Balance set to 0.");
+            } else {
+                System.err.println("Audit Log: Failed to deduct tokens for user " + userId + " due to missing record or concurrency conflict.");
+            }
         }
-        user.setTokenQuota(user.getTokenQuota() - 1);
-        userInfoDao.updateById(user);
     }
 
-    public void checkAndDeductToken(Long userId) {
+    public void checkBeforeGeneration(Long userId) {
         UserInfo user = getUserById(userId);
         if (user.getStatus() != 1) {
             throw new IllegalStateException("User account is not active. Status: " + user.getStatus());
         }
-        deductToken(user);
+        
+        if (user.getApiKey() != null && !user.getApiKey().trim().isEmpty() 
+            && user.getSecretKey() != null && !user.getSecretKey().trim().isEmpty()) {
+            return;
+        }
+        
+        if (user.getTokenQuota() == null || user.getTokenQuota() <= 0) {
+            throw new IllegalStateException("Insufficient AI token quota. Please recharge or configure your own API keys.");
+        }
+    }
+
+    public void updateKeys(Long userId, String apiKey, String secretKey) {
+        UserInfo user = getUserById(userId);
+        user.setApiKey(apiKey);
+        user.setSecretKey(secretKey);
+        userInfoDao.updateById(user);
     }
 }

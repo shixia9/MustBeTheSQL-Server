@@ -23,9 +23,9 @@ public class SQLGenerateAppService {
     }
 
     public Flux<String> generateSqlStream(Long userId, String userInput, Long connectionId, List<String> tableNames, String manualSchemaContext, String strategyName) {
-        // Check user status and deduct AI token quota
+        // Check user status and AI token quota before generation
         try {
-            userAppService.checkAndDeductToken(userId);
+            userAppService.checkBeforeGeneration(userId);
         } catch (Exception e) {
             return Flux.error(e);
         }
@@ -38,7 +38,15 @@ public class SQLGenerateAppService {
 
         String prompt = buildPrompt(userInput, finalSchemaContext);
         LLMStrategy strategy = llmStrategyContext.getStrategy(strategyName);
-        return strategy.generateSqlStream(prompt);
+        
+        // Pass the token deduction callback which triggers precisely after completion
+        return strategy.generateSqlStream(prompt, (tokens) -> {
+            try {
+                userAppService.deductTokens(userId, tokens);
+            } catch (Exception e) {
+                System.err.println("Audit Log: Token deduction exception for user " + userId + ": " + e.getMessage());
+            }
+        });
     }
 
     private String buildDynamicSchemaContext(Long connectionId, List<String> tableNames) {
