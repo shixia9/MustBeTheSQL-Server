@@ -1,128 +1,78 @@
 package com.sql.logic.engine.infrastructure.llm;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.io.IOException;
+import java.util.*;
 
 public class JsonStreamParser {
 
     private final StringBuilder buffer = new StringBuilder();
-    private int explainEmittedIndex = -1;
-    private boolean isFallback = false;
-    private boolean sqlEmitted = false;
-    private boolean isFirstChunk = true;
     private final ObjectMapper mapper = new ObjectMapper();
+    private boolean sqlEmitted = false;
+    private int explainIndex = 0;
 
     public List<String> processChunk(String chunk) {
         List<String> events = new ArrayList<>();
         if (chunk == null || chunk.isEmpty()) {
             return events;
         }
-        
         buffer.append(chunk);
-        String current = buffer.toString();
 
-        if (isFirstChunk) {
-            String trimmed = current.trim();
-            if (!trimmed.isEmpty()) {
-                isFirstChunk = false;
-                if (!trimmed.startsWith("{") && !trimmed.startsWith("`")) {
-                    isFallback = true;
+        try {
+            JsonFactory factory = new JsonFactory();
+            JsonParser parser = factory.createParser(buffer.toString());
+            String currentField = null;
+            while (!parser.isClosed()) {
+                JsonToken token = parser.nextToken();
+                if (token == null) {
+                    break;
                 }
-            }
-        }
-
-        if (isFallback) {
-            events.add(formatEvent("explain", chunk));
-            return events;
-        }
-
-        // 1. Try to incrementally extract "explain"
-        int explainKeyIdx = current.indexOf("\"explain\"");
-        if (explainKeyIdx != -1) {
-            int colonIdx = current.indexOf(":", explainKeyIdx);
-            if (colonIdx != -1) {
-                int quoteIdx = current.indexOf("\"", colonIdx);
-                if (quoteIdx != -1) {
-                    int start = quoteIdx + 1;
-                    if (explainEmittedIndex == -1) {
-                        explainEmittedIndex = start;
-                    }
-                    
-                    int end = findStringEnd(current, start);
-                    
-                    if (end != -1) {
-                        if (explainEmittedIndex < end) {
-                            String delta = current.substring(explainEmittedIndex, end);
-                            if (!delta.isEmpty()) {
-                                events.add(formatEvent("explain", unescape(delta)));
-                            }
-                            explainEmittedIndex = end;
-                        }
-                    } else {
-                        int to = current.length() - 1;
-                        if (explainEmittedIndex < to) {
-                            String delta = current.substring(explainEmittedIndex, to);
-                            if (!delta.endsWith("\\")) {
-                                events.add(formatEvent("explain", unescape(delta)));
-                                explainEmittedIndex = to;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Try to extract "sql" as a whole block
-        if (!sqlEmitted) {
-            int sqlKeyIdx = current.indexOf("\"sql\"");
-            if (sqlKeyIdx != -1) {
-                int colonIdx = current.indexOf(":", sqlKeyIdx);
-                if (colonIdx != -1) {
-                    int quoteIdx = current.indexOf("\"", colonIdx);
-                    if (quoteIdx != -1) {
-                        int start = quoteIdx + 1;
-                        int end = findStringEnd(current, start);
-                        if (end != -1) {
-                            String sql = current.substring(start, end);
-                            events.add(formatEvent("sql", unescape(sql)));
+                switch (token) {
+                    case FIELD_NAME:
+                        currentField = parser.getCurrentName();
+                        break;
+                    case VALUE_STRING:
+                        if ("sql".equals(currentField) && !sqlEmitted) {
+                            String sql = parser.getValueAsString();
+                            events.add(formatEvent("sql", sql));
                             sqlEmitted = true;
                         }
-                    }
+                        if ("explain".equals(currentField)) {
+                            String explain = parser.getValueAsString();
+                            if (explain.length() > explainIndex) {
+                                String delta = explain.substring(explainIndex);
+                                events.add(formatEvent("explain", delta));
+                                explainIndex = explain.length();
+                            }
+                        }
+                        break;
                 }
             }
+        } catch (IOException e) {
+            // JSON 未完成是正常情况（streaming）
         }
-
         return events;
     }
 
     public List<String> processComplete() {
         List<String> events = new ArrayList<>();
-        if (!isFallback && explainEmittedIndex == -1 && !sqlEmitted) {
-            events.add(formatEvent("explain", buffer.toString()));
-        }
-        return events;
-    }
-
-    private int findStringEnd(String text, int start) {
-        for (int i = start; i < text.length(); i++) {
-            if (text.charAt(i) == '"') {
-                int backslashes = 0;
-                int j = i - 1;
-                while (j >= 0 && text.charAt(j) == '\\') {
-                    backslashes++;
-                    j--;
-                }
-                if (backslashes % 2 == 0) {
-                    return i;
+        try {
+            Map<String, Object> json = mapper.readValue(buffer.toString(), Map.class);
+            if (!sqlEmitted && json.containsKey("sql")) {
+                String sql = String.valueOf(json.get("sql"));
+                events.add(formatEvent("sql", sql));
+            }
+            if (json.containsKey("explain")) {
+                String explain = String.valueOf(json.get("explain"));
+                if (explain.length() > explainIndex) {
+                    String delta = explain.substring(explainIndex);
+                    events.add(formatEvent("explain", delta));
                 }
             }
-        }
-        return -1;
+        } catch (Exception ignored) {}
+        return events;
     }
 
     private String formatEvent(String type, String content) {
@@ -131,16 +81,8 @@ public class JsonStreamParser {
         event.put("content", content);
         try {
             return mapper.writeValueAsString(event);
-        } catch (JsonProcessingException e) {
+        } catch (Exception e) {
             return "{\"type\":\"error\",\"content\":\"\"}";
         }
-    }
-
-    private String unescape(String text) {
-        return text.replace("\\n", "\n")
-                   .replace("\\\"", "\"")
-                   .replace("\\\\", "\\")
-                   .replace("\\t", "\t")
-                   .replace("\\r", "\r");
     }
 }
