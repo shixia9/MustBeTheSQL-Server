@@ -17,6 +17,8 @@ public class UserInfo {
     private String email;
     private Integer status; // 0: Banned, 1: Active, 2: Frozen
     private Integer tokenQuota;
+    private String apiKey;
+    private String secretKey;
     private Date createTime;
     private Date updateTime;
 }

@@ -12,7 +12,7 @@ spring:
   ai:
     openai:
       api-key: sk-LRksJOdzcvC28aZjB6F3D95e37F946E49c96D23aA6D0BfCa
-      base-url: https://api.vveai.com
+      base-url: https://api.v3.cm
 
 mybatis-plus:
   mapper-locations: classpath*:mapper/*.xml

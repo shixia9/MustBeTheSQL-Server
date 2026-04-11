@@ -15,6 +15,6 @@ public class TokenQuotaValidator implements SqlExecuteValidator {
 
     @Override
     public void validate(SqlExecuteContext context) {
-        userAppService.deductToken(context.getUser());
+        userAppService.checkBeforeGeneration(context.getUser().getId());
     }
 }
