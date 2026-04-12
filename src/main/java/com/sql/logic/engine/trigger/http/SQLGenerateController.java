@@ -2,6 +2,9 @@ package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.SQLGenerateAppService;
 import com.sql.logic.engine.trigger.http.dto.SqlGenerateRequest;
+
+import cn.dev33.satoken.stp.StpUtil;
+
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -20,6 +23,12 @@ public class SQLGenerateController {
     public Flux<String> generateSqlStream(@RequestBody SqlGenerateRequest request) {
         if (request.getUserId() == null) {
             return Flux.error(new IllegalArgumentException("UserId is required"));
+        }
+        if (!StpUtil.isLogin()) {
+            return Flux.error(new IllegalArgumentException("User not logged in"));
+        }
+        if (!request.getUserId().equals(StpUtil.getLoginIdAsLong())) {
+            return Flux.error(new IllegalArgumentException("UserId does not match"));
         }
         return sqlGenerateAppService.generateSqlStream(
                 request.getUserId(),
