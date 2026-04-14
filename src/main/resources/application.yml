@@ -9,6 +9,10 @@ spring:
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
+  # data:
+  #   redis:
+  #     host: 106.13.236.175
+  #     port: 16379
   ai:
     openai:
       api-key: sk-LRksJOdzcvC28aZjB6F3D95e37F946E49c96D23aA6D0BfCa
@@ -38,3 +42,12 @@ sa-token:
     token-style: uuid
     # 是否输出操作日志 
     is-log: true
+
+# DCC Configuration
+engine:
+  common:
+    config:
+      register:
+        host: 106.13.236.175
+        port: 16379
+        password: ""
