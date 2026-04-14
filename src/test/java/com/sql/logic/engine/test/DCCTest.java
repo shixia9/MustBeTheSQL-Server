@@ -1,7 +1,6 @@
 package com.sql.logic.engine.test;
 
 import java.io.Serializable;
-import java.util.concurrent.CountDownLatch;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -12,7 +11,6 @@ import org.springframework.test.context.junit4.SpringRunner;
 
 import com.sql.logic.engine.common.DCC.domain.model.valobj.AttributeVO;
 import com.sql.logic.engine.common.DCC.types.Annotations.DCCValue;
-import com.sql.logic.engine.test.DCCTest.DCCTestUser;
 
 import cn.hutool.json.JSONUtil;
 import lombok.Data;
