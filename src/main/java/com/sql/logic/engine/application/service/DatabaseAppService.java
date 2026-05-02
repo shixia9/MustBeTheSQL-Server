@@ -3,10 +3,10 @@ package com.sql.logic.engine.application.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sql.logic.engine.infrastructure.dao.DbConnectionConfDao;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
+import com.sql.logic.engine.infrastructure.pool.ConnectionManager;
 import org.springframework.stereotype.Service;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.List;
 
@@ -14,9 +14,11 @@ import java.util.List;
 public class DatabaseAppService {
 
     private final DbConnectionConfDao dbConnectionConfDao;
+    private final ConnectionManager connectionManager;
 
-    public DatabaseAppService(DbConnectionConfDao dbConnectionConfDao) {
+    public DatabaseAppService(DbConnectionConfDao dbConnectionConfDao, ConnectionManager connectionManager) {
         this.dbConnectionConfDao = dbConnectionConfDao;
+        this.connectionManager = connectionManager;
     }
 
     public List<DbConnectionConf> getUserConnections(Long userId) {
@@ -75,8 +77,7 @@ public class DatabaseAppService {
             }
         }
         
-        String jdbcUrl = buildJdbcUrl(conf);
-        try (Connection conn = DriverManager.getConnection(jdbcUrl, conf.getUsername(), conf.getPassword())) {
+        try (Connection conn = connectionManager.getConnection(conf)) {
             return conn.isValid(5); // 5 seconds timeout
         } catch (SQLException e) {
             throw new IllegalArgumentException("Connection failed: " + e.getMessage());
@@ -88,8 +89,7 @@ public class DatabaseAppService {
         if (conf == null) {
             throw new IllegalArgumentException("Database connection not found");
         }
-        String jdbcUrl = buildJdbcUrl(conf);
-        return DriverManager.getConnection(jdbcUrl, conf.getUsername(), conf.getPassword());
+        return connectionManager.getConnection(conf);
     }
 
     public void assertUserCanAccessConnection(Long userId, Long connectionId) {
@@ -107,16 +107,5 @@ public class DatabaseAppService {
     public Connection getConnectionForUser(Long userId, Long connectionId) throws SQLException {
         assertUserCanAccessConnection(userId, connectionId);
         return getConnection(connectionId);
-    }
-
-    private String buildJdbcUrl(DbConnectionConf conf) {
-        if ("mysql".equalsIgnoreCase(conf.getDbType())) {
-            return String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=UTC", 
-                    conf.getHost(), conf.getPort(), conf.getDbName());
-        } else if ("postgresql".equalsIgnoreCase(conf.getDbType())) {
-            return String.format("jdbc:postgresql://%s:%d/%s", 
-                    conf.getHost(), conf.getPort(), conf.getDbName());
-        }
-        throw new IllegalArgumentException("Unsupported database type: " + conf.getDbType());
     }
 }
