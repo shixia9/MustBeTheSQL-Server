@@ -18,10 +18,12 @@ public class SQLExecuteAppService {
 
     private final SqlExecuteValidationChain validationChain;
     private final DatabaseAppService databaseAppService;
+    private final QueryHistoryAppService queryHistoryAppService;
 
-    public SQLExecuteAppService(SqlExecuteValidationChain validationChain, DatabaseAppService databaseAppService) {
+    public SQLExecuteAppService(SqlExecuteValidationChain validationChain, DatabaseAppService databaseAppService, QueryHistoryAppService queryHistoryAppService) {
         this.validationChain = validationChain;
         this.databaseAppService = databaseAppService;
+        this.queryHistoryAppService = queryHistoryAppService;
     }
 
     public SqlExecuteResponse execute(SqlExecuteRequest request) {
@@ -45,7 +47,12 @@ public class SQLExecuteAppService {
                 stmt.setMaxRows(100);
             }
 
+            long startTime = System.currentTimeMillis();
             boolean hasResultSet = stmt.execute(context.getFinalSql());
+            long latency = System.currentTimeMillis() - startTime;
+            
+            int rowCountForHistory = 0;
+
             if (hasResultSet) {
                 response.setResultType("QUERY");
                 try (ResultSet rs = stmt.getResultSet()) {
@@ -53,12 +60,19 @@ public class SQLExecuteAppService {
                     response.setColumns(qr.columns);
                     response.setRows(qr.rows);
                     response.setRowCount(qr.rows.size());
+                    rowCountForHistory = qr.rows.size();
                 }
             } else {
                 response.setResultType("UPDATE");
                 int affected = stmt.getUpdateCount();
                 response.setAffectedRows(affected >= 0 ? affected : null);
+                rowCountForHistory = affected >= 0 ? affected : 0;
             }
+            
+            try {
+                queryHistoryAppService.recordExecution(request.getUserId(), request.getSql(), latency, rowCountForHistory);
+            } catch (Exception ignored) {}
+            
         } catch (SQLException e) {
             throw new IllegalArgumentException("SQL Execution Error: " + e.getMessage());
         }
