@@ -1,5 +1,11 @@
 package com.sql.logic.engine.application.service;
 
+import com.sql.logic.engine.infrastructure.dialect.DialectFactory;
+import com.sql.logic.engine.infrastructure.dialect.MetaData;
+import com.sql.logic.engine.infrastructure.dialect.model.SchemaDTO;
+import com.sql.logic.engine.infrastructure.dialect.model.TableDTO;
+import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
+import com.sql.logic.engine.infrastructure.dao.DbConnectionConfDao;
 import org.springframework.stereotype.Service;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -10,35 +16,35 @@ import java.util.concurrent.TimeUnit;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class DatabaseMetaDataService {
 
     private final DatabaseAppService databaseAppService;
+    private final DialectFactory dialectFactory;
+    private final DbConnectionConfDao dbConnectionConfDao;
+    
     // Cache: connectionId -> (tableName -> DDL)
     @Resource
     private Cache<Long, Cache<String, String>> ddlCache;
 
-    public DatabaseMetaDataService(DatabaseAppService databaseAppService) {
+    public DatabaseMetaDataService(DatabaseAppService databaseAppService, DialectFactory dialectFactory, DbConnectionConfDao dbConnectionConfDao) {
         this.databaseAppService = databaseAppService;
+        this.dialectFactory = dialectFactory;
+        this.dbConnectionConfDao = dbConnectionConfDao;
     }
 
     public List<String> getTableNames(Long connectionId) {
-        List<String> tableNames = new ArrayList<>();
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf == null) throw new IllegalArgumentException("Connection not found");
+        
         try (Connection conn = databaseAppService.getConnection(connectionId)) {
-            DatabaseMetaData metaData = conn.getMetaData();
-            String catalog = conn.getCatalog();
-            String schema = conn.getSchema();
-            
-            try (ResultSet rs = metaData.getTables(catalog, schema, "%", new String[]{"TABLE", "VIEW"})) {
-                while (rs.next()) {
-                    tableNames.add(rs.getString("TABLE_NAME"));
-                }
-            }
+            MetaData metaData = dialectFactory.getMetaData(conf.getDbType());
+            return metaData.tables(conn, null).stream().map(TableDTO::getName).collect(Collectors.toList());
         } catch (SQLException e) {
             throw new RuntimeException("Failed to fetch table names: " + e.getMessage(), e);
         }
-        return tableNames;
     }
 
     public String getTableDDL(Long connectionId, String tableName) {
@@ -65,27 +71,18 @@ public class DatabaseMetaDataService {
     }
 
     private String fetchDDLFromDatabase(Long connectionId, String tableName) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf == null) return null;
         try (Connection conn = databaseAppService.getConnection(connectionId)) {
-            String dbType = conn.getMetaData().getDatabaseProductName().toLowerCase();
-            
-            try (Statement stmt = conn.createStatement()) {
-                if (dbType.contains("mysql")) {
-                    try (ResultSet rs = stmt.executeQuery("SHOW CREATE TABLE `" + tableName + "`")) {
-                        if (rs.next()) {
-                            return cleanDDL(rs.getString(2));
-                        }
-                    }
-                } else {
-                    // Fallback for PostgreSQL and others
-                    return buildFallbackDDL(conn, tableName);
-                }
-            } catch (Exception e) {
-                 return buildFallbackDDL(conn, tableName);
+            MetaData metaData = dialectFactory.getMetaData(conf.getDbType());
+            String ddl = metaData.tableDDL(conn, null, tableName);
+            if (ddl != null && !ddl.trim().isEmpty()) {
+                return cleanDDL(ddl);
             }
-        } catch (SQLException e) {
+            return buildFallbackDDL(conn, tableName);
+        } catch (Exception e) {
             throw new RuntimeException("Failed to fetch DDL for table " + tableName, e);
         }
-        return null;
     }
     
     private String buildFallbackDDL(Connection conn, String tableName) throws SQLException {
