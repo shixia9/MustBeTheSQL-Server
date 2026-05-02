@@ -12,6 +12,11 @@ public class JsonStreamParser {
     private final ObjectMapper mapper = new ObjectMapper();
     private boolean sqlEmitted = false;
     private int explainIndex = 0;
+    private String extractedSql = "";
+
+    public String getExtractedSql() {
+        return extractedSql;
+    }
 
     public List<String> processChunk(String chunk) {
         List<String> events = new ArrayList<>();
@@ -36,6 +41,7 @@ public class JsonStreamParser {
                     case VALUE_STRING:
                         if ("sql".equals(currentField) && !sqlEmitted) {
                             String sql = parser.getValueAsString();
+                            extractedSql = sql;
                             events.add(formatEvent("sql", sql));
                             sqlEmitted = true;
                         }
@@ -62,6 +68,7 @@ public class JsonStreamParser {
             Map<String, Object> json = mapper.readValue(buffer.toString(), Map.class);
             if (!sqlEmitted && json.containsKey("sql")) {
                 String sql = String.valueOf(json.get("sql"));
+                extractedSql = sql;
                 events.add(formatEvent("sql", sql));
             }
             if (json.containsKey("explain")) {

@@ -46,3 +46,19 @@ CREATE TABLE IF NOT EXISTS db_connection_conf (
     db_name VARCHAR(100) NOT NULL,
     is_test TINYINT(1) DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS query_history (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    prompt TEXT,
+    connection_id BIGINT,
+    database_name VARCHAR(100),
+    generated_sql TEXT,
+    model_name VARCHAR(50),
+    execute_latency BIGINT,
+    tokens INT,
+    row_count INT,
+    cost DECIMAL(10, 4),
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    execute_time DATETIME
+);

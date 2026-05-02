@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 @Service("openAiStrategy")
 public class OpenAILLMStrategy implements LLMStrategy {
@@ -19,7 +19,7 @@ public class OpenAILLMStrategy implements LLMStrategy {
     }
 
     @Override
-    public Flux<String> generateSqlStream(String promptStr, Consumer<Integer> tokenUsageCallback) {
+    public Flux<String> generateSqlStream(String promptStr, BiConsumer<Integer, String> tokenAndSqlCallback) {
         Prompt prompt = new Prompt(promptStr);
         
         return Flux.defer(() -> {
@@ -38,8 +38,8 @@ public class OpenAILLMStrategy implements LLMStrategy {
                         }
                     })
                     .doOnComplete(() -> {
-                        if (maxTokens.get() > 0 && tokenUsageCallback != null) {
-                            tokenUsageCallback.accept(maxTokens.get());
+                        if (tokenAndSqlCallback != null) {
+                            tokenAndSqlCallback.accept(maxTokens.get(), parser.getExtractedSql());
                         }
                     })
                     .flatMapIterable(response -> {
@@ -51,17 +51,21 @@ public class OpenAILLMStrategy implements LLMStrategy {
     }
 
     @Override
-    public String generateSql(String promptStr, Consumer<Integer> tokenUsageCallback) {
+    public String generateSql(String promptStr, BiConsumer<Integer, String> tokenAndSqlCallback) {
         Prompt prompt = new Prompt(promptStr);
         var response = chatClient.prompt(prompt).call().chatResponse();
         
+        String generatedContent = response != null && response.getResult() != null && response.getResult().getOutput() != null ? response.getResult().getOutput().getText() : "";
+        
         if (response != null && response.getMetadata() != null && response.getMetadata().getUsage() != null) {
             Integer totalTokens = response.getMetadata().getUsage().getTotalTokens();
-            if (totalTokens != null && totalTokens > 0 && tokenUsageCallback != null) {
-                tokenUsageCallback.accept(totalTokens.intValue());
+            if (totalTokens != null && totalTokens > 0 && tokenAndSqlCallback != null) {
+                // Here we might need to parse the JSON string to get the SQL for non-stream too.
+                // But for now, let's just pass the content, assuming it might be JSON.
+                tokenAndSqlCallback.accept(totalTokens.intValue(), generatedContent);
             }
         }
         
-        return response != null && response.getResult() != null && response.getResult().getOutput() != null ? response.getResult().getOutput().getText() : "";
+        return generatedContent;
     }
 }
