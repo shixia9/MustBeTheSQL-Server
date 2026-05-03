@@ -70,7 +70,11 @@ public class SQLExecuteAppService {
             }
             
             try {
-                queryHistoryAppService.recordExecution(request.getUserId(), request.getSql(), latency, rowCountForHistory);
+                if (request.getParentHistoryId() != null) {
+                    queryHistoryAppService.recordReRunExecution(request.getUserId(), request.getParentHistoryId(), latency, rowCountForHistory);
+                } else {
+                    queryHistoryAppService.recordExecution(request.getUserId(), request.getSql(), latency, rowCountForHistory);
+                }
             } catch (Exception ignored) {}
             
         } catch (SQLException e) {

@@ -60,6 +60,27 @@ public class QueryHistoryAppService {
         }
     }
 
+    public void recordReRunExecution(Long userId, Long parentHistoryId, Long latency, Integer rowCount) {
+        QueryHistory parentHistory = queryHistoryDao.selectById(parentHistoryId);
+        if (parentHistory != null) {
+            QueryHistory newHistory = new QueryHistory();
+            newHistory.setUserId(userId);
+            newHistory.setPrompt(parentHistory.getPrompt());
+            newHistory.setConnectionId(parentHistory.getConnectionId());
+            newHistory.setDatabaseName(parentHistory.getDatabaseName());
+            newHistory.setGeneratedSql(parentHistory.getGeneratedSql());
+            newHistory.setModelName(parentHistory.getModelName());
+            newHistory.setTokens(0);
+            newHistory.setCost(BigDecimal.ZERO);
+            newHistory.setParentId(parentHistoryId);
+            newHistory.setCreateTime(new Date());
+            newHistory.setExecuteTime(new Date());
+            newHistory.setExecuteLatency(latency);
+            newHistory.setRowCount(rowCount);
+            queryHistoryDao.insert(newHistory);
+        }
+    }
+
     public Page<QueryHistory> getUserHistory(Long userId, Integer page, Integer size, String keyword, String dbType, String model, String startDate, String endDate) {
         QueryWrapper<QueryHistory> wrapper = new QueryWrapper<>();
         wrapper.eq("user_id", userId);
