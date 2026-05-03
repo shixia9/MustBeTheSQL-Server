@@ -30,7 +30,7 @@ public class SQLGenerateAppService {
         this.dbConnectionConfDao = dbConnectionConfDao;
     }
 
-    public Flux<String> generateSqlStream(Long userId, String userInput, Long connectionId, List<String> tableNames, String manualSchemaContext, String strategyName) {
+    public Flux<String> generateSqlStream(Long userId, String userInput, Long connectionId, List<String> tableNames, String manualSchemaContext, String strategyName, Long parentHistoryId) {
         // Check user status and AI token quota before generation
         try {
             userAppService.checkBeforeGeneration(userId);
@@ -59,7 +59,7 @@ public class SQLGenerateAppService {
                         dbName = conn.getName() + " (" + conn.getDbType() + ")";
                     }
                 }
-                queryHistoryAppService.recordGeneration(userId, userInput, connectionId, dbName, generatedSql, strategyName, tokens);
+                queryHistoryAppService.recordGeneration(userId, userInput, connectionId, dbName, generatedSql, strategyName, tokens, parentHistoryId);
                 
             } catch (Exception e) {
                 System.err.println("Audit Log: Token deduction/history exception for user " + userId + ": " + e.getMessage());

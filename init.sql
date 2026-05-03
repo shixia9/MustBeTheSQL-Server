@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS query_history (
     tokens INT,
     row_count INT,
     cost DECIMAL(10, 4),
+    parent_id BIGINT,
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     execute_time DATETIME
 );
