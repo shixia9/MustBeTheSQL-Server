@@ -23,6 +23,7 @@ public class QueryHistory {
     private Integer tokens;
     private Integer rowCount;
     private BigDecimal cost;
+    private Long parentId;
     private Date createTime;
     private Date executeTime;
 }

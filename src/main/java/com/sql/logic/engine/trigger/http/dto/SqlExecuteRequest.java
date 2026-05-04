@@ -8,4 +8,5 @@ public class SqlExecuteRequest {
     private String sql;
     private Long connectionId;
     private Boolean confirmed;
+    private Long parentHistoryId;
 }

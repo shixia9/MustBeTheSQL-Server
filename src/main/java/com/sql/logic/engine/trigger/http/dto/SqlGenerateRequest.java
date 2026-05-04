@@ -12,4 +12,5 @@ public class SqlGenerateRequest {
     private List<String> tableNames;
     private String schemaContext;
     private String strategyName; // 例如: "openAiStrategy"
+    private Long parentHistoryId; // 用于记录重新执行的历史来源
 }

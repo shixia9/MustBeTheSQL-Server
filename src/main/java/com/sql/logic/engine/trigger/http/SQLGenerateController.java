@@ -36,7 +36,8 @@ public class SQLGenerateController {
                 request.getConnectionId(),
                 request.getTableNames(),
                 request.getSchemaContext(), 
-                request.getStrategyName()
+                request.getStrategyName(),
+                request.getParentHistoryId()
         );
     }
 }

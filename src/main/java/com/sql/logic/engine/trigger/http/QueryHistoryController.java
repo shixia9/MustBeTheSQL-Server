@@ -1,12 +1,10 @@
 package com.sql.logic.engine.trigger.http;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sql.logic.engine.application.service.QueryHistoryAppService;
 import com.sql.logic.engine.infrastructure.po.QueryHistory;
 import com.sql.logic.engine.trigger.http.response.Result;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
@@ -21,7 +19,25 @@ public class QueryHistoryController {
     }
 
     @GetMapping("/user/{userId}")
-    public Result<List<QueryHistory>> getUserHistory(@PathVariable Long userId) {
-        return Result.success(queryHistoryAppService.getUserHistory(userId));
+    public Result<Page<QueryHistory>> getUserHistory(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "10") Integer size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String dbType,
+            @RequestParam(required = false) String model,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+        return Result.success(queryHistoryAppService.getUserHistory(userId, page, size, keyword, dbType, model, startDate, endDate));
+    }
+
+    @DeleteMapping("/{id}")
+    public Result<Boolean> deleteHistory(@PathVariable Long id) {
+        return Result.success(queryHistoryAppService.deleteHistory(id));
+    }
+
+    @GetMapping("/{id}/lineage")
+    public Result<List<QueryHistory>> getHistoryLineage(@PathVariable Long id) {
+        return Result.success(queryHistoryAppService.getHistoryLineage(id));
     }
 }
