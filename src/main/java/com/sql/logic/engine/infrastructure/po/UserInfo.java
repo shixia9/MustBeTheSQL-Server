@@ -18,7 +18,8 @@ public class UserInfo {
     private String username;
     private String password;
     private String email;
-    private Integer status; // 0: Banned, 1: Active, 2: Frozen
+    private String avatar;
+    private Integer status; // 0: Banned, 1: Active, 2: Frozen, -1: Cancelled
     private Integer tokenQuota;
     private String apiKey;
     @TableField(typeHandler = AesEncryptTypeHandler.class)

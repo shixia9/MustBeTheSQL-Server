@@ -4,12 +4,15 @@ import com.sql.logic.engine.application.service.UserAppService;
 import com.sql.logic.engine.infrastructure.po.UserInfo;
 import com.sql.logic.engine.trigger.http.dto.LoginRequest;
 import com.sql.logic.engine.trigger.http.dto.RegisterRequest;
+import com.sql.logic.engine.trigger.http.dto.UpdatePasswordRequest;
+import com.sql.logic.engine.trigger.http.dto.UpdateProfileRequest;
 import com.sql.logic.engine.trigger.http.response.Result;
 
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/user")
@@ -62,6 +65,61 @@ public class UserController {
         try {
             userAppService.updateKeys(userId, apiKey, secretKey);
             return Result.success(null);
+        } catch (Exception e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    @PostMapping("/updateProfile")
+    public Result<UserInfo> updateProfile(@RequestBody UpdateProfileRequest request) {
+        try {
+            UserInfo user = userAppService.updateProfile(request.getUserId(), request.getUsername(), request.getEmail());
+            user.setPassword(null);
+            return Result.success(user);
+        } catch (Exception e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    @PostMapping("/updatePassword")
+    public Result<Boolean> updatePassword(@RequestBody UpdatePasswordRequest request) {
+        try {
+            userAppService.updatePassword(request.getUserId(), request.getOldPassword(), request.getNewPassword());
+            StpUtil.logout(); // Force logout after password change
+            return Result.success(true);
+        } catch (Exception e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    @PostMapping("/uploadAvatar")
+    public Result<UserInfo> uploadAvatar(@RequestParam("userId") Long userId, @RequestParam("file") MultipartFile file) {
+        try {
+            UserInfo user = userAppService.updateAvatar(userId, file);
+            user.setPassword(null);
+            return Result.success(user);
+        } catch (Exception e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    @PostMapping("/cancelAccount")
+    public Result<Boolean> cancelAccount(@RequestParam("userId") Long userId) {
+        try {
+            userAppService.cancelAccount(userId);
+            StpUtil.logout();
+            return Result.success(true);
+        } catch (Exception e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    @GetMapping("/info")
+    public Result<UserInfo> getUserInfo(@RequestParam("userId") Long userId) {
+        try {
+            UserInfo user = userAppService.getUserById(userId);
+            user.setPassword(null);
+            return Result.success(user);
         } catch (Exception e) {
             return Result.error(400, e.getMessage());
         }

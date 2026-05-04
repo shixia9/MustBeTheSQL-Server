@@ -4,7 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.sql.logic.engine.infrastructure.dao.UserInfoDao;
 import com.sql.logic.engine.infrastructure.po.UserInfo;
+import com.sql.logic.engine.application.service.storage.StorageService;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Date;
 
@@ -12,9 +14,11 @@ import java.util.Date;
 public class UserAppService {
 
     private final UserInfoDao userInfoDao;
+    private final StorageService storageService;
 
-    public UserAppService(UserInfoDao userInfoDao) {
+    public UserAppService(UserInfoDao userInfoDao, StorageService storageService) {
         this.userInfoDao = userInfoDao;
+        this.storageService = storageService;
     }
 
     public UserInfo login(String email, String password) {
@@ -119,9 +123,61 @@ public class UserAppService {
     }
 
     public void updateKeys(Long userId, String apiKey, String secretKey) {
-        UserInfo user = getUserById(userId);
+        UserInfo user = new UserInfo();
+        user.setId(userId);
         user.setApiKey(apiKey);
         user.setSecretKey(secretKey);
+        user.setUpdateTime(new Date());
+        userInfoDao.updateById(user);
+    }
+
+    public UserInfo updateProfile(Long userId, String username, String email) {
+        UserInfo user = getUserById(userId);
+        if (username != null && !username.equals(user.getUsername())) {
+            QueryWrapper<UserInfo> usernameQuery = new QueryWrapper<>();
+            usernameQuery.eq("username", username);
+            if (userInfoDao.selectCount(usernameQuery) > 0) {
+                throw new IllegalArgumentException("Username already exists");
+            }
+            user.setUsername(username);
+        }
+        if (email != null && !email.equals(user.getEmail())) {
+            QueryWrapper<UserInfo> emailQuery = new QueryWrapper<>();
+            emailQuery.eq("email", email);
+            if (userInfoDao.selectCount(emailQuery) > 0) {
+                throw new IllegalArgumentException("Email already exists");
+            }
+            user.setEmail(email);
+        }
+        user.setUpdateTime(new Date());
+        userInfoDao.updateById(user);
+        return user;
+    }
+
+    public void updatePassword(Long userId, String oldPassword, String newPassword) {
+        UserInfo user = getUserById(userId);
+        if (!user.getPassword().equals(oldPassword)) {
+            throw new IllegalArgumentException("Incorrect old password");
+        }
+        user.setPassword(newPassword);
+        user.setUpdateTime(new Date());
+        userInfoDao.updateById(user);
+    }
+
+    public UserInfo updateAvatar(Long userId, MultipartFile file) {
+        UserInfo user = getUserById(userId);
+        String avatarUrl = storageService.store(file);
+        user.setAvatar(avatarUrl);
+        user.setUpdateTime(new Date());
+        userInfoDao.updateById(user);
+        return user;
+    }
+
+    public void cancelAccount(Long userId) {
+        UserInfo user = new UserInfo();
+        user.setId(userId);
+        user.setStatus(-1); // Cancelled
+        user.setUpdateTime(new Date());
         userInfoDao.updateById(user);
     }
 }
