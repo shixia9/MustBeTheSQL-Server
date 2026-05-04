@@ -1,19 +1,102 @@
-# SQL Logic Engine
+# 📊 Must Be The SQL
 
-A full-stack application (React + Spring Boot) that acts as a database visualizer and AI-driven SQL generator.
+<p align="center">
+  <img src="https://img.shields.io/badge/Frontend-React-blue" />
+  <img src="https://img.shields.io/badge/Backend-SpringBoot-green" />
+  <img src="https://img.shields.io/badge/AI-LLM-orange" />
+  <img src="https://img.shields.io/badge/Database-MySQL%20%7C%20PostgreSQL-lightgrey" />
+  <img src="https://img.shields.io/badge/License-MIT-purple" />
+</p>
 
-## Modules
+<p align="center">
+  <b>💡 A modern database visualization and AI-powered SQL generation platform</b>
+</p>
 
-### 1. Database Connection Management
-Manage connections to multiple databases (MySQL, PostgreSQL, etc.) securely.
+<p align="center">
+  <a href="./README.zh-CN.md">🇨🇳 中文文档</a> |
+  <a href="#quick-start">⚡ Quick Start</a> |
+  <a href="#architecture">🏗 Architecture</a>
+</p>
 
-### 2. Workspace
-A single-page visualization of database objects:
-- **Tree Navigation**: Browse schemas, tables, views, columns, and indexes.
-- **Multi-Tab Editor**: Open multiple tables for data preview or SQL consoles side-by-side.
-- **DDL Export**: Generate CREATE statements for tables and views.
-- **Connection Pool**: Uses HikariCP for connection isolation, lifecycle management, and performance.
-- **Dialect Abstraction**: An SPI-like MetaData framework to seamlessly add support for various databases. Currently supports MySQL and PostgreSQL.
+---
 
-### 3. AI Chat & History
-Generate SQL using AI, run it safely, and view history.
+## 📖 Introduction
+
+**SQL Logic Engine** is a full-stack intelligent database platform built with **React + Spring Boot**, designed to:
+
+- 🔍 Visualize database structures
+- ✍️ Generate SQL via AI (LLM-powered)
+- ⚡ Execute queries safely
+- 📊 Improve developer productivity
+
+---
+
+## ✨ Features
+
+### 🔌 Database Connection Management
+- Secure multi-database connection support
+- Supports **MySQL**, **PostgreSQL**
+- Connection isolation via **HikariCP**
+
+---
+
+### 🧭 Workspace (Core UI)
+A modern single-page database workspace:
+
+- 🌲 **Tree Navigation**
+  - Browse schemas, tables, columns, indexes
+
+- 🪟 **Multi-Tab Editor**
+  - Open multiple SQL consoles or table previews
+
+- 📤 **DDL Export**
+  - Auto-generate `CREATE TABLE` / `VIEW` statements
+
+- 🔄 **Connection Pooling**
+  - High-performance management via HikariCP
+
+- 🧩 **Dialect Abstraction**
+  - SPI-style metadata extension
+  - Easily extend to new databases
+
+---
+
+### 🤖 AI SQL Assistant
+- Natural language → SQL generation
+- Query explanation
+- Safe execution (prevent destructive queries)
+- Chat history tracking
+
+---
+
+## 🏗 Architecture
+
+```text
+Frontend (React)
+   ↓
+Backend (Spring Boot)
+   ↓
+Database (MySQL / PostgreSQL)
+   ↓
+LLM Service (AI SQL Generation)
+```
+
+## ⚡ Quick Start
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/shixia9/MustBeTheSQL-Server.git
+git clone https://github.com/shixia9/MustBeTheSQL.git
+```
+
+### 2. Start Backend
+```bash
+cd MustBeTheSQL-Server
+mvn spring-boot:run
+```
+### 3. Start Frontend
+```bash
+cd MustBeTheSQL
+npm install
+npm run dev
+```
