@@ -15,10 +15,9 @@
 <p align="center">
   <a href="./README.zh-CN.md">🇨🇳 中文文档</a> |
   <a href="#quick-start">⚡ Quick Start</a> |
-  <a href="#architecture">🏗 Architecture</a>
+  <a href="https://github.com/shixia9/MustBeTheSQL">Client</a>
 </p>
 
----
 
 ## 📖 Introduction
 
@@ -29,74 +28,62 @@
 - ⚡ Execute queries safely
 - 📊 Improve developer productivity
 
----
 
 ## ✨ Features
 
 ### 🔌 Database Connection Management
+
 - Secure multi-database connection support
 - Supports **MySQL**, **PostgreSQL**
 - Connection isolation via **HikariCP**
 
----
 
 ### 🧭 Workspace (Core UI)
+
 A modern single-page database workspace:
 
-- 🌲 **Tree Navigation**
+- **Tree Navigation**
   - Browse schemas, tables, columns, indexes
-
-- 🪟 **Multi-Tab Editor**
+- &#x20;**Multi-Tab Editor**
   - Open multiple SQL consoles or table previews
-
-- 📤 **DDL Export**
+- **DDL Export**
   - Auto-generate `CREATE TABLE` / `VIEW` statements
-
-- 🔄 **Connection Pooling**
+- **Connection Pooling**
   - High-performance management via HikariCP
-
-- 🧩 **Dialect Abstraction**
+- **Dialect Abstraction**
   - SPI-style metadata extension
   - Easily extend to new databases
 
----
 
 ### 🤖 AI SQL Assistant
+
 - Natural language → SQL generation
 - Query explanation
 - Safe execution (prevent destructive queries)
 - Chat history tracking
 
----
-
-## 🏗 Architecture
-
-```text
-Frontend (React)
-   ↓
-Backend (Spring Boot)
-   ↓
-Database (MySQL / PostgreSQL)
-   ↓
-LLM Service (AI SQL Generation)
-```
 
 ## ⚡ Quick Start
 
 ### 1. Clone the repository
+
 ```bash
 git clone https://github.com/shixia9/MustBeTheSQL-Server.git
 git clone https://github.com/shixia9/MustBeTheSQL.git
 ```
 
 ### 2. Start Backend
+
 ```bash
 cd MustBeTheSQL-Server
 mvn spring-boot:run
 ```
+
 ### 3. Start Frontend
+
 ```bash
 cd MustBeTheSQL
 npm install
 npm run dev
 ```
+
