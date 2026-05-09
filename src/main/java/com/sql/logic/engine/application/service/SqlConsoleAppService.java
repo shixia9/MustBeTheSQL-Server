@@ -1,28 +1,27 @@
 package com.sql.logic.engine.application.service;
 
-import com.sql.logic.engine.infrastructure.dao.DdlAuditLogDao;
-import com.sql.logic.engine.infrastructure.po.DdlAuditLog;
-import com.sql.logic.engine.trigger.http.dto.DdlExecuteRequest;
-import com.sql.logic.engine.trigger.http.dto.DdlExecuteResponse;
-import org.springframework.jdbc.datasource.init.ScriptUtils;
+import com.sql.logic.engine.infrastructure.annotation.RecordSqlAudit;
+import com.sql.logic.engine.trigger.http.dto.SqlConsoleExecuteRequest;
+import com.sql.logic.engine.trigger.http.dto.SqlConsoleExecuteResponse;
 import org.springframework.stereotype.Service;
 
 import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
-public class DdlExecutionAppService {
+public class SqlConsoleAppService {
 
     private final DatabaseAppService databaseAppService;
-    private final DdlAuditLogDao ddlAuditLogDao;
 
-    public DdlExecutionAppService(DatabaseAppService databaseAppService, DdlAuditLogDao ddlAuditLogDao) {
+    public SqlConsoleAppService(DatabaseAppService databaseAppService) {
         this.databaseAppService = databaseAppService;
-        this.ddlAuditLogDao = ddlAuditLogDao;
     }
     
     private List<String> splitSql(String sql) {
@@ -37,8 +36,9 @@ public class DdlExecutionAppService {
         return result;
     }
 
-    public DdlExecuteResponse execute(DdlExecuteRequest request) {
-        DdlExecuteResponse response = new DdlExecuteResponse();
+    @RecordSqlAudit
+    public SqlConsoleExecuteResponse execute(SqlConsoleExecuteRequest request) {
+        SqlConsoleExecuteResponse response = new SqlConsoleExecuteResponse();
         long startTime = System.currentTimeMillis();
         
         List<String> statements = splitSql(request.getSql());
@@ -58,12 +58,33 @@ public class DdlExecutionAppService {
                     if (sqlStmt.trim().isEmpty()) continue;
                     
                     try (Statement stmt = conn.createStatement()) {
-                        stmt.setQueryTimeout(300); // 300 seconds timeout for DDL
+                        stmt.setQueryTimeout(300); // 300 seconds timeout
                         boolean hasResultSet = stmt.execute(sqlStmt);
                         if (!hasResultSet) {
                             int affected = stmt.getUpdateCount();
                             if (affected > 0) {
                                 totalAffectedRows += affected;
+                            }
+                        } else {
+                            try (ResultSet rs = stmt.getResultSet()) {
+                                ResultSetMetaData metaData = rs.getMetaData();
+                                int columnCount = metaData.getColumnCount();
+                                List<String> cols = new ArrayList<>();
+                                for (int i = 1; i <= columnCount; i++) {
+                                    cols.add(metaData.getColumnLabel(i));
+                                }
+                                response.setColumns(cols);
+
+                                List<Map<String, Object>> rows = new ArrayList<>();
+                                int rowLimit = 500; // Hard limit for safety
+                                while (rs.next() && rows.size() < rowLimit) {
+                                    Map<String, Object> row = new LinkedHashMap<>();
+                                    for (int i = 1; i <= columnCount; i++) {
+                                        row.put(cols.get(i - 1), rs.getObject(i));
+                                    }
+                                    rows.add(row);
+                                }
+                                response.setRows(rows);
                             }
                         }
                     }
@@ -101,22 +122,6 @@ public class DdlExecutionAppService {
         response.setLatency(latency);
         response.setAffectedRows(totalAffectedRows);
         response.setErrorMessage(errorMessage);
-        
-        // Log Audit
-        try {
-            DdlAuditLog log = new DdlAuditLog();
-            log.setUserId(request.getUserId());
-            log.setConnectionId(request.getConnectionId());
-            log.setSqlScript(request.getSql());
-            log.setExecuteLatency(latency);
-            log.setStatus(success ? "SUCCESS" : "FAILED");
-            log.setErrorMessage(errorMessage);
-            log.setCreateTime(new Date());
-            // clientIp could be populated if passed through context, but leaving null for now
-            ddlAuditLogDao.insert(log);
-        } catch (Exception e) {
-            // Ignore audit log failure
-        }
 
         return response;
     }

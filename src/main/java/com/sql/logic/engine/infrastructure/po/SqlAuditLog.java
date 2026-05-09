@@ -8,8 +8,8 @@ import lombok.Data;
 import java.util.Date;
 
 @Data
-@TableName("ddl_audit_log")
-public class DdlAuditLog {
+@TableName("sql_audit_log")
+public class SqlAuditLog {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long userId;

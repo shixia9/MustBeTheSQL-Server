@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS query_history (
     execute_time DATETIME
 );
 
-CREATE TABLE IF NOT EXISTS ddl_audit_log (
+CREATE TABLE IF NOT EXISTS sql_audit_log (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     connection_id BIGINT NOT NULL,
