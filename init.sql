@@ -64,3 +64,15 @@ CREATE TABLE IF NOT EXISTS query_history (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     execute_time DATETIME
 );
+
+CREATE TABLE IF NOT EXISTS ddl_audit_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    connection_id BIGINT NOT NULL,
+    client_ip VARCHAR(64),
+    sql_script LONGTEXT NOT NULL,
+    execute_latency BIGINT,
+    status VARCHAR(20) NOT NULL COMMENT 'SUCCESS, FAILED, TIMEOUT',
+    error_message TEXT,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+);
