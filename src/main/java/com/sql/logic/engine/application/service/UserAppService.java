@@ -2,9 +2,14 @@ package com.sql.logic.engine.application.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.sql.logic.engine.domain.agent.core.AiAgentManager;
+import com.sql.logic.engine.domain.agent.core.AiAgentWarmupRunner;
 import com.sql.logic.engine.infrastructure.dao.UserInfoDao;
+import com.sql.logic.engine.infrastructure.dao.UserLlmApiKeyDao;
 import com.sql.logic.engine.infrastructure.po.UserInfo;
+import com.sql.logic.engine.infrastructure.po.UserLlmApiKey;
 import com.sql.logic.engine.application.service.storage.StorageService;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -14,11 +19,21 @@ import java.util.Date;
 public class UserAppService {
 
     private final UserInfoDao userInfoDao;
+    private final UserLlmApiKeyDao userLlmApiKeyDao;
     private final StorageService storageService;
+    private final AiAgentWarmupRunner aiAgentWarmupRunner;
+    private final AiAgentManager aiAgentManager;
 
-    public UserAppService(UserInfoDao userInfoDao, StorageService storageService) {
+    public UserAppService(UserInfoDao userInfoDao, 
+                          UserLlmApiKeyDao userLlmApiKeyDao, 
+                          StorageService storageService,
+                          @Lazy AiAgentWarmupRunner aiAgentWarmupRunner,
+                          AiAgentManager aiAgentManager) {
         this.userInfoDao = userInfoDao;
+        this.userLlmApiKeyDao = userLlmApiKeyDao;
         this.storageService = storageService;
+        this.aiAgentWarmupRunner = aiAgentWarmupRunner;
+        this.aiAgentManager = aiAgentManager;
     }
 
     public UserInfo login(String email, String password) {
@@ -36,6 +51,15 @@ public class UserAppService {
         if (user.getStatus() != 1) {
             throw new IllegalStateException("User account is not active. Status: " + user.getStatus());
         }
+        
+        QueryWrapper<UserLlmApiKey> keyQuery = new QueryWrapper<>();
+        keyQuery.eq("user_id", user.getId()).eq("status", 1);
+        UserLlmApiKey userKey = userLlmApiKeyDao.selectOne(keyQuery);
+        if (userKey != null) {
+            user.setApiKey(userKey.getApiKey());
+            user.setBaseUrl(userKey.getBaseUrl());
+        }
+        
         return user;
     }
 
@@ -70,17 +94,27 @@ public class UserAppService {
         if (user == null) {
             throw new IllegalArgumentException("User not found");
         }
+        
+        QueryWrapper<UserLlmApiKey> query = new QueryWrapper<>();
+        query.eq("user_id", userId).eq("status", 1);
+        UserLlmApiKey userKey = userLlmApiKeyDao.selectOne(query);
+        if (userKey != null) {
+            user.setApiKey(userKey.getApiKey());
+            user.setBaseUrl(userKey.getBaseUrl());
+        }
+        
         return user;
     }
 
     public void deductTokens(Long userId, int tokens) {
         if (tokens <= 0) return;
         
-        UserInfo user = getUserById(userId);
-        
         // Custom keys check: do not deduct system tokens
-        if (user.getApiKey() != null && !user.getApiKey().trim().isEmpty() 
-            && user.getSecretKey() != null && !user.getSecretKey().trim().isEmpty()) {
+        QueryWrapper<UserLlmApiKey> keyQuery = new QueryWrapper<>();
+        keyQuery.eq("user_id", userId).eq("status", 1);
+        UserLlmApiKey userKey = userLlmApiKeyDao.selectOne(keyQuery);
+        
+        if (userKey != null && userKey.getApiKey() != null && !userKey.getApiKey().trim().isEmpty()) {
             return;
         }
         
@@ -112,8 +146,11 @@ public class UserAppService {
             throw new IllegalStateException("User account is not active. Status: " + user.getStatus());
         }
         
-        if (user.getApiKey() != null && !user.getApiKey().trim().isEmpty() 
-            && user.getSecretKey() != null && !user.getSecretKey().trim().isEmpty()) {
+        QueryWrapper<UserLlmApiKey> keyQuery = new QueryWrapper<>();
+        keyQuery.eq("user_id", userId).eq("status", 1);
+        UserLlmApiKey userKey = userLlmApiKeyDao.selectOne(keyQuery);
+        
+        if (userKey != null && userKey.getApiKey() != null && !userKey.getApiKey().trim().isEmpty()) {
             return;
         }
         
@@ -122,13 +159,46 @@ public class UserAppService {
         }
     }
 
-    public void updateKeys(Long userId, String apiKey, String secretKey) {
-        UserInfo user = new UserInfo();
-        user.setId(userId);
-        user.setApiKey(apiKey);
-        user.setSecretKey(secretKey);
-        user.setUpdateTime(new Date());
-        userInfoDao.updateById(user);
+    public void updateKeys(Long userId, String apiKey, String baseUrl) {
+        QueryWrapper<UserLlmApiKey> query = new QueryWrapper<>();
+        query.eq("user_id", userId);
+        UserLlmApiKey userKey = userLlmApiKeyDao.selectOne(query);
+        
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            // Remove custom key
+            if (userKey != null) {
+                userKey.setStatus(0);
+                userKey.setUpdateTime(new Date());
+                userLlmApiKeyDao.updateById(userKey);
+                // Remove agent from manager
+                aiAgentManager.removeAgent(userId);
+            }
+        } else {
+            // Set custom key
+            if (userKey == null) {
+                userKey = new UserLlmApiKey();
+                userKey.setUserId(userId);
+                userKey.setStrategyName("openAiStrategy");
+                userKey.setApiKey(apiKey);
+                userKey.setBaseUrl(baseUrl);
+                userKey.setStatus(1);
+                userKey.setCreateTime(new Date());
+                userKey.setUpdateTime(new Date());
+                userLlmApiKeyDao.insert(userKey);
+            } else {
+                userKey.setApiKey(apiKey);
+                userKey.setBaseUrl(baseUrl);
+                userKey.setStatus(1);
+                userKey.setUpdateTime(new Date());
+                userLlmApiKeyDao.updateById(userKey);
+            }
+            // Trigger dynamic assembly
+            try {
+                aiAgentWarmupRunner.assembleAndRegister(userId, apiKey, baseUrl);
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to assemble AI Agent with the provided API Key: " + e.getMessage());
+            }
+        }
     }
 
     public UserInfo updateProfile(Long userId, String username, String email) {

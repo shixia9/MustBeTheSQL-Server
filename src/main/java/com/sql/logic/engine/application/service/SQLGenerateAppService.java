@@ -1,7 +1,7 @@
 package com.sql.logic.engine.application.service;
 
-import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
-import com.sql.logic.engine.domain.agent.strategy.LLMStrategyContext;
+import com.sql.logic.engine.domain.agent.core.AiAgent;
+import com.sql.logic.engine.domain.agent.core.AiAgentManager;
 import com.sql.logic.engine.infrastructure.dao.DbConnectionConfDao;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
 import org.springframework.stereotype.Service;
@@ -12,20 +12,17 @@ import java.util.List;
 @Service
 public class SQLGenerateAppService {
 
-    private final LLMStrategyContext llmStrategyContext;
+    private final AiAgentManager aiAgentManager;
     private final UserAppService userAppService;
-    private final DatabaseMetaDataService databaseMetaDataService;
     private final QueryHistoryAppService queryHistoryAppService;
     private final DbConnectionConfDao dbConnectionConfDao;
 
-    public SQLGenerateAppService(LLMStrategyContext llmStrategyContext, 
+    public SQLGenerateAppService(AiAgentManager aiAgentManager, 
                                  UserAppService userAppService,
-                                 DatabaseMetaDataService databaseMetaDataService,
                                  QueryHistoryAppService queryHistoryAppService,
                                  DbConnectionConfDao dbConnectionConfDao) {
-        this.llmStrategyContext = llmStrategyContext;
+        this.aiAgentManager = aiAgentManager;
         this.userAppService = userAppService;
-        this.databaseMetaDataService = databaseMetaDataService;
         this.queryHistoryAppService = queryHistoryAppService;
         this.dbConnectionConfDao = dbConnectionConfDao;
     }
@@ -38,17 +35,11 @@ public class SQLGenerateAppService {
             return Flux.error(e);
         }
 
-        String dynamicSchemaContext = buildDynamicSchemaContext(connectionId, tableNames);
-        String finalSchemaContext = dynamicSchemaContext;
-        if (manualSchemaContext != null && !manualSchemaContext.isEmpty()) {
-            finalSchemaContext += "\nAdditional Context: " + manualSchemaContext;
-        }
-
-        String prompt = buildPrompt(userInput, finalSchemaContext);
-        LLMStrategy strategy = llmStrategyContext.getStrategy(strategyName);
+        // Get dynamically assembled agent for this user (or fallback to default)
+        AiAgent agent = aiAgentManager.getAgent(userId);
         
         // Pass the token deduction callback which triggers precisely after completion
-        return strategy.generateSqlStream(prompt, (tokens, generatedSql) -> {
+        return agent.generateSqlStream(userInput, connectionId, tableNames, manualSchemaContext, (tokens, generatedSql) -> {
             try {
                 userAppService.deductTokens(userId, tokens);
                 
@@ -65,37 +56,5 @@ public class SQLGenerateAppService {
                 System.err.println("Audit Log: Token deduction/history exception for user " + userId + ": " + e.getMessage());
             }
         });
-    }
-
-    private String buildDynamicSchemaContext(Long connectionId, List<String> tableNames) {
-        if (connectionId == null || tableNames == null || tableNames.isEmpty()) {
-            return "No specific database schema provided.";
-        }
-        StringBuilder sb = new StringBuilder("Database Schema Context:\n");
-        for (String tableName : tableNames) {
-            try {
-                String ddl = databaseMetaDataService.getTableDDL(connectionId, tableName);
-                if (ddl != null && !ddl.isEmpty()) {
-                    sb.append(ddl).append("\n\n");
-                }
-            } catch (Exception e) {
-                System.err.println("Failed to fetch DDL for table: " + tableName);
-            }
-        }
-        return sb.toString();
-    }
-
-    private String buildPrompt(String userInput, String schemaContext) {
-        return "You are an expert SQL Generator and Database Assistant.\n" +
-               "Given the following database schema:\n" + schemaContext + "\n\n" +
-               "Based on the user's request, generate the correct SQL query and a brief explanation.\n" +
-               "IMPORTANT: You MUST format your response EXACTLY as a valid JSON object with two keys: \"explain\" and \"sql\".\n" +
-               "DO NOT use markdown code blocks (```json or ```sql) or any other text outside the JSON object.\n" +
-               "Example:\n" +
-               "{\n" +
-               "  \"explain\": \"This query selects all active users.\",\n" +
-               "  \"sql\": \"SELECT * FROM users WHERE status = 'active';\"\n" +
-               "}\n\n" +
-               "User request: " + userInput;
     }
 }

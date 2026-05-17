@@ -61,9 +61,9 @@ public class UserController {
     }
 
     @PostMapping("/updateKeys")
-    public Result<Void> updateKeys(@RequestParam Long userId, @RequestParam(required = false) String apiKey, @RequestParam(required = false) String secretKey) {
+    public Result<Void> updateKeys(@RequestParam Long userId, @RequestParam(required = false) String apiKey, @RequestParam(required = false) String baseUrl) {
         try {
-            userAppService.updateKeys(userId, apiKey, secretKey);
+            userAppService.updateKeys(userId, apiKey, baseUrl);
             return Result.success(null);
         } catch (Exception e) {
             return Result.error(400, e.getMessage());

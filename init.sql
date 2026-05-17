@@ -9,13 +9,22 @@ CREATE TABLE IF NOT EXISTS user_info (
     avatar VARCHAR(500),
     status TINYINT(1) DEFAULT 1 COMMENT '0: Banned, 1: Active, 2: Frozen, -1: Cancelled',
     token_quota INT DEFAULT 100 COMMENT 'Remaining AI tokens',
-    api_key VARCHAR(255),
-    secret_key VARCHAR(255),
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 INSERT IGNORE INTO user_info (id, username, password, email, status, token_quota) VALUES (1, 'admin', 'admin123', 'admin@example.com', 1, 10000);
+
+CREATE TABLE IF NOT EXISTS user_llm_api_key (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL UNIQUE,
+    strategy_name VARCHAR(100) NOT NULL DEFAULT 'openAiStrategy',
+    base_url VARCHAR(255),
+    api_key VARCHAR(255) NOT NULL,
+    status TINYINT(1) DEFAULT 1 COMMENT '0: Inactive, 1: Active',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 
 CREATE TABLE IF NOT EXISTS conversation (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
