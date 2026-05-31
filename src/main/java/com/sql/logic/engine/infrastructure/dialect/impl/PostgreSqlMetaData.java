@@ -12,9 +12,26 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Component
 public class PostgreSqlMetaData implements MetaData {
+
+    /**
+     * SQL identifier whitelist pattern: only letters, digits, and underscores.
+     * Prevents SQL injection in DDL statements.
+     */
+    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
+
+    private void validateIdentifier(String identifier, String label) {
+        if (identifier == null || identifier.isEmpty()) {
+            throw new IllegalArgumentException(label + " cannot be null or empty");
+        }
+        if (!IDENTIFIER_PATTERN.matcher(identifier).matches()) {
+            throw new IllegalArgumentException("Invalid " + label + ": '" + identifier +
+                    "'. Only alphanumeric characters and underscores are allowed.");
+        }
+    }
 
     @Override
     public String dbType() {
@@ -117,6 +134,11 @@ public class PostgreSqlMetaData implements MetaData {
 
     @Override
     public String tableDDL(Connection connection, String schemaName, String tableName) {
+        // Validate identifiers even for placeholder DDL to prevent injection
+        validateIdentifier(tableName, "table name");
+        if (schemaName != null && !schemaName.isEmpty()) {
+            validateIdentifier(schemaName, "schema name");
+        }
         // PostgreSQL DDL generation is complex. A basic fallback using JDBC MetaData is typical, or pg_dump
         // For simplicity, we just return a placeholder or very basic CREATE TABLE
         return "-- DDL extraction for PostgreSQL requires pg_dump or complex pg_catalog queries.\n" +

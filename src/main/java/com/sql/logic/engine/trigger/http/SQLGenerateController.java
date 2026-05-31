@@ -3,6 +3,7 @@ package com.sql.logic.engine.trigger.http;
 import com.sql.logic.engine.application.service.SQLGenerateAppService;
 import com.sql.logic.engine.trigger.http.dto.SqlGenerateRequest;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.stp.StpUtil;
 
 import org.springframework.http.MediaType;
@@ -11,6 +12,7 @@ import reactor.core.publisher.Flux;
 
 @RestController
 @RequestMapping("/api/v1/sql")
+@SaCheckLogin
 public class SQLGenerateController {
 
     private final SQLGenerateAppService sqlGenerateAppService;
@@ -24,18 +26,16 @@ public class SQLGenerateController {
         if (request.getUserId() == null) {
             return Flux.error(new IllegalArgumentException("UserId is required"));
         }
-        if (!StpUtil.isLogin()) {
-            return Flux.error(new IllegalArgumentException("User not logged in"));
-        }
+        // Verify userId matches logged-in user
         if (!request.getUserId().equals(StpUtil.getLoginIdAsLong())) {
-            return Flux.error(new IllegalArgumentException("UserId does not match"));
+            return Flux.error(new IllegalArgumentException("UserId does not match logged-in user"));
         }
         return sqlGenerateAppService.generateSqlStream(
                 request.getUserId(),
-                request.getUserInput(), 
+                request.getUserInput(),
                 request.getConnectionId(),
                 request.getTableNames(),
-                request.getSchemaContext(), 
+                request.getSchemaContext(),
                 request.getStrategyName(),
                 request.getParentHistoryId()
         );

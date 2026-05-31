@@ -1,5 +1,7 @@
 package com.sql.logic.engine.trigger.http;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.stp.StpUtil;
 import com.sql.logic.engine.application.service.ConversationAppService;
 import com.sql.logic.engine.infrastructure.po.Conversation;
 import com.sql.logic.engine.infrastructure.po.ConversationDetail;
@@ -11,6 +13,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/conversations")
+@SaCheckLogin
 public class ConversationController {
 
     private final ConversationAppService conversationAppService;
@@ -21,15 +24,20 @@ public class ConversationController {
 
     @PostMapping
     public Result<Conversation> createConversation(@RequestBody Map<String, Object> req) {
-        Long userId = Long.valueOf(req.getOrDefault("userId", 1).toString());
+        Long userId = StpUtil.getLoginIdAsLong();
         String title = (String) req.getOrDefault("title", "New Conversation");
         Long strategyId = Long.valueOf(req.getOrDefault("llmStrategyId", 1).toString());
-        
+
         return Result.success(conversationAppService.createConversation(userId, title, strategyId));
     }
 
     @GetMapping("/user/{userId}")
     public Result<List<Conversation>> listConversations(@PathVariable Long userId) {
+        // Verify the requesting user matches the path userId
+        Long loginUserId = StpUtil.getLoginIdAsLong();
+        if (!loginUserId.equals(userId)) {
+            return Result.error(403, "Access denied");
+        }
         return Result.success(conversationAppService.listConversations(userId));
     }
 

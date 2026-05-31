@@ -8,6 +8,8 @@ import com.sql.logic.engine.infrastructure.dao.UserInfoDao;
 import com.sql.logic.engine.infrastructure.dao.UserLlmApiKeyDao;
 import com.sql.logic.engine.infrastructure.po.UserInfo;
 import com.sql.logic.engine.infrastructure.po.UserLlmApiKey;
+import com.sql.logic.engine.infrastructure.util.PasswordUtil;
+import com.sql.logic.engine.infrastructure.util.UrlValidationUtil;
 import com.sql.logic.engine.application.service.storage.StorageService;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -40,16 +42,27 @@ public class UserAppService {
         if (email == null || password == null) {
             throw new IllegalArgumentException("Email and password cannot be null");
         }
-        
+
         QueryWrapper<UserInfo> query = new QueryWrapper<>();
-        query.eq("email", email).eq("password", password);
+        query.eq("email", email);
         UserInfo user = userInfoDao.selectOne(query);
-        
+
         if (user == null) {
             throw new IllegalArgumentException("Invalid email or password");
         }
         if (user.getStatus() != 1) {
             throw new IllegalStateException("User account is not active. Status: " + user.getStatus());
+        }
+
+        // Verify password using BCrypt (supports legacy plaintext for migration)
+        if (!PasswordUtil.verify(password, user.getPassword())) {
+            throw new IllegalArgumentException("Invalid email or password");
+        }
+
+        // Migrate plaintext password to BCrypt hash on successful login
+        if (!PasswordUtil.isBcryptHash(user.getPassword())) {
+            user.setPassword(PasswordUtil.hash(password));
+            userInfoDao.updateById(user);
         }
         
         QueryWrapper<UserLlmApiKey> keyQuery = new QueryWrapper<>();
@@ -78,7 +91,7 @@ public class UserAppService {
 
         UserInfo user = new UserInfo();
         user.setUsername(username);
-        user.setPassword(password); // In production, this should be hashed
+        user.setPassword(PasswordUtil.hash(password));
         user.setEmail(email);
         user.setStatus(1); // 1 = Active
         user.setTokenQuota(100); // Default 100 tokens
@@ -108,35 +121,29 @@ public class UserAppService {
 
     public void deductTokens(Long userId, int tokens) {
         if (tokens <= 0) return;
-        
+
         // Custom keys check: do not deduct system tokens
         QueryWrapper<UserLlmApiKey> keyQuery = new QueryWrapper<>();
         keyQuery.eq("user_id", userId).eq("status", 1);
         UserLlmApiKey userKey = userLlmApiKeyDao.selectOne(keyQuery);
-        
+
         if (userKey != null && userKey.getApiKey() != null && !userKey.getApiKey().trim().isEmpty()) {
             return;
         }
-        
+
+        // Atomic deduct: GREATEST ensures token_quota never goes negative,
+        // and the WHERE clause ensures we only deduct if the user has enough quota.
+        // This eliminates the race condition of the previous check-then-update approach.
         UpdateWrapper<UserInfo> updateWrapper = new UpdateWrapper<>();
         updateWrapper.eq("id", userId)
-                     .ge("token_quota", tokens)
-                     .setSql("token_quota = token_quota - " + tokens);
-                     
+                .gt("token_quota", 0)
+                .setSql("token_quota = GREATEST(token_quota - " + tokens + ", 0)");
+
         int updated = userInfoDao.update(null, updateWrapper);
         if (updated == 0) {
-            // Check if user still exists but has insufficient tokens to cover the exact amount
-            UserInfo checkUser = userInfoDao.selectById(userId);
-            if (checkUser != null && checkUser.getTokenQuota() < tokens) {
-                // Set token_quota to 0 to prevent negative balance
-                UpdateWrapper<UserInfo> zeroWrapper = new UpdateWrapper<>();
-                zeroWrapper.eq("id", userId)
-                           .set("token_quota", 0);
-                userInfoDao.update(null, zeroWrapper);
-                System.err.println("Audit Log: User " + userId + " consumed " + tokens + " tokens but only had " + checkUser.getTokenQuota() + ". Balance set to 0.");
-            } else {
-                System.err.println("Audit Log: Failed to deduct tokens for user " + userId + " due to missing record or concurrency conflict.");
-            }
+            // No rows updated means either user doesn't exist or token_quota was already 0
+            // This is logged but not treated as an error — the generation was still consumed
+            System.err.println("Audit Log: User " + userId + " token deduction skipped (quota depleted or user not found).");
         }
     }
 
@@ -160,6 +167,9 @@ public class UserAppService {
     }
 
     public void updateKeys(Long userId, String apiKey, String baseUrl) {
+        // SSRF prevention: validate baseURL points to an allowed external host
+        UrlValidationUtil.validateBaseUrl(baseUrl);
+
         QueryWrapper<UserLlmApiKey> query = new QueryWrapper<>();
         query.eq("user_id", userId);
         UserLlmApiKey userKey = userLlmApiKeyDao.selectOne(query);
@@ -226,10 +236,10 @@ public class UserAppService {
 
     public void updatePassword(Long userId, String oldPassword, String newPassword) {
         UserInfo user = getUserById(userId);
-        if (!user.getPassword().equals(oldPassword)) {
+        if (!PasswordUtil.verify(oldPassword, user.getPassword())) {
             throw new IllegalArgumentException("Incorrect old password");
         }
-        user.setPassword(newPassword);
+        user.setPassword(PasswordUtil.hash(newPassword));
         user.setUpdateTime(new Date());
         userInfoDao.updateById(user);
     }

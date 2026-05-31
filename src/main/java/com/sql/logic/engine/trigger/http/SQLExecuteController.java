@@ -1,5 +1,6 @@
 package com.sql.logic.engine.trigger.http;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.sql.logic.engine.application.exception.BizException;
 import com.sql.logic.engine.application.service.SQLExecuteAppService;
 import com.sql.logic.engine.trigger.http.dto.SqlExecuteRequest;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/sql")
+@SaCheckLogin
 public class SQLExecuteController {
 
     private final SQLExecuteAppService sqlExecuteAppService;

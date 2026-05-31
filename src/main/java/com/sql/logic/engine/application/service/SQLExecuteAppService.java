@@ -19,11 +19,13 @@ public class SQLExecuteAppService {
     private final SqlExecuteValidationChain validationChain;
     private final DatabaseAppService databaseAppService;
     private final QueryHistoryAppService queryHistoryAppService;
+    private final DatabaseMetaDataService databaseMetaDataService;
 
-    public SQLExecuteAppService(SqlExecuteValidationChain validationChain, DatabaseAppService databaseAppService, QueryHistoryAppService queryHistoryAppService) {
+    public SQLExecuteAppService(SqlExecuteValidationChain validationChain, DatabaseAppService databaseAppService, QueryHistoryAppService queryHistoryAppService, DatabaseMetaDataService databaseMetaDataService) {
         this.validationChain = validationChain;
         this.databaseAppService = databaseAppService;
         this.queryHistoryAppService = queryHistoryAppService;
+        this.databaseMetaDataService = databaseMetaDataService;
     }
 
     public SqlExecuteResponse execute(SqlExecuteRequest request) {
@@ -79,6 +81,11 @@ public class SQLExecuteAppService {
             
         } catch (SQLException e) {
             throw new IllegalArgumentException("SQL Execution Error: " + e.getMessage());
+        }
+
+        // Invalidate DDL cache if this was a schema-modifying statement
+        if (context.getCategory() != SqlStatementCategory.SAFE_READ && context.getConnectionId() != null) {
+            databaseMetaDataService.clearCache(context.getConnectionId());
         }
 
         return response;

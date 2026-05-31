@@ -1,5 +1,7 @@
 package com.sql.logic.engine.trigger.http;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.stp.StpUtil;
 import com.sql.logic.engine.application.service.DatabaseAppService;
 import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
@@ -10,6 +12,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/database")
+@SaCheckLogin
 public class DatabaseController {
 
     private final DatabaseAppService databaseAppService;
@@ -37,8 +40,9 @@ public class DatabaseController {
     }
 
     @GetMapping("/list")
-    public Result<List<DbConnectionConf>> listConnections(@RequestParam Long userId) {
+    public Result<List<DbConnectionConf>> listConnections() {
         try {
+            Long userId = StpUtil.getLoginIdAsLong();
             List<DbConnectionConf> list = databaseAppService.getUserConnections(userId);
             return Result.success(list);
         } catch (Exception e) {
@@ -49,6 +53,8 @@ public class DatabaseController {
     @PostMapping("/add")
     public Result<DbConnectionConf> addConnection(@RequestBody DbConnectionConf conf) {
         try {
+            Long userId = StpUtil.getLoginIdAsLong();
+            conf.setUserId(userId);
             DbConnectionConf saved = databaseAppService.addConnection(conf);
             return Result.success(saved);
         } catch (IllegalArgumentException e) {
@@ -59,8 +65,9 @@ public class DatabaseController {
     }
 
     @PutMapping("/update")
-    public Result<DbConnectionConf> updateConnection(@RequestParam Long userId, @RequestBody DbConnectionConf conf) {
+    public Result<DbConnectionConf> updateConnection(@RequestBody DbConnectionConf conf) {
         try {
+            Long userId = StpUtil.getLoginIdAsLong();
             DbConnectionConf updated = databaseAppService.updateConnection(userId, conf);
             return Result.success(updated);
         } catch (IllegalArgumentException e) {
@@ -71,8 +78,9 @@ public class DatabaseController {
     }
 
     @DeleteMapping("/delete/{id}")
-    public Result<Void> deleteConnection(@RequestParam Long userId, @PathVariable("id") Long connectionId) {
+    public Result<Void> deleteConnection(@PathVariable("id") Long connectionId) {
         try {
+            Long userId = StpUtil.getLoginIdAsLong();
             databaseAppService.deleteConnection(userId, connectionId);
             return Result.success(null);
         } catch (IllegalArgumentException e) {

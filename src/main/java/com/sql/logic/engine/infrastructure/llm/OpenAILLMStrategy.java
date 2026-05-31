@@ -21,12 +21,12 @@ public class OpenAILLMStrategy implements LLMStrategy {
     @Override
     public Flux<String> generateSqlStream(String promptStr, BiConsumer<Integer, String> tokenAndSqlCallback) {
         Prompt prompt = new Prompt(promptStr);
-        
+
         return Flux.defer(() -> {
             JsonStreamParser parser = new JsonStreamParser();
             AtomicInteger maxTokens = new AtomicInteger(0);
-            
-            return chatClient.prompt(prompt)
+
+            Flux<String> streamContent = chatClient.prompt(prompt)
                     .stream()
                     .chatResponse()
                     .doOnNext(response -> {
@@ -37,16 +37,23 @@ public class OpenAILLMStrategy implements LLMStrategy {
                             }
                         }
                     })
-                    .doOnComplete(() -> {
+                    .flatMapIterable(response -> {
+                        String chunk = response.getResult() != null && response.getResult().getOutput() != null
+                                ? response.getResult().getOutput().getText() : "";
+                        return parser.processChunk(chunk);
+                    });
+
+            // processComplete() runs first, then callback fires in doFinally()
+            // This ensures the SQL is fully extracted before the callback reads it
+            Flux<String> completeContent = Flux.fromIterable(parser.processComplete());
+
+            return Flux.concat(streamContent, completeContent)
+                    .doFinally(signalType -> {
+                        // Callback fires AFTER processComplete() has run, ensuring extractedSql is complete
                         if (tokenAndSqlCallback != null) {
                             tokenAndSqlCallback.accept(maxTokens.get(), parser.getExtractedSql());
                         }
-                    })
-                    .flatMapIterable(response -> {
-                        String chunk = response.getResult() != null && response.getResult().getOutput() != null ? response.getResult().getOutput().getText() : "";
-                        return parser.processChunk(chunk);
-                    })
-                    .concatWith(Flux.defer(() -> Flux.fromIterable(parser.processComplete())));
+                    });
         });
     }
 
@@ -54,18 +61,17 @@ public class OpenAILLMStrategy implements LLMStrategy {
     public String generateSql(String promptStr, BiConsumer<Integer, String> tokenAndSqlCallback) {
         Prompt prompt = new Prompt(promptStr);
         var response = chatClient.prompt(prompt).call().chatResponse();
-        
-        String generatedContent = response != null && response.getResult() != null && response.getResult().getOutput() != null ? response.getResult().getOutput().getText() : "";
-        
+
+        String generatedContent = response != null && response.getResult() != null && response.getResult().getOutput() != null
+                ? response.getResult().getOutput().getText() : "";
+
         if (response != null && response.getMetadata() != null && response.getMetadata().getUsage() != null) {
             Integer totalTokens = response.getMetadata().getUsage().getTotalTokens();
             if (totalTokens != null && totalTokens > 0 && tokenAndSqlCallback != null) {
-                // Here we might need to parse the JSON string to get the SQL for non-stream too.
-                // But for now, let's just pass the content, assuming it might be JSON.
                 tokenAndSqlCallback.accept(totalTokens.intValue(), generatedContent);
             }
         }
-        
+
         return generatedContent;
     }
 }

@@ -1,5 +1,6 @@
 package com.sql.logic.engine.trigger.http;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.sql.logic.engine.application.service.SqlConsoleAppService;
 import com.sql.logic.engine.trigger.http.dto.SqlConsoleExecuteRequest;
 import com.sql.logic.engine.trigger.http.dto.SqlConsoleExecuteResponse;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/workspace/console")
+@SaCheckLogin
 public class SqlConsoleController {
 
     private final SqlConsoleAppService sqlConsoleAppService;

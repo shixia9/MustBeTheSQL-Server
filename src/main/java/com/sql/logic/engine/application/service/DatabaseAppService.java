@@ -40,6 +40,8 @@ public class DatabaseAppService {
         }
         conf.setIsTest(0); // Users can only add their own non-test connections
         dbConnectionConfDao.insert(conf);
+        // Pre-warm the connection pool to eliminate cold-start latency
+        connectionManager.warmup(conf);
         conf.setPassword(null);
         return conf;
     }
@@ -53,6 +55,8 @@ public class DatabaseAppService {
             conf.setPassword(existing.getPassword()); // keep old password if not updated
         }
         dbConnectionConfDao.updateById(conf);
+        // Invalidate cached DataSource so a fresh pool is created with updated config
+        connectionManager.releaseConnection(conf.getId());
         conf.setPassword(null);
         return conf;
     }
@@ -66,6 +70,8 @@ public class DatabaseAppService {
             throw new IllegalArgumentException("Cannot delete shared test connection");
         }
         dbConnectionConfDao.deleteById(connectionId);
+        // Close and remove the connection pool
+        connectionManager.releaseConnection(connectionId);
     }
 
     public boolean testConnection(DbConnectionConf conf) {

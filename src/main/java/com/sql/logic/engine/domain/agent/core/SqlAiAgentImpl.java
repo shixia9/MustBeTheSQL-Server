@@ -26,14 +26,14 @@ public class SqlAiAgentImpl implements AiAgent {
         if (schemaContextProvider != null) {
             dynamicSchemaContext = schemaContextProvider.buildDynamicSchemaContext(connectionId, tableNames);
         }
-        
+
         String finalSchemaContext = dynamicSchemaContext;
         if (manualContext != null && !manualContext.isEmpty()) {
             finalSchemaContext += "\nAdditional Context: " + manualContext;
         }
 
         String prompt = buildPrompt(userInput, finalSchemaContext);
-        
+
         return llmStrategy.generateSqlStream(prompt, tokenAndSqlCallback);
     }
 
@@ -43,16 +43,38 @@ public class SqlAiAgentImpl implements AiAgent {
     }
 
     private String buildPrompt(String userInput, String schemaContext) {
-        return "You are an expert SQL Generator and Database Assistant.\n" +
-               "Given the following database schema:\n" + schemaContext + "\n\n" +
-               "Based on the user's request, generate the correct SQL query and a brief explanation.\n" +
-               "IMPORTANT: You MUST format your response EXACTLY as a valid JSON object with two keys: \"explain\" and \"sql\".\n" +
-               "DO NOT use markdown code blocks (```json or ```sql) or any other text outside the JSON object.\n" +
-               "Example:\n" +
-               "{\n" +
-               "  \"explain\": \"This query selects all active users.\",\n" +
-               "  \"sql\": \"SELECT * FROM users WHERE status = 'active';\"\n" +
-               "}\n\n" +
-               "User request: " + userInput;
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("You are an expert SQL Generator and Database Assistant.\n\n");
+
+        if (schemaContext != null && !schemaContext.isEmpty()) {
+            prompt.append("### Database Schema\n");
+            prompt.append("The following tables are available in the database:\n\n");
+            prompt.append(schemaContext);
+            prompt.append("\n\n");
+        }
+
+        prompt.append("### Instructions\n");
+        prompt.append("Based on the user's request, generate the correct SQL query and a brief explanation.\n\n");
+        prompt.append("Rules:\n");
+        prompt.append("1. Generate ONLY the SQL query that directly answers the user's request.\n");
+        prompt.append("2. Do NOT generate DDL statements (CREATE, ALTER, DROP) unless explicitly requested.\n");
+        prompt.append("3. Add appropriate WHERE clauses, JOINs, and aggregations as needed.\n");
+        prompt.append("4. Use table aliases when joining tables to prevent ambiguity.\n");
+        prompt.append("5. If the user's request is ambiguous, make reasonable assumptions and explain them.\n");
+        prompt.append("6. Prefer SELECT queries for analysis; for data modifications, confirm intent.\n\n");
+
+        prompt.append("### Response Format\n");
+        prompt.append("IMPORTANT: You MUST format your response EXACTLY as a valid JSON object with two keys: \"explain\" and \"sql\".\n");
+        prompt.append("DO NOT use markdown code blocks (```json or ```sql) or any other text outside the JSON object.\n\n");
+        prompt.append("Example:\n");
+        prompt.append("{\n");
+        prompt.append("  \"explain\": \"This query selects all active users ordered by creation date.\",\n");
+        prompt.append("  \"sql\": \"SELECT * FROM users WHERE status = 'active' ORDER BY created_at DESC\"\n");
+        prompt.append("}\n\n");
+
+        prompt.append("### User Request\n");
+        prompt.append(userInput);
+
+        return prompt.toString();
     }
 }

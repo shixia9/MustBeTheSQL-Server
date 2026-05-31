@@ -42,6 +42,21 @@ public class ConnectionManager {
         dataSourceCache.invalidate(connectionId);
     }
 
+    /**
+     * Pre-warm a connection pool by creating a test connection and immediately releasing it.
+     * This eliminates cold-start latency on the first query for a given database configuration.
+     */
+    public void warmup(DbConnectionConf conf) {
+        try {
+            Connection conn = getConnection(conf);
+            conn.isValid(5); // Quick validation
+            conn.close();
+            log.info("Successfully warmed up connection pool for connectionId: {}", conf.getId());
+        } catch (SQLException e) {
+            log.warn("Failed to warm up connection pool for connectionId: {}: {}", conf.getId(), e.getMessage());
+        }
+    }
+
     private HikariDataSource createDataSource(DbConnectionConf conf) {
         log.info("Creating new HikariDataSource for connectionId: {}", conf.getId());
         HikariConfig config = new HikariConfig();

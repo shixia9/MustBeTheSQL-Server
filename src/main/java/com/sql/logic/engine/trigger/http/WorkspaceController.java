@@ -1,5 +1,6 @@
 package com.sql.logic.engine.trigger.http;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.stp.StpUtil;
 import com.sql.logic.engine.application.service.WorkspaceAppService;
 import com.sql.logic.engine.infrastructure.dialect.model.ColumnDTO;
@@ -13,6 +14,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/workspace")
+@SaCheckLogin
 public class WorkspaceController {
 
     private final WorkspaceAppService workspaceAppService;

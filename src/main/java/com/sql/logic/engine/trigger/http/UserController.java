@@ -4,10 +4,12 @@ import com.sql.logic.engine.application.service.UserAppService;
 import com.sql.logic.engine.infrastructure.po.UserInfo;
 import com.sql.logic.engine.trigger.http.dto.LoginRequest;
 import com.sql.logic.engine.trigger.http.dto.RegisterRequest;
+import com.sql.logic.engine.trigger.http.dto.UpdateKeysRequest;
 import com.sql.logic.engine.trigger.http.dto.UpdatePasswordRequest;
 import com.sql.logic.engine.trigger.http.dto.UpdateProfileRequest;
 import com.sql.logic.engine.trigger.http.response.Result;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 
@@ -54,26 +56,31 @@ public class UserController {
         }
     }
 
+    @SaCheckLogin
     @PostMapping("/logout")
     public Result<Boolean> logout() {
         StpUtil.logout();
         return Result.success(true);
     }
 
+    @SaCheckLogin
     @PostMapping("/updateKeys")
-    public Result<Void> updateKeys(@RequestParam Long userId, @RequestParam(required = false) String apiKey, @RequestParam(required = false) String baseUrl) {
+    public Result<Void> updateKeys(@RequestBody UpdateKeysRequest request) {
         try {
-            userAppService.updateKeys(userId, apiKey, baseUrl);
+            Long loginUserId = StpUtil.getLoginIdAsLong();
+            userAppService.updateKeys(loginUserId, request.getApiKey(), request.getBaseUrl());
             return Result.success(null);
         } catch (Exception e) {
             return Result.error(400, e.getMessage());
         }
     }
 
+    @SaCheckLogin
     @PostMapping("/updateProfile")
     public Result<UserInfo> updateProfile(@RequestBody UpdateProfileRequest request) {
         try {
-            UserInfo user = userAppService.updateProfile(request.getUserId(), request.getUsername(), request.getEmail());
+            Long loginUserId = StpUtil.getLoginIdAsLong();
+            UserInfo user = userAppService.updateProfile(loginUserId, request.getUsername(), request.getEmail());
             user.setPassword(null);
             return Result.success(user);
         } catch (Exception e) {
@@ -81,10 +88,12 @@ public class UserController {
         }
     }
 
+    @SaCheckLogin
     @PostMapping("/updatePassword")
     public Result<Boolean> updatePassword(@RequestBody UpdatePasswordRequest request) {
         try {
-            userAppService.updatePassword(request.getUserId(), request.getOldPassword(), request.getNewPassword());
+            Long loginUserId = StpUtil.getLoginIdAsLong();
+            userAppService.updatePassword(loginUserId, request.getOldPassword(), request.getNewPassword());
             StpUtil.logout(); // Force logout after password change
             return Result.success(true);
         } catch (Exception e) {
@@ -92,10 +101,12 @@ public class UserController {
         }
     }
 
+    @SaCheckLogin
     @PostMapping("/uploadAvatar")
-    public Result<UserInfo> uploadAvatar(@RequestParam("userId") Long userId, @RequestParam("file") MultipartFile file) {
+    public Result<UserInfo> uploadAvatar(@RequestParam("file") MultipartFile file) {
         try {
-            UserInfo user = userAppService.updateAvatar(userId, file);
+            Long loginUserId = StpUtil.getLoginIdAsLong();
+            UserInfo user = userAppService.updateAvatar(loginUserId, file);
             user.setPassword(null);
             return Result.success(user);
         } catch (Exception e) {
@@ -103,10 +114,12 @@ public class UserController {
         }
     }
 
+    @SaCheckLogin
     @PostMapping("/cancelAccount")
-    public Result<Boolean> cancelAccount(@RequestParam("userId") Long userId) {
+    public Result<Boolean> cancelAccount() {
         try {
-            userAppService.cancelAccount(userId);
+            Long loginUserId = StpUtil.getLoginIdAsLong();
+            userAppService.cancelAccount(loginUserId);
             StpUtil.logout();
             return Result.success(true);
         } catch (Exception e) {
@@ -114,10 +127,12 @@ public class UserController {
         }
     }
 
+    @SaCheckLogin
     @GetMapping("/info")
-    public Result<UserInfo> getUserInfo(@RequestParam("userId") Long userId) {
+    public Result<UserInfo> getUserInfo() {
         try {
-            UserInfo user = userAppService.getUserById(userId);
+            Long loginUserId = StpUtil.getLoginIdAsLong();
+            UserInfo user = userAppService.getUserById(loginUserId);
             user.setPassword(null);
             return Result.success(user);
         } catch (Exception e) {

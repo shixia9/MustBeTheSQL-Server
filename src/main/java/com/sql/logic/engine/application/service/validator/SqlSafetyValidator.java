@@ -13,7 +13,9 @@ import net.sf.jsqlparser.statement.create.table.CreateTable;
 import net.sf.jsqlparser.statement.delete.Delete;
 import net.sf.jsqlparser.statement.drop.Drop;
 import net.sf.jsqlparser.statement.insert.Insert;
+import net.sf.jsqlparser.statement.select.PlainSelect;
 import net.sf.jsqlparser.statement.select.Select;
+import net.sf.jsqlparser.statement.select.SelectBody;
 import net.sf.jsqlparser.statement.show.ShowIndexStatement;
 import net.sf.jsqlparser.statement.show.ShowTablesStatement;
 import net.sf.jsqlparser.statement.truncate.Truncate;
@@ -87,9 +89,15 @@ public class SqlSafetyValidator implements SqlExecuteValidator {
     private static String applyReadSafety(String sql, Statement stmt) {
         String trimmed = normalizeSql(sql);
         if (stmt instanceof Select) {
-            String lower = trimmed.toLowerCase();
-            if (!lower.contains(" limit ")) {
-                return trimmed + " LIMIT 100";
+            // Use AST to check for LIMIT clause instead of string matching
+            // This avoids false positives from comments or subquery limits
+            Select select = (Select) stmt;
+            SelectBody body = select.getSelectBody();
+            if (body instanceof PlainSelect) {
+                PlainSelect plain = (PlainSelect) body;
+                if (plain.getLimit() == null) {
+                    return trimmed + " LIMIT 100";
+                }
             }
         }
         return trimmed;
