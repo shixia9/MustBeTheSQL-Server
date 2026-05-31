@@ -22,7 +22,7 @@ public class MysqlMetaData implements MetaData {
      * SQL identifier whitelist pattern: only letters, digits, and underscores.
      * Prevents SQL injection in DDL statements where parameterized queries are not supported.
      */
-    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
+    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("^[a-zA-Z0-9_.\\-]+$");
 
     @Override
     public String dbType() {

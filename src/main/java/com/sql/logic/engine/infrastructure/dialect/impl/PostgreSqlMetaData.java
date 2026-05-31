@@ -21,7 +21,7 @@ public class PostgreSqlMetaData implements MetaData {
      * SQL identifier whitelist pattern: only letters, digits, and underscores.
      * Prevents SQL injection in DDL statements.
      */
-    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
+    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("^[a-zA-Z0-9_.\\-]+$");
 
     private void validateIdentifier(String identifier, String label) {
         if (identifier == null || identifier.isEmpty()) {

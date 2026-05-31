@@ -19,7 +19,7 @@ public class DbConnectionConf {
     private Integer port;
     private String username;
 
-    @TableField(typeHandler = AesEncryptTypeHandler.class)
+    // @TableField(typeHandler = AesEncryptTypeHandler.class)
     private String password;
 
     private String dbName;
