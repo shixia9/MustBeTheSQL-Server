@@ -11,17 +11,16 @@ import java.util.Base64;
 
 /**
  * AES encryption utility.
- * Key is externalized to application.yml for security.
+ * Key is externalized to application.yml / environment variables for security.
  * Used as a Spring bean to support dependency injection.
  * Also provides static methods for MyBatis TypeHandler compatibility.
  */
 @Component
 public class AesUtil {
 
-    /** Default key used as fallback when Spring context is not yet initialized. */
-    private static final String DEFAULT_KEY = "uTfe6WtWICU/6rk0Gr7qKrAvHaRvQj+HRaHKvSe9UJI=";
+    private static final String AES_KEY_ENV = "AES_KEY";
 
-    @Value("${engine.crypto.aes-key:uTfe6WtWICU/6rk0Gr7qKrAvHaRvQj+HRaHKvSe9UJI=}")
+    @Value("${engine.crypto.aes-key}")
     private String configuredKey;
 
     private AES aes;
@@ -68,9 +67,15 @@ public class AesUtil {
      */
     public static String encryptStatic(String content) {
         if (INSTANCE == null) {
-            // Fallback for early initialization before Spring context is ready
+            // Fallback: read key from environment variable when Spring context is not yet ready
+            String envKey = System.getenv(AES_KEY_ENV);
+            if (envKey == null || envKey.isEmpty()) {
+                throw new IllegalStateException(
+                    "AES_KEY environment variable is not set. "
+                    + "Cannot encrypt before Spring context initialization.");
+            }
             AesUtil temp = new AesUtil();
-            temp.configuredKey = DEFAULT_KEY;
+            temp.configuredKey = envKey;
             temp.init();
             return temp.encrypt(content);
         }
@@ -83,9 +88,15 @@ public class AesUtil {
      */
     public static String decryptStatic(String content) {
         if (INSTANCE == null) {
-            // Fallback for early initialization before Spring context is ready
+            // Fallback: read key from environment variable when Spring context is not yet ready
+            String envKey = System.getenv(AES_KEY_ENV);
+            if (envKey == null || envKey.isEmpty()) {
+                throw new IllegalStateException(
+                    "AES_KEY environment variable is not set. "
+                    + "Cannot decrypt before Spring context initialization.");
+            }
             AesUtil temp = new AesUtil();
-            temp.configuredKey = DEFAULT_KEY;
+            temp.configuredKey = envKey;
             temp.init();
             return temp.decrypt(content);
         }

@@ -5,18 +5,18 @@ spring:
   application:
     name: must-be-the-sql-be
   datasource:
-    url: jdbc:mysql://106.13.236.175:13306/sql_logic_engine?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=UTC
-    username: root
-    password: root
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:sql_logic_engine}?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=UTC
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
-  # data:
-  #   redis:
-  #     host: 106.13.236.175
-  #     port: 16379
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   ai:
     openai:
-      api-key: sk-LRksJOdzcvC28aZjB6F3D95e37F946E49c96D23aA6D0BfCa
-      base-url: https://api.v3.cm
+      api-key: ${OPENAI_API_KEY:}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
 
 mybatis-plus:
   mapper-locations: classpath*:mapper/*.xml
@@ -27,7 +27,7 @@ mybatis-plus:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
 # Sa-Token Configuration
-sa-token: 
+sa-token:
     # token 名称
     token-name: satoken
     # token 有效期（单位：秒） 默认30天，-1 代表永久有效
@@ -40,14 +40,12 @@ sa-token:
     is-share: true
     # token 风格
     token-style: uuid
-    # 是否输出操作日志 
+    # 是否输出操作日志
     is-log: true
 
-# DCC Configuration
+# Application Configuration
 engine:
-  common:
-    config:
-      register:
-        host: 106.13.236.175
-        port: 16379
-        password: ""
+  crypto:
+    aes-key: ${AES_KEY:}
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:5173}
