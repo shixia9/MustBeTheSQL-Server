@@ -1,0 +1,26 @@
+# =============================================================
+# Nacos 引导配置 — 此文件只负责连接 Nacos
+# =============================================================
+
+spring:
+  application:
+    name: sql-logic-gateway
+  cloud:
+    nacos:
+      # 服务注册发现
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        enabled: ${NACOS_ENABLED:false}
+      # 配置中心
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        file-extension: yml
+        # 共享配置：Sa-Token、公共配置等
+        shared-configs:
+          - data-id: shared-config.yml
+            group: DEFAULT_GROUP
+            refresh: true
+        # 是否启用配置中心（本地开发可关闭）
+        enabled: ${NACOS_ENABLED:false}

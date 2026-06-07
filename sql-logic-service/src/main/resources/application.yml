@@ -1,0 +1,27 @@
+# =============================================================
+# Nacos 引导配置 — 使用 spring.config.import 方式（Spring Boot 3.x）
+# 这是在 Spring Cloud 2023.x 中加载 Nacos 配置中心的正确方式
+# =============================================================
+
+spring:
+  application:
+    name: sql-logic-service
+  config:
+    import: optional:nacos:sql-logic-service.yml?group=DEFAULT_GROUP&refreshEnabled=true
+  cloud:
+    nacos:
+      # 服务注册发现
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        enabled: ${NACOS_ENABLED:true}
+      # 配置中心
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        # 共享配置：Sa-Token 等
+        shared-configs:
+          - data-id: shared-config.yml
+            group: DEFAULT_GROUP
+            refresh: true
+        enabled: ${NACOS_ENABLED:true}

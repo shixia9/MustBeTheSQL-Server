@@ -1,0 +1,35 @@
+# =============================================================
+# Nacos 配置中心 — Gateway 专属配置模板
+# =============================================================
+# 在 Nacos 控制台中创建：Data ID = sql-logic-gateway.yml, Group = DEFAULT_GROUP
+# =============================================================
+
+server:
+  port: 8080
+
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: sql-logic-service
+          uri: lb://sql-logic-service    # 通过 Nacos 发现 Service 实例
+          predicates:
+            - Path=/api/v1/**
+        - id: sql-logic-uploads
+          uri: lb://sql-logic-service
+          predicates:
+            - Path=/uploads/**
+      httpclient:
+        response-timeout: 300s          # LLM 流式生成需较长超时
+        connect-timeout: 10000
+  codec:
+    max-in-memory-size: 10MB            # 文件上传限制
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+# CORS 允许的来源
+engine:
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:80}

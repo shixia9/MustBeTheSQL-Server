@@ -1,0 +1,26 @@
+# =============================================================
+# Gateway 应用配置
+# =============================================================
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: sql-logic-gateway
+  config:
+    import: optional:nacos:sql-logic-gateway.yml?group=DEFAULT_GROUP&refreshEnabled=true
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        enabled: ${NACOS_ENABLED:true}
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        shared-configs:
+          - data-id: shared-config.yml
+            group: DEFAULT_GROUP
+            refresh: true
+        enabled: ${NACOS_ENABLED:true}
