@@ -39,5 +39,11 @@
             <artifactId>jakarta.servlet-api</artifactId>
             <scope>provided</scope>
         </dependency>
+        <!-- Sa-Token for SecurityContext fallback (extracts user from session) -->
+        <!-- <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot3-starter</artifactId>
+            <scope>provided</scope>
+        </dependency> -->
     </dependencies>
 </project>

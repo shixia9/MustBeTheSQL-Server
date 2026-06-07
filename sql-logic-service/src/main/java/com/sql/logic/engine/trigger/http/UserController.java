@@ -1,7 +1,6 @@
 package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.UserAppService;
-import com.sql.logic.engine.common.context.SecurityContext;
 import com.sql.logic.engine.common.dto.LoginRequest;
 import com.sql.logic.engine.common.dto.RegisterRequest;
 import com.sql.logic.engine.common.dto.UpdateKeysRequest;
@@ -37,6 +36,7 @@ public class UserController {
             StpUtil.login(user.getId(), new SaLoginParameter()
                     .setIsLastingCookie(request.getRememberMe())  // remember me
                     .setTimeout(DEFAULT_LOGIN_SESSION_TIMEOUT));  // token expiration: 7 days
+            StpUtil.getSession().set(user.getId().toString(), user);
             return Result.success(user);
         } catch (IllegalArgumentException | IllegalStateException e) {
             return Result.error(400, e.getMessage());
@@ -65,7 +65,11 @@ public class UserController {
     @PostMapping("/updateKeys")
     public Result<Void> updateKeys(@RequestBody UpdateKeysRequest request) {
         try {
-            Long loginUserId = SecurityContext.getCurrentUserId();
+            String loginUserIdStr = (String) StpUtil.getLoginId();
+            if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long loginUserId = Long.valueOf(loginUserIdStr);
             userAppService.updateKeys(loginUserId, request.getApiKey(), request.getBaseUrl());
             return Result.success(null);
         } catch (Exception e) {
@@ -76,9 +80,14 @@ public class UserController {
     @PostMapping("/updateProfile")
     public Result<UserInfo> updateProfile(@RequestBody UpdateProfileRequest request) {
         try {
-            Long loginUserId = SecurityContext.getCurrentUserId();
+            String loginUserIdStr = (String) StpUtil.getLoginId();
+            if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long loginUserId = Long.valueOf(loginUserIdStr);
             UserInfo user = userAppService.updateProfile(loginUserId, request.getUsername(), request.getEmail());
             user.setPassword(null);
+            StpUtil.getSession().set(loginUserId.toString(), user);
             return Result.success(user);
         } catch (Exception e) {
             return Result.error(400, e.getMessage());
@@ -88,7 +97,11 @@ public class UserController {
     @PostMapping("/updatePassword")
     public Result<Boolean> updatePassword(@RequestBody UpdatePasswordRequest request) {
         try {
-            Long loginUserId = SecurityContext.getCurrentUserId();
+            String loginUserIdStr = (String) StpUtil.getLoginId();
+            if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long loginUserId = Long.valueOf(loginUserIdStr);
             userAppService.updatePassword(loginUserId, request.getOldPassword(), request.getNewPassword());
             StpUtil.logout(); // Force logout after password change
             return Result.success(true);
@@ -100,9 +113,14 @@ public class UserController {
     @PostMapping("/uploadAvatar")
     public Result<UserInfo> uploadAvatar(@RequestParam("file") MultipartFile file) {
         try {
-            Long loginUserId = SecurityContext.getCurrentUserId();
+            String loginUserIdStr = (String) StpUtil.getLoginId();
+            if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long loginUserId = Long.valueOf(loginUserIdStr);
             UserInfo user = userAppService.updateAvatar(loginUserId, file);
             user.setPassword(null);
+            StpUtil.getSession().set(loginUserId.toString(), user);
             return Result.success(user);
         } catch (Exception e) {
             return Result.error(400, e.getMessage());
@@ -112,7 +130,11 @@ public class UserController {
     @PostMapping("/cancelAccount")
     public Result<Boolean> cancelAccount() {
         try {
-            Long loginUserId = SecurityContext.getCurrentUserId();
+            String loginUserIdStr = (String) StpUtil.getLoginId();
+            if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long loginUserId = Long.valueOf(loginUserIdStr);
             userAppService.cancelAccount(loginUserId);
             StpUtil.logout();
             return Result.success(true);
@@ -124,7 +146,11 @@ public class UserController {
     @GetMapping("/info")
     public Result<UserInfo> getUserInfo() {
         try {
-            Long loginUserId = SecurityContext.getCurrentUserId();
+            String loginUserIdStr = (String) StpUtil.getLoginId();
+            if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long loginUserId = Long.valueOf(loginUserIdStr);
             UserInfo user = userAppService.getUserById(loginUserId);
             user.setPassword(null);
             return Result.success(user);

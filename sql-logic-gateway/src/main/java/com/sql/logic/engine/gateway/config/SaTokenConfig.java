@@ -20,10 +20,14 @@ public class SaTokenConfig {
                 .addInclude("/**") // 拦截所有路径
                 .addExclude("/favicon.ico") // 放行 favicon.ico
                 .setAuth(obj -> {
-                    SaRouter.match("/**")
-                            .notMatch("/api/v1/user/**")
-                            .check(r -> StpUtil.checkLogin());
-                });
+                    // 拦截所有路径，放行登录注册和公开静态资源
+                        SaRouter.match("/**")
+                                .notMatch("/api/v1/user/**")
+                                // .notMatch("/api/v1/database/**")
+                                .notMatch("/uploads/**")
+                                .check(r -> StpUtil.checkLogin());
+                })
+                .setError(this::getSaResult);
     }
 
     public SaResult getSaResult(Throwable throwable) {

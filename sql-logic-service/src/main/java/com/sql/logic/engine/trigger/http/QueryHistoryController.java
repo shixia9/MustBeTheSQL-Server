@@ -2,9 +2,10 @@ package com.sql.logic.engine.trigger.http;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sql.logic.engine.application.service.QueryHistoryAppService;
-import com.sql.logic.engine.common.context.SecurityContext;
 import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.infrastructure.po.QueryHistory;
+
+import cn.dev33.satoken.stp.StpUtil;
 
 import org.springframework.web.bind.annotation.*;
 
@@ -31,7 +32,11 @@ public class QueryHistoryController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate) {
         // Verify the requesting user matches the path userId
-        Long loginUserId = SecurityContext.getCurrentUserId();
+        String loginUserIdStr = (String) StpUtil.getLoginId();
+        if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+            return Result.error(400, "Invalid user ID in session");
+        }
+        Long loginUserId = Long.valueOf(loginUserIdStr);
         if (!loginUserId.equals(userId)) {
             return Result.error(403, "Access denied");
         }

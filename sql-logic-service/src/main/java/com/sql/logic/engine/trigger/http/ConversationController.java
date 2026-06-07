@@ -1,10 +1,11 @@
 package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.ConversationAppService;
-import com.sql.logic.engine.common.context.SecurityContext;
 import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.infrastructure.po.Conversation;
 import com.sql.logic.engine.infrastructure.po.ConversationDetail;
+
+import cn.dev33.satoken.stp.StpUtil;
 
 import org.springframework.web.bind.annotation.*;
 
@@ -23,7 +24,11 @@ public class ConversationController {
 
     @PostMapping
     public Result<Conversation> createConversation(@RequestBody Map<String, Object> req) {
-        Long userId = SecurityContext.getCurrentUserId();
+        String userIdStr = (String) StpUtil.getLoginId();
+        if (userIdStr == null || !userIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+        }
+        Long userId = Long.valueOf(userIdStr);
         String title = (String) req.getOrDefault("title", "New Conversation");
         Long strategyId = Long.valueOf(req.getOrDefault("llmStrategyId", 1).toString());
 
@@ -33,7 +38,11 @@ public class ConversationController {
     @GetMapping("/user/{userId}")
     public Result<List<Conversation>> listConversations(@PathVariable Long userId) {
         // Verify the requesting user matches the path userId
-        Long loginUserId = SecurityContext.getCurrentUserId();
+        String loginUserIdStr = (String) StpUtil.getLoginId();
+        if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+            return Result.error(400, "Invalid user ID in session");
+        }
+        Long loginUserId = Long.valueOf(loginUserIdStr);
         if (!loginUserId.equals(userId)) {
             return Result.error(403, "Access denied");
         }

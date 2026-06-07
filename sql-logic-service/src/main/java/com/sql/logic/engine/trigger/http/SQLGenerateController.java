@@ -1,8 +1,9 @@
 package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.SQLGenerateAppService;
-import com.sql.logic.engine.common.context.SecurityContext;
 import com.sql.logic.engine.common.dto.SqlGenerateRequest;
+
+import cn.dev33.satoken.stp.StpUtil;
 
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -20,7 +21,11 @@ public class SQLGenerateController {
 
     @PostMapping(value = "/generate/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> generateSqlStream(@RequestBody SqlGenerateRequest request) {
-        Long currentUserId = SecurityContext.getCurrentUserId();
+        String currentUserIdStr = (String) StpUtil.getLoginId();
+        if (currentUserIdStr == null || !currentUserIdStr.matches("\\d+")) {
+            return Flux.error(new IllegalArgumentException("Invalid user ID in session"));
+        }
+        Long currentUserId = Long.valueOf(currentUserIdStr);
         if (request.getUserId() == null) {
             return Flux.error(new IllegalArgumentException("UserId is required"));
         }

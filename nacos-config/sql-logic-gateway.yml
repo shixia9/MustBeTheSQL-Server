@@ -15,6 +15,10 @@ spring:
           uri: lb://sql-logic-service    # 通过 Nacos 发现 Service 实例
           predicates:
             - Path=/api/v1/**
+        - id: sql-logic-uploads
+          uri: lb://sql-logic-service
+          predicates:
+            - Path=/uploads/**
       httpclient:
         response-timeout: 300s          # LLM 流式生成需较长超时
         connect-timeout: 10000

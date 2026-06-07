@@ -2,9 +2,10 @@ package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.DatabaseAppService;
 import com.sql.logic.engine.application.service.DatabaseMetaDataService;
-import com.sql.logic.engine.common.context.SecurityContext;
 import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
+
+import cn.dev33.satoken.stp.StpUtil;
 
 import org.springframework.web.bind.annotation.*;
 
@@ -41,7 +42,11 @@ public class DatabaseController {
     @GetMapping("/list")
     public Result<List<DbConnectionConf>> listConnections() {
         try {
-            Long userId = SecurityContext.getCurrentUserId();
+            String userIdStr = (String) StpUtil.getLoginId();
+            if (userIdStr == null || !userIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long userId = Long.valueOf(userIdStr);
             List<DbConnectionConf> list = databaseAppService.getUserConnections(userId);
             return Result.success(list);
         } catch (Exception e) {
@@ -52,7 +57,11 @@ public class DatabaseController {
     @PostMapping("/add")
     public Result<DbConnectionConf> addConnection(@RequestBody DbConnectionConf conf) {
         try {
-            Long userId = SecurityContext.getCurrentUserId();
+            String userIdStr = (String) StpUtil.getLoginId();
+            if (userIdStr == null || !userIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long userId = Long.valueOf(userIdStr);
             conf.setUserId(userId);
             DbConnectionConf saved = databaseAppService.addConnection(conf);
             return Result.success(saved);
@@ -66,7 +75,11 @@ public class DatabaseController {
     @PutMapping("/update")
     public Result<DbConnectionConf> updateConnection(@RequestBody DbConnectionConf conf) {
         try {
-            Long userId = SecurityContext.getCurrentUserId();
+            String userIdStr = (String) StpUtil.getLoginId();
+            if (userIdStr == null || !userIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long userId = Long.valueOf(userIdStr);
             DbConnectionConf updated = databaseAppService.updateConnection(userId, conf);
             return Result.success(updated);
         } catch (IllegalArgumentException e) {
@@ -79,7 +92,11 @@ public class DatabaseController {
     @DeleteMapping("/delete/{id}")
     public Result<Void> deleteConnection(@PathVariable("id") Long connectionId) {
         try {
-            Long userId = SecurityContext.getCurrentUserId();
+            String userIdStr = (String) StpUtil.getLoginId();
+            if (userIdStr == null || !userIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long userId = Long.valueOf(userIdStr);
             databaseAppService.deleteConnection(userId, connectionId);
             return Result.success(null);
         } catch (IllegalArgumentException e) {
