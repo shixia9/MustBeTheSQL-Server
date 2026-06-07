@@ -77,17 +77,18 @@
                 <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
                 <version>${mybatis-plus.version}</version>
             </dependency>
-            <!-- Sa-Token -->
+            <!-- Sa-Token (Servlet, for Service) -->
             <dependency>
                 <groupId>cn.dev33</groupId>
                 <artifactId>sa-token-spring-boot3-starter</artifactId>
                 <version>${sa-token.version}</version>
             </dependency>
-            <!-- <dependency>
+            <!-- Sa-Token (Reactive, for Gateway) -->
+            <dependency>
                 <groupId>cn.dev33</groupId>
                 <artifactId>sa-token-reactor-spring-boot3-starter</artifactId>
                 <version>${sa-token.version}</version>
-            </dependency> -->
+            </dependency>
             <!-- Redisson -->
             <dependency>
                 <groupId>org.redisson</groupId>

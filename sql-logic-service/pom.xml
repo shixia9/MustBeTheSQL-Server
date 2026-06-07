@@ -29,9 +29,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!-- Reactor Core (for Flux streaming in SSE) — NOT the webflux server starter.
+             Using the core library avoids pulling in Reactive Netty Server,
+             which conflicts with Servlet container and causes SaTokenContext init failure. -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -114,7 +117,7 @@
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
 
-        <!-- Sa-Token for login/logout session management only -->
+        <!-- Sa-Token (Servlet version — Service is a Servlet-based app) -->
         <dependency>
             <groupId>cn.dev33</groupId>
             <artifactId>sa-token-spring-boot3-starter</artifactId>
