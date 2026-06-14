@@ -22,7 +22,7 @@ public class QueryHistoryAppService {
         this.queryHistoryDao = queryHistoryDao;
     }
 
-    public void recordGeneration(Long userId, String prompt, Long connectionId, String databaseName, String generatedSql, String modelName, Integer tokens, Long parentId) {
+    public void recordGeneration(Long userId, String prompt, Long connectionId, String databaseName, String generatedSql, String modelName, Integer tokens, Long parentId, Long llmConfigId) {
         QueryHistory history = new QueryHistory();
         history.setUserId(userId);
         history.setPrompt(prompt);
@@ -32,6 +32,7 @@ public class QueryHistoryAppService {
         history.setModelName(modelName);
         history.setTokens(tokens);
         history.setParentId(parentId);
+        history.setLlmConfigId(llmConfigId);
         // Cost estimation: $2 per 1M tokens (0.000002 per token)
         if (tokens != null) {
             history.setCost(new BigDecimal(tokens).multiply(new BigDecimal("0.000002")));
@@ -39,7 +40,7 @@ public class QueryHistoryAppService {
             history.setCost(BigDecimal.ZERO);
         }
         history.setCreateTime(new Date());
-        
+
         queryHistoryDao.insert(history);
     }
 

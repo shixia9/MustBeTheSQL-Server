@@ -11,6 +11,8 @@ public class SqlGenerateRequest {
     private Long connectionId;
     private List<String> tableNames;
     private String schemaContext;
+    @Deprecated
     private String strategyName;
+    private Long llmConfigId;
     private Long parentHistoryId;
 }

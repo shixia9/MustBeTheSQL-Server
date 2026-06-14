@@ -116,6 +116,10 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-anthropic</artifactId>
+        </dependency>
 
         <!-- Sa-Token (Servlet version — Service is a Servlet-based app) -->
         <dependency>

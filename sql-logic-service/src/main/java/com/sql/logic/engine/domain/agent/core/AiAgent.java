@@ -6,23 +6,37 @@ import reactor.core.publisher.Flux;
 import java.util.List;
 import java.util.function.BiConsumer;
 
+/**
+ * AI Agent responsible for building prompts and delegating to an LLM strategy.
+ *
+ * An agent is stateless with respect to which LLM it uses — the LLM strategy
+ * is either the system default (baked in at construction) or provided at call time
+ * based on the user's selected configuration.
+ */
 public interface AiAgent {
-    
-    /**
-     * Set the dynamic schema context provider for this agent
-     */
+
     void setSchemaContextProvider(SchemaContextProvider provider);
 
     /**
-     * Generates SQL using the internal LLM Strategy, injecting knowledge context (DDL) automatically.
+     * Generate SQL using the agent's default (system) LLM strategy.
+     * Used when no specific config is selected.
      */
-    Flux<String> generateSqlStream(String userInput, Long connectionId, List<String> tableNames, String manualContext, BiConsumer<Integer, String> tokenAndSqlCallback);
-    
+    Flux<String> generateSqlStream(String userInput, Long connectionId, List<String> tableNames,
+                                   String manualContext, BiConsumer<Integer, String> tokenAndSqlCallback);
+
     /**
-     * Get the underlying strategy if needed
+     * Generate SQL using a specific LLM strategy (user's chosen config).
+     * The strategy is provided at runtime, not baked into the agent.
+     */
+    Flux<String> generateSqlStream(String userInput, Long connectionId, List<String> tableNames,
+                                   String manualContext, BiConsumer<Integer, String> tokenAndSqlCallback,
+                                   LLMStrategy strategy);
+
+    /**
+     * Get the default (system) LLM strategy for this agent.
      */
     LLMStrategy getLlmStrategy();
-    
+
     interface SchemaContextProvider {
         String buildDynamicSchemaContext(Long connectionId, List<String> tableNames);
     }

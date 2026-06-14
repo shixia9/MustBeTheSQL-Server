@@ -1,7 +1,6 @@
 package com.sql.logic.engine.infrastructure.po;
 
 import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
@@ -22,10 +21,18 @@ public class UserInfo {
     private Integer tokenQuota;
     private Date createTime;
     private Date updateTime;
-    
-    @TableField(exist = false)
-    private String apiKey;
-    
-    @TableField(exist = false)
-    private String baseUrl;
+
+    /**
+     * @deprecated Use LlmConfigAppService.listConfigs() instead.
+     * Kept temporarily for backward compatibility during migration.
+     */
+    @Deprecated
+    private transient String apiKey;
+
+    /**
+     * @deprecated Use LlmConfigAppService.listConfigs() instead.
+     * Kept temporarily for backward compatibility during migration.
+     */
+    @Deprecated
+    private transient String baseUrl;
 }

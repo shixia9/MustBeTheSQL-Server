@@ -21,7 +21,15 @@ public class SqlAiAgentImpl implements AiAgent {
     }
 
     @Override
-    public Flux<String> generateSqlStream(String userInput, Long connectionId, List<String> tableNames, String manualContext, BiConsumer<Integer, String> tokenAndSqlCallback) {
+    public Flux<String> generateSqlStream(String userInput, Long connectionId, List<String> tableNames,
+                                           String manualContext, BiConsumer<Integer, String> tokenAndSqlCallback) {
+        return generateSqlStream(userInput, connectionId, tableNames, manualContext, tokenAndSqlCallback, llmStrategy);
+    }
+
+    @Override
+    public Flux<String> generateSqlStream(String userInput, Long connectionId, List<String> tableNames,
+                                           String manualContext, BiConsumer<Integer, String> tokenAndSqlCallback,
+                                           LLMStrategy strategy) {
         String dynamicSchemaContext = "";
         if (schemaContextProvider != null) {
             dynamicSchemaContext = schemaContextProvider.buildDynamicSchemaContext(connectionId, tableNames);
@@ -34,7 +42,7 @@ public class SqlAiAgentImpl implements AiAgent {
 
         String prompt = buildPrompt(userInput, finalSchemaContext);
 
-        return llmStrategy.generateSqlStream(prompt, tokenAndSqlCallback);
+        return strategy.generateSqlStream(prompt, tokenAndSqlCallback);
     }
 
     @Override

@@ -24,6 +24,7 @@ public class QueryHistory {
     private Integer rowCount;
     private BigDecimal cost;
     private Long parentId;
+    private Long llmConfigId;
     private Date createTime;
     private Date executeTime;
 }

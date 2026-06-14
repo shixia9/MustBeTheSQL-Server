@@ -39,7 +39,8 @@ public class SQLGenerateController {
                 request.getConnectionId(),
                 request.getTableNames(),
                 request.getSchemaContext(),
-                request.getStrategyName(),
+                request.getLlmConfigId(),
+                request.getStrategyName(),  // Deprecated: kept for backward compat
                 request.getParentHistoryId()
         );
     }
