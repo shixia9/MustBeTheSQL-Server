@@ -34,6 +34,9 @@ public class AiAgentFactory {
     @Value("${spring.ai.openai.api-key:}")
     private String defaultApiKey;
 
+    @Value("${spring.ai.openai.chat.options.model:}")
+    private String defaultModelName;
+
     // Cache the ObjectMapper with NON_EMPTY setting
     private volatile ObjectMapper nonEmptyObjectMapper;
 
@@ -67,9 +70,12 @@ public class AiAgentFactory {
      * Create the system default LLMStrategy directly (bypassing auto-configured builder).
      * This ensures the OpenAiApi uses a RestClient with NON_EMPTY ObjectMapper,
      * preventing "extra_body": {} from being serialized to API requests.
+     * <p>
+     * Uses the model name from config (spring.ai.openai.chat.options.model).
      */
     public LLMStrategy createDefaultSystemStrategy() {
-        return createOpenAiStrategy(defaultApiKey, defaultOpenAiBaseUrl, null);
+        String modelName = (defaultModelName != null && !defaultModelName.isBlank()) ? defaultModelName : null;
+        return createOpenAiStrategy(defaultApiKey, defaultOpenAiBaseUrl, modelName);
     }
 
     /**
