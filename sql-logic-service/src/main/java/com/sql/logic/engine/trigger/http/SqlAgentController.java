@@ -111,9 +111,8 @@ public class SqlAgentController {
         try {
             String nodeName = output.node();
 
-            // Skip START pseudo-node
-            if ("__start__".equals(nodeName) || "__end__".equals(nodeName)) {
-                // For END node, we already send COMPLETED separately
+            // Skip START/END pseudo-nodes — matching library constants (uppercase)
+            if ("__start__".equalsIgnoreCase(nodeName) || "__end__".equalsIgnoreCase(nodeName)) {
                 return "";
             }
 
