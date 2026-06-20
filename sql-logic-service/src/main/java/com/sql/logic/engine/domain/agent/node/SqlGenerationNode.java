@@ -10,10 +10,13 @@ import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.infrastructure.dao.DbConnectionConfDao;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
 import com.sql.logic.engine.infrastructure.util.MarkdownParserUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * SQL Generation Node — generates SQL from the rewritten query + schema context.
@@ -21,9 +24,24 @@ import java.util.Map;
  * Uses the same DDL retrieval mechanism as SqlAiAgentImpl for backward compatibility,
  * but structures the prompt using the enhanced PromptManager template.
  * The schema context is built from DatabaseMetaDataService's cached DDL fetching.
+ * <p>
+ * Includes a lightweight feasibility gate: if the rewritten query is identified as
+ * non-queryable (greetings, small talk, etc.), the node returns a clarification
+ * message instead of attempting SQL generation, saving an unnecessary LLM call.
  */
 @Component
 public class SqlGenerationNode implements NodeAction {
+
+    private static final Logger log = LoggerFactory.getLogger(SqlGenerationNode.class);
+
+    /**
+     * Keywords/patterns that indicate the user's input is not a data query.
+     * If the rewritten query matches any of these, we skip SQL generation.
+     */
+    private static final Set<String> NON_QUERY_INDICATORS = Set.of(
+            "无具体查询内容", "无有效查询内容", "查询相关数据或信息", "闲聊", "不涉及数据",
+            "no specific query", "not a data query", "general conversation"
+    );
 
     private final LlmClientManager llmClientManager;
     private final PromptManager promptManager;
@@ -56,6 +74,14 @@ public class SqlGenerationNode implements NodeAction {
         // If no rewritten query, fall back to original input
         if (rewriteQuery == null || rewriteQuery.isBlank()) {
             rewriteQuery = state.value(SqlAgentSpec.StateKey.INPUT, "");
+        }
+
+        // Lightweight feasibility gate: skip SQL generation for non-query inputs
+        if (isNonQueryable(rewriteQuery)) {
+            log.info("[SqlGenerationNode] Non-queryable input detected, skipping SQL generation: '{}'", rewriteQuery);
+            return Map.of(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT,
+                    "您的输入似乎不是一个数据查询请求。请尝试描述您想查询的数据，例如：\"查询所有客户\"" +
+                    "或\"展示销售额前10的产品\"。");
         }
 
         // Determine dialect from database connection
@@ -93,9 +119,35 @@ public class SqlGenerationNode implements NodeAction {
         // Strip markdown code fences
         sql = MarkdownParserUtil.extractRawText(sql);
 
-        System.out.println("[SqlGenerationNode] Generated SQL: " + sql);
+        log.info("[SqlGenerationNode] Generated SQL: {}", sql);
 
         return Map.of(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, sql);
+    }
+
+    /**
+     * Lightweight feasibility check: determine if the rewritten query is a data query
+     * or a non-queryable input (greetings, small talk, etc.).
+     * <p>
+     * This avoids wasting an LLM call on inputs that cannot produce meaningful SQL.
+     * In Phase 3, this will be replaced by a dedicated FEASIBILITY_ASSESSMENT node
+     * with conditional graph routing.
+     */
+    private boolean isNonQueryable(String rewriteQuery) {
+        if (rewriteQuery == null || rewriteQuery.isBlank()) {
+            return true;
+        }
+        String trimmed = rewriteQuery.trim().toLowerCase();
+        // Check against known non-query indicators from EvidenceRecallNode
+        for (String indicator : NON_QUERY_INDICATORS) {
+            if (trimmed.contains(indicator.toLowerCase())) {
+                return true;
+            }
+        }
+        // Very short queries (< 3 chars after trimming) that aren't likely SQL-related
+        if (trimmed.length() < 3 && !trimmed.matches(".*[a-z0-9_]+.*")) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -150,7 +202,7 @@ public class SqlGenerationNode implements NodeAction {
             }
             return sb.toString();
         } catch (Exception e) {
-            System.err.println("[SqlGenerationNode] Failed to build schema context: " + e.getMessage());
+            log.error("[SqlGenerationNode] Failed to build schema context", e);
             return "（Schema 信息加载失败）";
         }
     }

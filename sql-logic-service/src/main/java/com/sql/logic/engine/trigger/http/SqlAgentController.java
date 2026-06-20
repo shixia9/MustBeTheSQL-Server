@@ -17,6 +17,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * REST controller for the SQL Agent streaming endpoint.
@@ -135,7 +136,15 @@ public class SqlAgentController {
     }
 
     /**
+     * Sensitive state keys that should never be sent to the frontend.
+     */
+    private static final Set<String> SENSITIVE_KEYS = Set.of(
+            "connectionId", "llmConfigId", "userId"
+    );
+
+    /**
      * Extract relevant state data based on which node just completed.
+     * Filters out sensitive keys like connectionId, llmConfigId, userId.
      */
     private Map<String, Object> extractNodeData(String nodeName, OverAllState state) {
         Map<String, Object> data = new LinkedHashMap<>();
@@ -153,11 +162,13 @@ public class SqlAgentController {
                 break;
             // Phase 2+ nodes will add their data extraction here
             default:
-                // Generic: include all non-null state entries
+                // Generic: include non-sensitive state entries only
                 for (String key : state.data().keySet()) {
-                    Object val = state.value(key, null);
-                    if (val != null) {
-                        data.put(key, val);
+                    if (!SENSITIVE_KEYS.contains(key)) {
+                        Object val = state.value(key, null);
+                        if (val != null) {
+                            data.put(key, val);
+                        }
                     }
                 }
                 break;

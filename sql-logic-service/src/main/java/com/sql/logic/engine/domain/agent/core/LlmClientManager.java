@@ -4,6 +4,8 @@ import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.infrastructure.dao.UserLlmConfigDao;
 import com.sql.logic.engine.infrastructure.po.UserLlmConfig;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -21,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class LlmClientManager {
 
+    private static final Logger log = LoggerFactory.getLogger(LlmClientManager.class);
+
     private final ConcurrentHashMap<Long, LLMStrategy> clientCache = new ConcurrentHashMap<>();
     private final UserLlmConfigDao userLlmConfigDao;
 
@@ -33,7 +37,7 @@ public class LlmClientManager {
      */
     public void registerClient(Long configId, LLMStrategy strategy) {
         clientCache.put(configId, strategy);
-        System.out.println("[LlmClientManager] Registered LLM client for config: " + configId);
+        log.info("[LlmClientManager] Registered LLM client for config: {}", configId);
     }
 
     /**
@@ -118,7 +122,7 @@ public class LlmClientManager {
      */
     public void removeClient(Long configId) {
         clientCache.remove(configId);
-        System.out.println("[LlmClientManager] Removed LLM client for config: " + configId);
+        log.info("[LlmClientManager] Removed LLM client for config: {}", configId);
     }
 
     /**
@@ -131,7 +135,7 @@ public class LlmClientManager {
         for (UserLlmConfig config : configs) {
             clientCache.remove(config.getId());
         }
-        System.out.println("[LlmClientManager] Removed all LLM clients for user: " + userId);
+        log.info("[LlmClientManager] Removed all LLM clients for user: {}", userId);
     }
 
     /**

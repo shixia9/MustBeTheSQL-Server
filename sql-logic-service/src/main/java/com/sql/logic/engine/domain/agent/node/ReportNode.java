@@ -6,6 +6,8 @@ import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -18,6 +20,8 @@ import java.util.Map;
  */
 @Component
 public class ReportNode implements NodeAction {
+
+    private static final Logger log = LoggerFactory.getLogger(ReportNode.class);
 
     private final LlmClientManager llmClientManager;
     private final PromptManager promptManager;
@@ -67,7 +71,7 @@ public class ReportNode implements NodeAction {
         LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
         String report = strategy.generateSql(prompt, null);
 
-        System.out.println("[ReportNode] Report generated, length=" + report.length());
+        log.info("[ReportNode] Report generated, length={}", report.length());
 
         return Map.of(SqlAgentSpec.StateKey.REPORT_RESULT, report);
     }

@@ -3,9 +3,13 @@ package com.sql.logic.engine.domain.agent.node;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.agent.dto.EvidenceQueryRewriteDTO;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -16,11 +20,16 @@ import java.util.Map;
  * Rewrites the user's natural language query into a standalone, precise
  * query suitable for SQL generation. Uses LLM via PromptManager template.
  * <p>
+ * Uses BeanOutputConverter for structured JSON output, replacing the previous
+ * fragile manual string parsing of {"standalone_query": "..."}.
+ * <p>
  * In Phase 5 (RAG), this node will also perform vector similarity search
  * to enrich context with business glossary terms and historical Q&A.
  */
 @Component
 public class EvidenceRecallNode implements NodeAction {
+
+    private static final Logger log = LoggerFactory.getLogger(EvidenceRecallNode.class);
 
     private final LlmClientManager llmClientManager;
     private final PromptManager promptManager;
@@ -38,23 +47,24 @@ public class EvidenceRecallNode implements NodeAction {
         Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, null);
         Long userId = userIdObj instanceof Long ? (Long) userIdObj : null;
 
-        // Render the query rewrite prompt
+        // Use BeanOutputConverter to enforce structured JSON output from the LLM
+        BeanOutputConverter<EvidenceQueryRewriteDTO> converter =
+                new BeanOutputConverter<>(EvidenceQueryRewriteDTO.class);
+
+        // Render the query rewrite prompt with the format specification injected
         String prompt = promptManager.render(SqlAgentSpec.PromptName.EVIDENCE_QUERY_REWRITE, Map.of(
                 "latest_query", userInput,
-                "format", ""  // Phase 1: simplified, no structured output format
+                "format", converter.getFormat()  // Inject JSON schema format into the template
         ));
 
         // Resolve LLM strategy — falls back to user default, then system default
         LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
         String rewriteResponse = strategy.generateSql(prompt, null);
 
-        // Extract the rewritten query from the response
-        // The LLM should output a JSON like {"standalone_query": "..."} but we'll also
-        // handle plain text fallback
-        String rewriteQuery = extractQuery(rewriteResponse.trim());
+        // Parse the LLM response into a typed DTO
+        String rewriteQuery = extractQuery(rewriteResponse.trim(), converter);
 
-        System.out.println("[EvidenceRecallNode] Input: " + userInput);
-        System.out.println("[EvidenceRecallNode] Rewritten: " + rewriteQuery);
+        log.info("[EvidenceRecallNode] Input: {}, Rewritten: {}", userInput, rewriteQuery);
 
         return Map.of(
                 SqlAgentSpec.StateKey.REWRITE_QUERY, rewriteQuery,
@@ -64,38 +74,35 @@ public class EvidenceRecallNode implements NodeAction {
 
     /**
      * Extract the standalone query from the LLM response.
-     * Handles both JSON format {"standalone_query": "..."} and plain text.
+     * <p>
+     * First attempts structured JSON parsing via BeanOutputConverter.
+     * Falls back to plain text extraction if JSON parsing fails
+     * (e.g., when the LLM wraps output in markdown code fences).
      */
-    private String extractQuery(String response) {
+    private String extractQuery(String response, BeanOutputConverter<EvidenceQueryRewriteDTO> converter) {
         if (response == null || response.isBlank()) {
             return "";
         }
-        String trimmed = response.trim();
 
-        // Try JSON format first
-        if (trimmed.contains("\"standalone_query\"")) {
-            try {
-                // Simple extraction without full JSON parsing
-                int idx = trimmed.indexOf("\"standalone_query\"");
-                int colonIdx = trimmed.indexOf(":", idx);
-                int quoteStart = trimmed.indexOf("\"", colonIdx + 1);
-                int quoteEnd = trimmed.indexOf("\"", quoteStart + 1);
-                if (quoteStart >= 0 && quoteEnd > quoteStart) {
-                    return trimmed.substring(quoteStart + 1, quoteEnd);
-                }
-            } catch (Exception e) {
-                // Fall through to plain text
-            }
-        }
-
-        // Strip markdown code fences if present
-        String cleaned = trimmed;
+        // Strip markdown code fences if present (LLMs often wrap JSON in ```json ... ```)
+        String cleaned = response.trim();
         if (cleaned.startsWith("```")) {
             cleaned = cleaned.replaceAll("(?s)^```(?:\\w+)?\\s*\\n?", "")
                     .replaceAll("\\n?```\\s*$", "")
                     .trim();
         }
 
+        // Try structured JSON parsing first
+        try {
+            EvidenceQueryRewriteDTO dto = converter.convert(cleaned);
+            if (dto != null && dto.standalone_query() != null && !dto.standalone_query().isBlank()) {
+                return dto.standalone_query();
+            }
+        } catch (Exception e) {
+            log.debug("[EvidenceRecallNode] BeanOutputConverter parsing failed, falling back to plain text: {}", e.getMessage());
+        }
+
+        // Fallback: return the cleaned text as-is (LLM may have just output the query without JSON wrapping)
         return cleaned;
     }
 }
