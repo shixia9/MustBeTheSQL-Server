@@ -35,6 +35,8 @@ public class ReportNode implements NodeAction {
 
         Object llmConfigIdObj = state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null);
         Long llmConfigId = llmConfigIdObj instanceof Long ? (Long) llmConfigIdObj : null;
+        Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, null);
+        Long userId = userIdObj instanceof Long ? (Long) userIdObj : null;
 
         // If no rewritten query, fall back to original input
         if (rewriteQuery == null || rewriteQuery.isBlank()) {
@@ -62,7 +64,7 @@ public class ReportNode implements NodeAction {
                 "optimization_section", ""
         ));
 
-        LLMStrategy strategy = llmClientManager.getClient(llmConfigId);
+        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
         String report = strategy.generateSql(prompt, null);
 
         System.out.println("[ReportNode] Report generated, length=" + report.length());

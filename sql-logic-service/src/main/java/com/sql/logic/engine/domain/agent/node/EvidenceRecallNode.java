@@ -35,6 +35,8 @@ public class EvidenceRecallNode implements NodeAction {
         String userInput = state.value(SqlAgentSpec.StateKey.INPUT, "");
         Object llmConfigIdObj = state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null);
         Long llmConfigId = llmConfigIdObj instanceof Long ? (Long) llmConfigIdObj : null;
+        Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, null);
+        Long userId = userIdObj instanceof Long ? (Long) userIdObj : null;
 
         // Render the query rewrite prompt
         String prompt = promptManager.render(SqlAgentSpec.PromptName.EVIDENCE_QUERY_REWRITE, Map.of(
@@ -42,8 +44,8 @@ public class EvidenceRecallNode implements NodeAction {
                 "format", ""  // Phase 1: simplified, no structured output format
         ));
 
-        // Resolve LLM strategy for this request
-        LLMStrategy strategy = llmClientManager.getClient(llmConfigId);
+        // Resolve LLM strategy — falls back to user default, then system default
+        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
         String rewriteResponse = strategy.generateSql(prompt, null);
 
         // Extract the rewritten query from the response

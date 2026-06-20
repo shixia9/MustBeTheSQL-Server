@@ -16,7 +16,11 @@ import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.stereotype.Component;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 @Component
 public class AiAgentFactory {
@@ -72,9 +76,21 @@ public class AiAgentFactory {
      * Create an OpenAI-compatible LLMStrategy with custom credentials.
      * Uses a custom RestClient with NON_EMPTY ObjectMapper to prevent
      * empty extraBody serialization (fixes HTTP 400 on OpenAI-compatible APIs).
+     * <p>
+     * Also configures connect/read timeouts via JDK HttpClient to prevent
+     * ClosedChannelException on unstable networks.
      */
     private OpenAILLMStrategy createOpenAiStrategy(String apiKey, String baseUrl, String modelName) {
         String finalBaseUrl = (baseUrl != null && !baseUrl.trim().isEmpty()) ? baseUrl : defaultOpenAiBaseUrl;
+
+        // Build a JDK HttpClient with explicit connect timeout to prevent
+        // ClosedChannelException when connecting to API proxies on unstable networks.
+        // JDK HttpClient defaults can be too aggressive; 30s connect / 120s read is safe for LLM calls.
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(120));
 
         // Custom RestClient with NON_EMPTY ObjectMapper — this is the fix for
         // "extra_body": {} being sent in the ChatCompletionRequest JSON body.
@@ -84,7 +100,8 @@ public class AiAgentFactory {
                 .messageConverters(converters -> {
                     converters.removeIf(MappingJackson2HttpMessageConverter.class::isInstance);
                     converters.add(0, new MappingJackson2HttpMessageConverter(getNonEmptyObjectMapper()));
-                });
+                })
+                .requestFactory(requestFactory);
 
         OpenAiApi openAiApi = OpenAiApi.builder()
                 .baseUrl(finalBaseUrl)

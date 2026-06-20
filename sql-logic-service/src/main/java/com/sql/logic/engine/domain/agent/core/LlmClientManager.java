@@ -52,6 +52,35 @@ public class LlmClientManager {
     }
 
     /**
+     * Resolve the best LLM strategy for a request.
+     * <p>
+     * Resolution order:
+     * 1. If llmConfigId is explicitly provided and found, use it.
+     * 2. If userId is provided, look up the user's default active config.
+     * 3. Fall back to system default (key 0).
+     * <p>
+     * This matches the behavior of SQLGenerateAppService for non-agent flows.
+     */
+    public LLMStrategy resolveStrategy(Long llmConfigId, Long userId) {
+        // 1. Explicit config
+        if (llmConfigId != null && llmConfigId > 0) {
+            LLMStrategy strategy = clientCache.get(llmConfigId);
+            if (strategy != null) {
+                return strategy;
+            }
+        }
+        // 2. User default
+        if (userId != null && userId > 0) {
+            LLMStrategy userDefault = getDefaultForUser(userId);
+            if (userDefault != null) {
+                return userDefault;
+            }
+        }
+        // 3. System default
+        return clientCache.get(0L);
+    }
+
+    /**
      * Get the default LLMStrategy for a user.
      * Looks up the user's isDefault config first, then falls back to any active config,
      * then to system default.

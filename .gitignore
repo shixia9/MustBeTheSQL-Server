@@ -3,3 +3,5 @@ target/
 # Local configuration with secrets — never commit
 application-local.yml
 application-local.properties
+
+nacos-config/

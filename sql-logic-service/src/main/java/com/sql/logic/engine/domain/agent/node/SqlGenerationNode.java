@@ -50,6 +50,8 @@ public class SqlGenerationNode implements NodeAction {
         Long connectionId = connectionIdObj instanceof Long ? (Long) connectionIdObj : null;
         Object llmConfigIdObj = state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null);
         Long llmConfigId = llmConfigIdObj instanceof Long ? (Long) llmConfigIdObj : null;
+        Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, null);
+        Long userId = userIdObj instanceof Long ? (Long) userIdObj : null;
 
         // If no rewritten query, fall back to original input
         if (rewriteQuery == null || rewriteQuery.isBlank()) {
@@ -84,8 +86,8 @@ public class SqlGenerationNode implements NodeAction {
                 "execution_description_section", ""  // Phase 1: no planner step description
         ));
 
-        // Generate SQL using the LLM strategy
-        LLMStrategy strategy = llmClientManager.getClient(llmConfigId);
+        // Generate SQL using the resolved LLM strategy (user default → system default)
+        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
         String sql = strategy.generateSql(prompt, null);
 
         // Strip markdown code fences

@@ -40,20 +40,22 @@ public class SqlAgentRunner {
      *
      * @param connectionId the database connection ID
      * @param userInput     the user's natural language query
-     * @param llmConfigId   the LLM configuration ID (optional, falls back to system default)
+     * @param userId        the logged-in user ID (for user-specific LLM config resolution)
+     * @param llmConfigId   the LLM configuration ID (optional, falls back to user default then system default)
      * @param tableNames    optional list of table names for schema context
      * @return Flux of NodeOutput events for SSE streaming
      */
-    public Flux<NodeOutput> execute(Long connectionId, String userInput, Long llmConfigId, List<String> tableNames) {
+    public Flux<NodeOutput> execute(Long connectionId, String userInput, Long userId, Long llmConfigId, List<String> tableNames) {
         Map<String, Object> initialState = new LinkedHashMap<>();
         initialState.put(SqlAgentSpec.StateKey.INPUT, userInput);
+        initialState.put(SqlAgentSpec.StateKey.USER_ID, userId);
         initialState.put(SqlAgentSpec.StateKey.CONNECTION_ID, connectionId);
         initialState.put(SqlAgentSpec.StateKey.LLM_CONFIG_ID, llmConfigId);
         initialState.put(SqlAgentSpec.StateKey.DB_TYPE, "");
         initialState.put(SqlAgentSpec.StateKey.TABLE_NAMES, tableNames != null ? tableNames : List.of());
 
-        log.info("[SqlAgentRunner] Starting graph execution: input='{}', connectionId={}, llmConfigId={}",
-                userInput, connectionId, llmConfigId);
+        log.info("[SqlAgentRunner] Starting graph execution: input='{}', connectionId={}, userId={}, llmConfigId={}",
+                userInput, connectionId, userId, llmConfigId);
 
         return compiledGraph.stream(initialState)
                 .doOnNext(output -> {
@@ -67,8 +69,8 @@ public class SqlAgentRunner {
     /**
      * Convenience overload without table names.
      */
-    public Flux<NodeOutput> execute(Long connectionId, String userInput, Long llmConfigId) {
-        return execute(connectionId, userInput, llmConfigId, null);
+    public Flux<NodeOutput> execute(Long connectionId, String userInput, Long userId, Long llmConfigId) {
+        return execute(connectionId, userInput, userId, llmConfigId, null);
     }
 
     /**

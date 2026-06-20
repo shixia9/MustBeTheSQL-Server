@@ -80,10 +80,11 @@ public class SqlAgentController {
         log.info("[SqlAgentController] Starting agent stream for userId={}, connectionId={}, input='{}'",
                 currentUserId, request.getConnectionId(), request.getUserInput());
 
-        // Execute the agent graph
+        // Execute the agent graph — pass userId so nodes can resolve user-specific LLM defaults
         Flux<NodeOutput> nodeFlux = sqlAgentRunner.execute(
                 request.getConnectionId(),
                 request.getUserInput(),
+                currentUserId,
                 request.getLlmConfigId(),
                 request.getTableNames()
         );

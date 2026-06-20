@@ -44,6 +44,7 @@ public class SqlAgentGraphConfiguration {
 
             // Input keys
             strategies.put(SqlAgentSpec.StateKey.INPUT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.USER_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.CONNECTION_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.LLM_CONFIG_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.DB_TYPE, new ReplaceStrategy());

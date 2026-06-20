@@ -35,6 +35,7 @@ public final class SqlAgentSpec {
     public static final class StateKey {
         // ---- Input ----
         public static final String INPUT = "input";
+        public static final String USER_ID = "userId";
         public static final String CONNECTION_ID = "connectionId";
         public static final String LLM_CONFIG_ID = "llmConfigId";
         public static final String DB_TYPE = "dbType";
