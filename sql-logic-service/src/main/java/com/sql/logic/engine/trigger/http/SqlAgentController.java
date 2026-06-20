@@ -1,0 +1,179 @@
+package com.sql.logic.engine.trigger.http;
+
+import com.alibaba.cloud.ai.graph.NodeOutput;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sql.logic.engine.application.service.UserAppService;
+import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.agent.core.SqlAgentRunner;
+import com.sql.logic.engine.common.dto.SqlGenerateRequest;
+
+import cn.dev33.satoken.stp.StpUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * REST controller for the SQL Agent streaming endpoint.
+ * <p>
+ * Provides an SSE streaming endpoint that runs the SQL Agent StateGraph
+ * and emits per-node events to the frontend Agent timeline.
+ * <p>
+ * Event format (each SSE data line is a JSON object):
+ * <pre>
+ * {"nodeName":"EVIDENCE_RECALL","outputType":"FINISHED","data":{"rewriteQuery":"...","evidence":""}}
+ * {"nodeName":"SQL_GENERATION","outputType":"FINISHED","data":{"sqlGenerationResult":"SELECT ..."}}
+ * {"nodeName":"REPORT","outputType":"FINISHED","data":{"reportResult":"..."}}
+ * {"type":"COMPLETED"}
+ * </pre>
+ */
+@RestController
+@RequestMapping("/api/v1/agent/sql")
+public class SqlAgentController {
+
+    private static final Logger log = LoggerFactory.getLogger(SqlAgentController.class);
+
+    private final SqlAgentRunner sqlAgentRunner;
+    private final UserAppService userAppService;
+    private final ObjectMapper objectMapper;
+
+    public SqlAgentController(SqlAgentRunner sqlAgentRunner,
+                              UserAppService userAppService,
+                              ObjectMapper objectMapper) {
+        this.sqlAgentRunner = sqlAgentRunner;
+        this.userAppService = userAppService;
+        this.objectMapper = objectMapper;
+    }
+
+    /**
+     * Stream the SQL Agent execution as SSE events.
+     * <p>
+     * Each node completion emits a FINISHED event with the node's output data.
+     * After all nodes complete, a COMPLETED event is emitted.
+     */
+    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> streamAgent(@RequestBody SqlGenerateRequest request) {
+        // Authenticate user
+        String currentUserIdStr = (String) StpUtil.getLoginId();
+        if (currentUserIdStr == null || !currentUserIdStr.matches("\\d+")) {
+            return Flux.error(new IllegalArgumentException("Invalid user ID in session"));
+        }
+        Long currentUserId = Long.valueOf(currentUserIdStr);
+
+        // Verify userId matches logged-in user
+        if (request.getUserId() != null && !request.getUserId().equals(currentUserId)) {
+            return Flux.error(new IllegalArgumentException("UserId does not match logged-in user"));
+        }
+
+        // Check user status and token quota before generation
+        try {
+            userAppService.checkBeforeGeneration(currentUserId);
+        } catch (Exception e) {
+            return Flux.error(e);
+        }
+
+        log.info("[SqlAgentController] Starting agent stream for userId={}, connectionId={}, input='{}'",
+                currentUserId, request.getConnectionId(), request.getUserInput());
+
+        // Execute the agent graph
+        Flux<NodeOutput> nodeFlux = sqlAgentRunner.execute(
+                request.getConnectionId(),
+                request.getUserInput(),
+                request.getLlmConfigId(),
+                request.getTableNames()
+        );
+
+        // Convert NodeOutput to SSE JSON strings, then append COMPLETED event
+        return nodeFlux
+                .map(this::nodeOutputToJson)
+                .filter(json -> !json.isEmpty())  // Skip empty entries (e.g. START/END nodes)
+                .concatWith(Flux.just(createCompletedEvent()))
+                .doOnNext(json -> log.debug("[SqlAgentController] SSE event: {}", json.substring(0, Math.min(200, json.length()))))
+                .onErrorResume(e -> {
+                    log.error("[SqlAgentController] SSE stream error", e);
+                    return Flux.just("{\"type\":\"ERROR\",\"message\":\"" + e.getMessage() + "\"}");
+                });
+    }
+
+    /**
+     * Convert a NodeOutput to an SSE JSON string.
+     * For the START node, skip it (frontend doesn't need it).
+     * For other nodes, extract relevant state data.
+     */
+    private String nodeOutputToJson(NodeOutput output) {
+        try {
+            String nodeName = output.node();
+
+            // Skip START pseudo-node
+            if ("__start__".equals(nodeName) || "__end__".equals(nodeName)) {
+                // For END node, we already send COMPLETED separately
+                return "";
+            }
+
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("nodeName", nodeName);
+            event.put("outputType", "FINISHED");
+
+            // Extract relevant data from node state
+            OverAllState state = output.state();
+            if (state != null) {
+                Map<String, Object> data = extractNodeData(nodeName, state);
+                event.put("data", data);
+            }
+
+            return objectMapper.writeValueAsString(event);
+        } catch (Exception e) {
+            log.error("[SqlAgentController] Failed to serialize NodeOutput", e);
+            return "{\"nodeName\":\"ERROR\",\"outputType\":\"ERROR\",\"message\":\"" + e.getMessage() + "\"}";
+        }
+    }
+
+    /**
+     * Extract relevant state data based on which node just completed.
+     */
+    private Map<String, Object> extractNodeData(String nodeName, OverAllState state) {
+        Map<String, Object> data = new LinkedHashMap<>();
+
+        switch (nodeName) {
+            case SqlAgentSpec.Node.EVIDENCE_RECALL:
+                data.put("rewriteQuery", state.value(SqlAgentSpec.StateKey.REWRITE_QUERY, ""));
+                data.put("evidence", state.value(SqlAgentSpec.StateKey.EVIDENCE, ""));
+                break;
+            case SqlAgentSpec.Node.SQL_GENERATION:
+                data.put("sql", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
+                break;
+            case SqlAgentSpec.Node.REPORT:
+                data.put("report", state.value(SqlAgentSpec.StateKey.REPORT_RESULT, ""));
+                break;
+            // Phase 2+ nodes will add their data extraction here
+            default:
+                // Generic: include all non-null state entries
+                for (String key : state.data().keySet()) {
+                    Object val = state.value(key, null);
+                    if (val != null) {
+                        data.put(key, val);
+                    }
+                }
+                break;
+        }
+
+        return data;
+    }
+
+    /**
+     * Create a terminal COMPLETED event.
+     */
+    private String createCompletedEvent() {
+        try {
+            Map<String, Object> completed = Map.of("type", "COMPLETED");
+            return objectMapper.writeValueAsString(completed);
+        } catch (Exception e) {
+            return "{\"type\":\"COMPLETED\"}";
+        }
+    }
+}

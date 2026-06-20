@@ -44,8 +44,8 @@ public class AiAgentWarmupRunner implements ApplicationRunner {
     public void run(ApplicationArguments args) throws Exception {
         System.out.println("[AiAgentWarmupRunner] Starting AI Agent Warmup process...");
 
-        // 1. Create system default LLM strategy and register it
-        LLMStrategy defaultStrategy = new OpenAILLMStrategy(defaultChatClientBuilder);
+        // 1. Create system default LLM strategy (with NON_EMPTY ObjectMapper fix for extra_body)
+        LLMStrategy defaultStrategy = aiAgentFactory.createDefaultSystemStrategy();
         llmClientManager.registerClient(0L, defaultStrategy);
 
         // 2. Create system default agent (userId=0) using the default strategy

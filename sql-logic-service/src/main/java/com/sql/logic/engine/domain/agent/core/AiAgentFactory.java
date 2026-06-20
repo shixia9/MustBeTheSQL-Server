@@ -1,5 +1,7 @@
 package com.sql.logic.engine.domain.agent.core;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.strategy.ProviderType;
 import com.sql.logic.engine.infrastructure.llm.AnthropicLLMStrategy;
 import com.sql.logic.engine.infrastructure.llm.OpenAILLMStrategy;
@@ -12,7 +14,9 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
 
 @Component
 public class AiAgentFactory {
@@ -22,6 +26,12 @@ public class AiAgentFactory {
 
     @Value("${spring.ai.anthropic.base-url:https://api.anthropic.com}")
     private String defaultAnthropicBaseUrl;
+
+    @Value("${spring.ai.openai.api-key:}")
+    private String defaultApiKey;
+
+    // Cache the ObjectMapper with NON_EMPTY setting
+    private volatile ObjectMapper nonEmptyObjectMapper;
 
     // ========================
     // Agent creation (one per user)
@@ -41,8 +51,6 @@ public class AiAgentFactory {
 
     /**
      * Create an LLMStrategy for a specific provider/config combination.
-     * This is called by LlmClientManager and AiAgentWarmupRunner to pool
-     * LLM client instances keyed by configId.
      */
     public LLMStrategy createLLMStrategy(ProviderType providerType, String apiKey, String baseUrl, String modelName) {
         return switch (providerType) {
@@ -52,14 +60,36 @@ public class AiAgentFactory {
     }
 
     /**
+     * Create the system default LLMStrategy directly (bypassing auto-configured builder).
+     * This ensures the OpenAiApi uses a RestClient with NON_EMPTY ObjectMapper,
+     * preventing "extra_body": {} from being serialized to API requests.
+     */
+    public LLMStrategy createDefaultSystemStrategy() {
+        return createOpenAiStrategy(defaultApiKey, defaultOpenAiBaseUrl, null);
+    }
+
+    /**
      * Create an OpenAI-compatible LLMStrategy with custom credentials.
+     * Uses a custom RestClient with NON_EMPTY ObjectMapper to prevent
+     * empty extraBody serialization (fixes HTTP 400 on OpenAI-compatible APIs).
      */
     private OpenAILLMStrategy createOpenAiStrategy(String apiKey, String baseUrl, String modelName) {
         String finalBaseUrl = (baseUrl != null && !baseUrl.trim().isEmpty()) ? baseUrl : defaultOpenAiBaseUrl;
 
+        // Custom RestClient with NON_EMPTY ObjectMapper — this is the fix for
+        // "extra_body": {} being sent in the ChatCompletionRequest JSON body.
+        // The ChatCompletionRequest Record's all-args constructor replaces null
+        // extraBody with an empty HashMap, and default Jackson serializes it.
+        RestClient.Builder restClientBuilder = RestClient.builder()
+                .messageConverters(converters -> {
+                    converters.removeIf(MappingJackson2HttpMessageConverter.class::isInstance);
+                    converters.add(0, new MappingJackson2HttpMessageConverter(getNonEmptyObjectMapper()));
+                });
+
         OpenAiApi openAiApi = OpenAiApi.builder()
                 .baseUrl(finalBaseUrl)
                 .apiKey(apiKey)
+                .restClientBuilder(restClientBuilder)
                 .build();
 
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
@@ -101,5 +131,22 @@ public class AiAgentFactory {
         ChatClient chatClient = ChatClient.builder(chatModel).build();
 
         return new AnthropicLLMStrategy(chatClient.mutate());
+    }
+
+    /**
+     * Lazy-initialize the ObjectMapper with NON_EMPTY inclusion.
+     * This prevents "extra_body": {} from being serialized by bypassing
+     * the default serialization which always includes empty Maps.
+     */
+    private ObjectMapper getNonEmptyObjectMapper() {
+        if (nonEmptyObjectMapper == null) {
+            synchronized (this) {
+                if (nonEmptyObjectMapper == null) {
+                    nonEmptyObjectMapper = new ObjectMapper();
+                    nonEmptyObjectMapper.setSerializationInclusion(JsonInclude.Include.NON_EMPTY);
+                }
+            }
+        }
+        return nonEmptyObjectMapper;
     }
 }
