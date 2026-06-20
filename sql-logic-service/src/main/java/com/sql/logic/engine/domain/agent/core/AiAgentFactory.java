@@ -25,6 +25,18 @@ import java.time.Duration;
 @Component
 public class AiAgentFactory {
 
+    /**
+     * Jackson MixIn to override ChatCompletionRequest's class-level @JsonInclude(NON_NULL).
+     * <p>
+     * Spring AI's ChatCompletionRequest has a compact constructor that replaces null
+     * extraBody with an empty HashMap, and its class-level @JsonInclude(NON_NULL)
+     * takes precedence over ObjectMapper's default inclusion setting.
+     * NON_EMPTY excludes the empty "extra_body": {} from serialization
+     * which would otherwise cause HTTP 400 on OpenAI-compatible API proxies.
+     */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    private static interface ChatCompletionRequestMixIn {}
+
     @Value("${spring.ai.openai.base-url:https://api.openai.com}")
     private String defaultOpenAiBaseUrl;
 
@@ -41,14 +53,19 @@ public class AiAgentFactory {
     private volatile ObjectMapper nonEmptyObjectMapper;
 
     // ========================
-    // Agent creation (one per user)
+    // Agent creation
     // ========================
 
     /**
-     * Create the system default agent using Spring AI's auto-configured ChatClient.Builder.
+     * Create the system default agent.
+     * <p>
+     * IMPORTANT: Uses createDefaultSystemStrategy() which has the NON_EMPTY ObjectMapper
+     * fix, NOT the auto-configured ChatClient.Builder (which would trigger extra_body bug).
      */
     public AiAgent createDefaultAgent(ChatClient.Builder defaultChatClientBuilder) {
-        OpenAILLMStrategy strategy = new OpenAILLMStrategy(defaultChatClientBuilder);
+        // Use the NON_EMPTY-fixed strategy instead of the auto-configured builder
+        // which would serialize extra_body: {} and cause 400 errors on OpenAI-compatible APIs
+        LLMStrategy strategy = createDefaultSystemStrategy();
         return new SqlAiAgentImpl(strategy);
     }
 
@@ -160,6 +177,10 @@ public class AiAgentFactory {
      * Lazy-initialize the ObjectMapper with NON_EMPTY inclusion.
      * This prevents "extra_body": {} from being serialized by bypassing
      * the default serialization which always includes empty Maps.
+     * <p>
+     * Uses a Jackson MixIn to override ChatCompletionRequest's class-level
+     * @JsonInclude(NON_NULL) with NON_EMPTY, because the class annotation
+     * takes precedence over ObjectMapper's default SerializationInclusion.
      */
     private ObjectMapper getNonEmptyObjectMapper() {
         if (nonEmptyObjectMapper == null) {
@@ -167,6 +188,9 @@ public class AiAgentFactory {
                 if (nonEmptyObjectMapper == null) {
                     nonEmptyObjectMapper = new ObjectMapper();
                     nonEmptyObjectMapper.setSerializationInclusion(JsonInclude.Include.NON_EMPTY);
+                    // MixIn overrides ChatCompletionRequest's class-level @JsonInclude(NON_NULL)
+                    // which would otherwise keep the empty extraBody Map in serialized JSON
+                    nonEmptyObjectMapper.addMixIn(OpenAiApi.ChatCompletionRequest.class, ChatCompletionRequestMixIn.class);
                 }
             }
         }
