@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,6 +59,7 @@ public class SqlAgentRunner {
                 userInput, connectionId, userId, llmConfigId);
 
         return compiledGraph.stream(initialState)
+                .subscribeOn(Schedulers.boundedElastic())
                 .doOnNext(output -> {
                     String nodeName = output.node();
                     log.info("[SqlAgentRunner] Node completed: {}", nodeName);
