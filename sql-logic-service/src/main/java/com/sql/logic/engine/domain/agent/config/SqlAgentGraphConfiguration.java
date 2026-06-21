@@ -10,6 +10,7 @@ import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.node.EvidenceRecallNode;
 import com.sql.logic.engine.domain.agent.node.ReportNode;
+import com.sql.logic.engine.domain.agent.node.SchemaLinkingNode;
 import com.sql.logic.engine.domain.agent.node.SqlGenerationNode;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,14 +21,13 @@ import java.util.Map;
 /**
  * Spring Configuration that wires the SQL Agent StateGraph.
  * <p>
- * Phase 1 minimal chain:
+ * Phase 2 chain:
  * <pre>
- * START → EVIDENCE_RECALL → SQL_GENERATION → REPORT → END
+ * START → EVIDENCE_RECALL → SCHEMA_LINKING → SQL_GENERATION → REPORT → END
  * </pre>
  * <p>
  * Additional nodes and edges will be added in subsequent phases:
- * - Phase 2: SCHEMA_LINKING, FEASIBILITY_ASSESSMENT
- * - Phase 3: PLANNER, HITL, SQL_EXECUTION, SQL_FIXER
+ * - Phase 3: FEASIBILITY_ASSESSMENT, PLANNER, HITL, SQL_EXECUTION, SQL_FIXER
  * - Phase 4: PYTHON_GENERATION, PYTHON_EXECUTION, PYTHON_ANALYSIS
  */
 @Configuration
@@ -91,10 +91,11 @@ public class SqlAgentGraphConfiguration {
     /**
      * Define the SQL Agent StateGraph bean.
      * <p>
-     * Phase 1: START → EVIDENCE_RECALL → SQL_GENERATION → REPORT → END
+     * Phase 2: START → EVIDENCE_RECALL → SCHEMA_LINKING → SQL_GENERATION → REPORT → END
      */
     @Bean
     public StateGraph sqlAgentGraph(EvidenceRecallNode evidenceRecallNode,
+                                     SchemaLinkingNode schemaLinkingNode,
                                      SqlGenerationNode sqlGenerationNode,
                                      ReportNode reportNode,
                                      KeyStrategyFactory sqlAgentKeyStrategyFactory) throws GraphStateException {
@@ -102,19 +103,15 @@ public class SqlAgentGraphConfiguration {
         return new StateGraph(SqlAgentSpec.GRAPH_NAME, sqlAgentKeyStrategyFactory)
                 // Register nodes
                 .addNode(SqlAgentSpec.Node.EVIDENCE_RECALL, AsyncNodeAction.node_async(evidenceRecallNode))
+                .addNode(SqlAgentSpec.Node.SCHEMA_LINKING, AsyncNodeAction.node_async(schemaLinkingNode))
                 .addNode(SqlAgentSpec.Node.SQL_GENERATION, AsyncNodeAction.node_async(sqlGenerationNode))
                 .addNode(SqlAgentSpec.Node.REPORT, AsyncNodeAction.node_async(reportNode))
-                // Wire edges — Phase 1 linear chain
+                // Wire edges — Phase 2 chain
                 .addEdge(StateGraph.START, SqlAgentSpec.Node.EVIDENCE_RECALL)
-                .addEdge(SqlAgentSpec.Node.EVIDENCE_RECALL, SqlAgentSpec.Node.SQL_GENERATION)
+                .addEdge(SqlAgentSpec.Node.EVIDENCE_RECALL, SqlAgentSpec.Node.SCHEMA_LINKING)
+                .addEdge(SqlAgentSpec.Node.SCHEMA_LINKING, SqlAgentSpec.Node.SQL_GENERATION)
                 .addEdge(SqlAgentSpec.Node.SQL_GENERATION, SqlAgentSpec.Node.REPORT)
                 .addEdge(SqlAgentSpec.Node.REPORT, StateGraph.END);
-
-        // Phase 2+ nodes will be added here:
-        // .addNode(SqlAgentSpec.Node.SCHEMA_LINKING, AsyncNodeAction.node_async(schemaLinkingNode))
-        // .addEdge(SqlAgentSpec.Node.EVIDENCE_RECALL, SqlAgentSpec.Node.SCHEMA_LINKING)
-        // .addConditionalEdges(SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT, ...)
-        // etc.
     }
 
     /**

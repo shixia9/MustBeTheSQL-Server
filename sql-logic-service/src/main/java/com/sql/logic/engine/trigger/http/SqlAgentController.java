@@ -16,8 +16,11 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * REST controller for the SQL Agent streaming endpoint.
@@ -153,13 +156,17 @@ public class SqlAgentController {
                 data.put("rewriteQuery", state.value(SqlAgentSpec.StateKey.REWRITE_QUERY, ""));
                 data.put("evidence", state.value(SqlAgentSpec.StateKey.EVIDENCE, ""));
                 break;
+            case SqlAgentSpec.Node.SCHEMA_LINKING:
+                data.put("tableRelation", state.value(SqlAgentSpec.StateKey.TABLE_RELATION, ""));
+                data.put("filteredTables", extractFilteredTableNames(state));
+                break;
             case SqlAgentSpec.Node.SQL_GENERATION:
                 data.put("sql", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
                 break;
             case SqlAgentSpec.Node.REPORT:
                 data.put("report", state.value(SqlAgentSpec.StateKey.REPORT_RESULT, ""));
                 break;
-            // Phase 2+ nodes will add their data extraction here
+            // Phase 3+ nodes will add their data extraction here
             default:
                 // Generic: include non-sensitive state entries only
                 for (String key : state.data().keySet()) {
@@ -174,6 +181,36 @@ public class SqlAgentController {
         }
 
         return data;
+    }
+
+    /**
+     * Extract filtered table names from the state.
+     * Attempts to parse them from TABLE_NAMES if available, otherwise extracts
+     * table names from the TABLE_RELATION schema string.
+     */
+    @SuppressWarnings("unchecked")
+    private List<String> extractFilteredTableNames(OverAllState state) {
+        // First try TABLE_NAMES from state (user-selected or Schema Linking result)
+        Object tableNamesObj = state.value(SqlAgentSpec.StateKey.TABLE_NAMES, null);
+        if (tableNamesObj instanceof List<?>) {
+            List<String> names = (List<String>) tableNamesObj;
+            if (!names.isEmpty()) {
+                return names;
+            }
+        }
+
+        // Fall back to extracting table names from the TABLE_RELATION string
+        String tableRelation = state.value(SqlAgentSpec.StateKey.TABLE_RELATION, "");
+        if (tableRelation != null && !tableRelation.isBlank()) {
+            // Extract table names from "# Table: tableName" patterns in the schema prompt
+            return Pattern.compile("# Table:\\s*(\\w+)")
+                    .matcher(tableRelation)
+                    .results()
+                    .map(m -> m.group(1))
+                    .collect(Collectors.toList());
+        }
+
+        return List.of();
     }
 
     /**

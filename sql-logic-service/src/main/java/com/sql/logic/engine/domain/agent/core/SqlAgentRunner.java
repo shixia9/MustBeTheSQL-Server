@@ -29,7 +29,7 @@ public class SqlAgentRunner {
     public SqlAgentRunner(StateGraph sqlAgentGraph) {
         try {
             this.compiledGraph = sqlAgentGraph.compile();
-            log.info("[SqlAgentRunner] Graph compiled successfully. Phase 1 chain: START → EVIDENCE_RECALL → SQL_GENERATION → REPORT → END");
+            log.info("[SqlAgentRunner] Graph compiled successfully. Phase 2 chain: START → EVIDENCE_RECALL → SCHEMA_LINKING → SQL_GENERATION → REPORT → END");
         } catch (Exception e) {
             throw new IllegalStateException("Failed to compile SQL Agent StateGraph", e);
         }

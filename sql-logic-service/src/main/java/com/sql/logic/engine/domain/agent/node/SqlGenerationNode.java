@@ -2,6 +2,7 @@ package com.sql.logic.engine.domain.agent.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
@@ -65,11 +66,11 @@ public class SqlGenerationNode implements NodeAction {
         String existingTableRelation = state.value(SqlAgentSpec.StateKey.TABLE_RELATION, "");
 
         Object connectionIdObj = state.value(SqlAgentSpec.StateKey.CONNECTION_ID, null);
-        Long connectionId = connectionIdObj instanceof Long ? (Long) connectionIdObj : null;
+        Long connectionId = AgentStateUtil.toLong(connectionIdObj);
         Object llmConfigIdObj = state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null);
-        Long llmConfigId = llmConfigIdObj instanceof Long ? (Long) llmConfigIdObj : null;
+        Long llmConfigId = AgentStateUtil.toLong(llmConfigIdObj);
         Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, null);
-        Long userId = userIdObj instanceof Long ? (Long) userIdObj : null;
+        Long userId = AgentStateUtil.toLong(userIdObj);
 
         // If no rewritten query, fall back to original input
         if (rewriteQuery == null || rewriteQuery.isBlank()) {

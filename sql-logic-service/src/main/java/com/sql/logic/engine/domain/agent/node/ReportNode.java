@@ -2,6 +2,7 @@ package com.sql.logic.engine.domain.agent.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
@@ -38,9 +39,9 @@ public class ReportNode implements NodeAction {
         String sqlResult = state.value(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, "");
 
         Object llmConfigIdObj = state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null);
-        Long llmConfigId = llmConfigIdObj instanceof Long ? (Long) llmConfigIdObj : null;
+        Long llmConfigId = AgentStateUtil.toLong(llmConfigIdObj);
         Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, null);
-        Long userId = userIdObj instanceof Long ? (Long) userIdObj : null;
+        Long userId = AgentStateUtil.toLong(userIdObj);
 
         // If no rewritten query, fall back to original input
         if (rewriteQuery == null || rewriteQuery.isBlank()) {

@@ -2,6 +2,7 @@ package com.sql.logic.engine.domain.agent.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.dto.EvidenceQueryRewriteDTO;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
@@ -42,10 +43,10 @@ public class EvidenceRecallNode implements NodeAction {
     @Override
     public Map<String, Object> apply(OverAllState state) throws Exception {
         String userInput = state.value(SqlAgentSpec.StateKey.INPUT, "");
-        Object llmConfigIdObj = state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null);
-        Long llmConfigId = llmConfigIdObj instanceof Long ? (Long) llmConfigIdObj : null;
-        Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, null);
-        Long userId = userIdObj instanceof Long ? (Long) userIdObj : null;
+        Long llmConfigId = AgentStateUtil.toLong(
+                state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null));
+        Long userId = AgentStateUtil.toLong(
+                state.value(SqlAgentSpec.StateKey.USER_ID, null));
 
         // Use BeanOutputConverter to enforce structured JSON output from the LLM
         BeanOutputConverter<EvidenceQueryRewriteDTO> converter =
