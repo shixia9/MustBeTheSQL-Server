@@ -76,11 +76,11 @@ public class SchemaLinkingNode implements NodeAction {
         String rewriteQuery = state.value(SqlAgentSpec.StateKey.REWRITE_QUERY, "");
         String evidence = state.value(SqlAgentSpec.StateKey.EVIDENCE, "");
         Long connectionId = AgentStateUtil.toLong(
-                state.value(SqlAgentSpec.StateKey.CONNECTION_ID, null));
+                state.value(SqlAgentSpec.StateKey.CONNECTION_ID, (Long) null));
         Long llmConfigId = AgentStateUtil.toLong(
-                state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null));
+                state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, (Long) null));
         Long userId = AgentStateUtil.toLong(
-                state.value(SqlAgentSpec.StateKey.USER_ID, null));
+                state.value(SqlAgentSpec.StateKey.USER_ID, (Long) null));
 
         // If no rewritten query, fall back to original input
         if (rewriteQuery == null || rewriteQuery.isBlank()) {

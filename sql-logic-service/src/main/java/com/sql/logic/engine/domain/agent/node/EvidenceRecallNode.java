@@ -44,9 +44,9 @@ public class EvidenceRecallNode implements NodeAction {
     public Map<String, Object> apply(OverAllState state) throws Exception {
         String userInput = state.value(SqlAgentSpec.StateKey.INPUT, "");
         Long llmConfigId = AgentStateUtil.toLong(
-                state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null));
+                state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, (Long) null));
         Long userId = AgentStateUtil.toLong(
-                state.value(SqlAgentSpec.StateKey.USER_ID, null));
+                state.value(SqlAgentSpec.StateKey.USER_ID, (Long) null));
 
         // Use BeanOutputConverter to enforce structured JSON output from the LLM
         BeanOutputConverter<EvidenceQueryRewriteDTO> converter =

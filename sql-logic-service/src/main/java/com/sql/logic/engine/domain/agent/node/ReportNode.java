@@ -38,9 +38,9 @@ public class ReportNode implements NodeAction {
         String sql = state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, "");
         String sqlResult = state.value(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, "");
 
-        Object llmConfigIdObj = state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, null);
+        Object llmConfigIdObj = state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, (Long) null);
         Long llmConfigId = AgentStateUtil.toLong(llmConfigIdObj);
-        Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, null);
+        Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, (Long) null);
         Long userId = AgentStateUtil.toLong(userIdObj);
 
         // If no rewritten query, fall back to original input
