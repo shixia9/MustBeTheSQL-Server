@@ -3,14 +3,23 @@ package com.sql.logic.engine.domain.agent.config;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.KeyStrategyFactory;
 import com.alibaba.cloud.ai.graph.StateGraph;
+import com.alibaba.cloud.ai.graph.action.AsyncEdgeAction;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeAction;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.agent.edge.FeasibilityAssessmentEdge;
+import com.sql.logic.engine.domain.agent.edge.PlanDispatchEdge;
+import com.sql.logic.engine.domain.agent.edge.SqlExecutionEdge;
 import com.sql.logic.engine.domain.agent.node.EvidenceRecallNode;
+import com.sql.logic.engine.domain.agent.node.FeasibilityAssessmentNode;
+import com.sql.logic.engine.domain.agent.node.PlanDispatchNode;
+import com.sql.logic.engine.domain.agent.node.PlannerNode;
 import com.sql.logic.engine.domain.agent.node.ReportNode;
 import com.sql.logic.engine.domain.agent.node.SchemaLinkingNode;
+import com.sql.logic.engine.domain.agent.node.SqlExecutionNode;
+import com.sql.logic.engine.domain.agent.node.SqlFixerNode;
 import com.sql.logic.engine.domain.agent.node.SqlGenerationNode;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,14 +30,24 @@ import java.util.Map;
 /**
  * Spring Configuration that wires the SQL Agent StateGraph.
  * <p>
- * Phase 2 chain:
+ * Phase 3 chain:
  * <pre>
- * START → EVIDENCE_RECALL → SCHEMA_LINKING → SQL_GENERATION → REPORT → END
+ * START → EVIDENCE_RECALL → SCHEMA_LINKING → FEASIBILITY_ASSESSMENT
+ *                                                 │ (conditional edge)
+ *                                                 ├─ 《数据分析》 → PLANNER
+ *                                                 └─ 其他       → REPORT → END
+ *                                 PLANNER → PLAN_DISPATCH
+ *                                 PLAN_DISPATCH (conditional)
+ *                                                 ├─ SQL_GENERATION → SQL_EXECUTION
+ *                                                 │                       │ (conditional)
+ *                                                 │                       ├─ success → PLAN_DISPATCH
+ *                                                 │                       └─ error<2 → SQL_FIXER → SQL_EXECUTION
+ *                                                 ├─ REPORT → END
+ *                                                 └─ END
  * </pre>
  * <p>
- * Additional nodes and edges will be added in subsequent phases:
- * - Phase 3: FEASIBILITY_ASSESSMENT, PLANNER, HITL, SQL_EXECUTION, SQL_FIXER
- * - Phase 4: PYTHON_GENERATION, PYTHON_EXECUTION, PYTHON_ANALYSIS
+ * Additional nodes/edges will be added in subsequent phases:
+ * - Phase 4: HITL (interrupt-before), PYTHON_GENERATION, PYTHON_EXECUTION, PYTHON_ANALYSIS
  */
 @Configuration
 public class SqlAgentGraphConfiguration {
@@ -91,32 +110,82 @@ public class SqlAgentGraphConfiguration {
     /**
      * Define the SQL Agent StateGraph bean.
      * <p>
-     * Phase 2: START → EVIDENCE_RECALL → SCHEMA_LINKING → SQL_GENERATION → REPORT → END
+     * Phase 3: feasibility gate + multi-step plan dispatch + SQL execution + self-correction.
      */
     @Bean
     public StateGraph sqlAgentGraph(EvidenceRecallNode evidenceRecallNode,
                                      SchemaLinkingNode schemaLinkingNode,
+                                     FeasibilityAssessmentNode feasibilityAssessmentNode,
+                                     PlannerNode plannerNode,
+                                     PlanDispatchNode planDispatchNode,
                                      SqlGenerationNode sqlGenerationNode,
+                                     SqlExecutionNode sqlExecutionNode,
+                                     SqlFixerNode sqlFixerNode,
                                      ReportNode reportNode,
+                                     FeasibilityAssessmentEdge feasibilityEdge,
+                                     PlanDispatchEdge planDispatchEdge,
+                                     SqlExecutionEdge sqlExecutionEdge,
                                      KeyStrategyFactory sqlAgentKeyStrategyFactory) throws GraphStateException {
 
+        // Conditional-edge mappings: the KEY is what the edge returns, the VALUE is
+        // the target node id. Every string an edge can return MUST be a key here, or
+        // the runtime throws missingNodeInEdgeMapping.
+        Map<String, String> feasibilityRouting = new LinkedHashMap<>();
+        feasibilityRouting.put(SqlAgentSpec.Node.PLANNER, SqlAgentSpec.Node.PLANNER);
+        feasibilityRouting.put(SqlAgentSpec.Node.REPORT, SqlAgentSpec.Node.REPORT);
+
+        Map<String, String> planDispatchRouting = new LinkedHashMap<>();
+        planDispatchRouting.put(SqlAgentSpec.Node.SQL_GENERATION, SqlAgentSpec.Node.SQL_GENERATION);
+        planDispatchRouting.put(SqlAgentSpec.Node.REPORT, SqlAgentSpec.Node.REPORT);
+        planDispatchRouting.put(StateGraph.END, StateGraph.END);
+
+        Map<String, String> sqlExecutionRouting = new LinkedHashMap<>();
+        sqlExecutionRouting.put(SqlAgentSpec.Node.SQL_FIXER, SqlAgentSpec.Node.SQL_FIXER);
+        sqlExecutionRouting.put(SqlAgentSpec.Node.PLAN_DISPATCH, SqlAgentSpec.Node.PLAN_DISPATCH);
+
         return new StateGraph(SqlAgentSpec.GRAPH_NAME, sqlAgentKeyStrategyFactory)
-                // Register nodes
+                // ---- Register nodes ----
                 .addNode(SqlAgentSpec.Node.EVIDENCE_RECALL, AsyncNodeAction.node_async(evidenceRecallNode))
                 .addNode(SqlAgentSpec.Node.SCHEMA_LINKING, AsyncNodeAction.node_async(schemaLinkingNode))
+                .addNode(SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT, AsyncNodeAction.node_async(feasibilityAssessmentNode))
+                .addNode(SqlAgentSpec.Node.PLANNER, AsyncNodeAction.node_async(plannerNode))
+                .addNode(SqlAgentSpec.Node.PLAN_DISPATCH, AsyncNodeAction.node_async(planDispatchNode))
                 .addNode(SqlAgentSpec.Node.SQL_GENERATION, AsyncNodeAction.node_async(sqlGenerationNode))
+                .addNode(SqlAgentSpec.Node.SQL_EXECUTION, AsyncNodeAction.node_async(sqlExecutionNode))
+                .addNode(SqlAgentSpec.Node.SQL_FIXER, AsyncNodeAction.node_async(sqlFixerNode))
                 .addNode(SqlAgentSpec.Node.REPORT, AsyncNodeAction.node_async(reportNode))
-                // Wire edges — Phase 2 chain
+
+                // ---- Edges ----
                 .addEdge(StateGraph.START, SqlAgentSpec.Node.EVIDENCE_RECALL)
                 .addEdge(SqlAgentSpec.Node.EVIDENCE_RECALL, SqlAgentSpec.Node.SCHEMA_LINKING)
-                .addEdge(SqlAgentSpec.Node.SCHEMA_LINKING, SqlAgentSpec.Node.SQL_GENERATION)
-                .addEdge(SqlAgentSpec.Node.SQL_GENERATION, SqlAgentSpec.Node.REPORT)
+                .addEdge(SqlAgentSpec.Node.SCHEMA_LINKING, SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT)
+
+                // Feasibility gate → PLANNER (analysis) or REPORT (clarify/chat)
+                .addConditionalEdges(SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT,
+                        AsyncEdgeAction.edge_async(feasibilityEdge), feasibilityRouting)
+
+                // Planner → dispatcher (no HITL in Phase 3)
+                .addEdge(SqlAgentSpec.Node.PLANNER, SqlAgentSpec.Node.PLAN_DISPATCH)
+
+                // Dispatcher routes to the next step's tool node (or END)
+                .addConditionalEdges(SqlAgentSpec.Node.PLAN_DISPATCH,
+                        AsyncEdgeAction.edge_async(planDispatchEdge), planDispatchRouting)
+
+                // SQL step: generate → execute
+                .addEdge(SqlAgentSpec.Node.SQL_GENERATION, SqlAgentSpec.Node.SQL_EXECUTION)
+                // SQL execution: success/again → PLAN_DISPATCH ; error<2 → SQL_FIXER
+                .addConditionalEdges(SqlAgentSpec.Node.SQL_EXECUTION,
+                        AsyncEdgeAction.edge_async(sqlExecutionEdge), sqlExecutionRouting)
+                // Fixed SQL re-executes the same step
+                .addEdge(SqlAgentSpec.Node.SQL_FIXER, SqlAgentSpec.Node.SQL_EXECUTION)
+
+                // Report terminates the graph
                 .addEdge(SqlAgentSpec.Node.REPORT, StateGraph.END);
     }
 
     /**
      * MemorySaver for graph state checkpointing.
-     * Required for HITL (interrupt-before) pattern in Phase 3+.
+     * Required for HITL (interrupt-before) pattern in Phase 4.
      */
     @Bean
     public MemorySaver sqlAgentMemorySaver() {

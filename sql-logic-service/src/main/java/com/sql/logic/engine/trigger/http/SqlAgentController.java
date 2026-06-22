@@ -147,9 +147,16 @@ public class SqlAgentController {
     /**
      * Extract relevant state data based on which node just completed.
      * Filters out sensitive keys like connectionId, llmConfigId, userId.
+     * <p>
+     * For looped nodes (SQL_GENERATION / SQL_EXECUTION / SQL_FIXER) reached more than
+     * once by the PLAN_DISPATCH loop, {@code currentStep} is attached so the frontend
+     * can distinguish each iteration rather than overwriting the previous card.
      */
     private Map<String, Object> extractNodeData(String nodeName, OverAllState state) {
         Map<String, Object> data = new LinkedHashMap<>();
+
+        // Current step cursor — help the frontend de-duplicate looped nodes.
+        Integer currentStep = readInt(state, SqlAgentSpec.StateKey.CURRENT_STEP);
 
         switch (nodeName) {
             case SqlAgentSpec.Node.EVIDENCE_RECALL:
@@ -160,13 +167,46 @@ public class SqlAgentController {
                 data.put("tableRelation", state.value(SqlAgentSpec.StateKey.TABLE_RELATION, ""));
                 data.put("filteredTables", extractFilteredTableNames(state));
                 break;
-            case SqlAgentSpec.Node.SQL_GENERATION:
+            case SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT:
+                data.put("feasibilityResult", state.value(SqlAgentSpec.StateKey.FEASIBILITY_RESULT, ""));
+                break;
+            case SqlAgentSpec.Node.PLANNER:
+                data.put("plan", state.value(SqlAgentSpec.StateKey.PLAN, ""));
+                break;
+            case SqlAgentSpec.Node.PLAN_DISPATCH:
+                data.put("currentStep", currentStep);
+                data.put("nextNode", state.value(SqlAgentSpec.StateKey.NEXT_NODE, ""));
+                break;
+            case SqlAgentSpec.Node.SQL_GENERATION: {
+                // sql is written here; on the fixer→regen path SQL_GENERATION_RESULT is
+                // the *fixed* SQL for the same step.
                 data.put("sql", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
+                data.put("step", currentStep);
+                data.put("fixAttemptCount", readInt(state, SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT));
+                break;
+            }
+            case SqlAgentSpec.Node.SQL_EXECUTION: {
+                data.put("step", currentStep);
+                String resultJson = state.value(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, "");
+                if (resultJson != null && !resultJson.isBlank()) {
+                    data.put("sqlExecutionResult", resultJson);
+                }
+                String error = state.value(SqlAgentSpec.StateKey.SQL_ERROR, "");
+                if (error != null && !error.isBlank()) {
+                    data.put("errorMsg", error);
+                }
+                data.put("fixAttemptCount", readInt(state, SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT));
+                break;
+            }
+            case SqlAgentSpec.Node.SQL_FIXER:
+                data.put("step", currentStep);
+                data.put("sql", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
+                data.put("fixAttemptCount", readInt(state, SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT));
                 break;
             case SqlAgentSpec.Node.REPORT:
                 data.put("report", state.value(SqlAgentSpec.StateKey.REPORT_RESULT, ""));
                 break;
-            // Phase 3+ nodes will add their data extraction here
+            // Future-phase nodes (HITL, PYTHON_*) will add their data extraction here
             default:
                 // Generic: include non-sensitive state entries only
                 for (String key : state.data().keySet()) {
@@ -181,6 +221,21 @@ public class SqlAgentController {
         }
 
         return data;
+    }
+
+    /**
+     * Read an integer state value defensively (survives Long/Integer/numeric-string
+     * round-trips across node transitions).
+     */
+    private Integer readInt(OverAllState state, String key) {
+        Object v = state.value(key, (Integer) null);
+        if (v == null) return null;
+        if (v instanceof Number) return ((Number) v).intValue();
+        try {
+            return Integer.parseInt(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**

@@ -48,9 +48,18 @@ public class ReportNode implements NodeAction {
             rewriteQuery = state.value(SqlAgentSpec.StateKey.INPUT, "");
         }
 
-        // Build analysis steps description
+        // Short-circuit: the FeasibilityAssessmentNode (clarify/chat branch) may have
+        // already pre-filled REPORT_RESULT with the verdict text. Emit it as-is.
+        String prefilled = state.value(SqlAgentSpec.StateKey.REPORT_RESULT, "");
+        if (prefilled != null && !prefilled.isBlank()) {
+            log.info("[ReportNode] Emitting pre-filled report (feasibility verdict path), length={}", prefilled.length());
+            return Map.of(SqlAgentSpec.StateKey.REPORT_RESULT, prefilled);
+        }
+
+        // Build analysis steps description (minimum multi-step adaptation: use the
+        // last generated SQL + its execution result; full per-step assembly lands in Phase 5)
         StringBuilder analysisSteps = new StringBuilder();
-        analysisSteps.append("### 步骤 1: SQL查询\n");
+        analysisSteps.append("### 步骤 : SQL 查询\n");
         analysisSteps.append("**使用工具**: SQL_GENERATION\n");
         analysisSteps.append("**执行SQL**: \n```sql\n").append(sql).append("\n```\n\n");
 
