@@ -24,7 +24,7 @@ import java.util.Map;
  *   <li>{@code currentStep > steps.size()} → cursor reset, {@code NEXT_NODE = END}</li>
  *   <li>{@code SQL_GENERATE_NODE} → {@code NEXT_NODE = SQL_GENERATION}</li>
  *   <li>{@code REPORT_GENERATOR_NODE} → {@code NEXT_NODE = REPORT}</li>
- *   <li>{@code PYTHON_GENERATE_NODE} → {@code NEXT_NODE = END} (Phase 4 territory)</li>
+ *   <li>{@code PYTHON_GENERATE_NODE} → {@code NEXT_NODE = PYTHON_GENERATION} (Phase 4)</li>
  *   <li>plan missing/unparseable → {@code NEXT_NODE = REPORT} (degraded to a flat report)</li>
  * </ul>
  * The fixed {@code PLANNER → PLAN_DISPATCH} edge and the conditional
@@ -85,9 +85,7 @@ public class PlanDispatchNode implements NodeAction {
             case "REPORT_GENERATOR_NODE":
                 return SqlAgentSpec.Node.REPORT;
             case "PYTHON_GENERATE_NODE":
-                // Python analysis arrives in Phase 4; for now terminate gracefully.
-                log.warn("[PlanDispatch] PYTHON_GENERATE_NODE requested but Phase 4 is not implemented — routing to END.");
-                return StateGraph.END;
+                return SqlAgentSpec.Node.PYTHON_GENERATION;
             default:
                 log.warn("[PlanDispatch] Unknown tool_to_use '{}' — routing to REPORT.", toolToUse);
                 return SqlAgentSpec.Node.REPORT;

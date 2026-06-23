@@ -64,12 +64,20 @@ public class PlannerNode implements NodeAction {
         // Force the LLM to emit a JSON object matching the Plan schema.
         BeanOutputConverter<Plan> converter = new BeanOutputConverter<>(Plan.class);
 
+        // Phase 4: if the user rejected the previous plan, the HITL edge pushed back their
+        // feedback via CONFIRMATION_FEEDBACK. Feed it into planner.st's "用户反馈处理" section
+        // so the LLM must comply with the revision requirements. Empty on first run.
+        String feedback = state.value(SqlAgentSpec.StateKey.CONFIRMATION_FEEDBACK, "");
+        String planValidationError = (feedback == null || feedback.isBlank())
+                ? "（暂无用户反馈）"
+                : "用户反馈：" + feedback;
+
         String prompt = promptManager.render(SqlAgentSpec.PromptName.PLANNER, Map.of(
                 "user_question", rewriteQuery,
                 "schema", schema,
                 "evidence", evidenceText,
                 "semantic_model", "（暂无语义模型，阶段5 接入）",
-                "plan_validation_error", "",   // Phase 3: no HITL feedback
+                "plan_validation_error", planValidationError,
                 "format", converter.getFormat()
         ));
 
@@ -95,6 +103,8 @@ public class PlannerNode implements NodeAction {
         out.put(SqlAgentSpec.StateKey.CURRENT_STEP, 1);
         out.put(SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT, 0);
         out.put(SqlAgentSpec.StateKey.SQL_ERROR, "");
+        // Clear the consumed feedback so a subsequent reject doesn't re-inject stale text.
+        out.put(SqlAgentSpec.StateKey.CONFIRMATION_FEEDBACK, "");
 
         return out;
     }

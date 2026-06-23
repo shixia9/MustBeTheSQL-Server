@@ -56,8 +56,8 @@ public class ReportNode implements NodeAction {
             return Map.of(SqlAgentSpec.StateKey.REPORT_RESULT, prefilled);
         }
 
-        // Build analysis steps description (minimum multi-step adaptation: use the
-        // last generated SQL + its execution result; full per-step assembly lands in Phase 5)
+        // Build analysis steps description. Phase 4: fold in any Python analysis
+        // conclusions accumulated in EXECUTION_OUTPUT (a per-step map) alongside SQL.
         StringBuilder analysisSteps = new StringBuilder();
         analysisSteps.append("### 步骤 : SQL 查询\n");
         analysisSteps.append("**使用工具**: SQL_GENERATION\n");
@@ -67,6 +67,13 @@ public class ReportNode implements NodeAction {
             analysisSteps.append("**执行结果**: \n```\n").append(sqlResult).append("\n```\n");
         } else {
             analysisSteps.append("**执行结果**: 暂无（SQL未执行）\n");
+        }
+
+        String pythonAnalysisText = renderExecutionOutput(state);
+        if (pythonAnalysisText != null && !pythonAnalysisText.isBlank()) {
+            analysisSteps.append("\n### 步骤 : Python 深度分析\n");
+            analysisSteps.append("**使用工具**: PYTHON_GENERATION\n");
+            analysisSteps.append("**分析结论**:\n").append(pythonAnalysisText).append("\n");
         }
 
         // Render the report prompt
@@ -84,5 +91,22 @@ public class ReportNode implements NodeAction {
         log.info("[ReportNode] Report generated, length={}", report.length());
 
         return Map.of(SqlAgentSpec.StateKey.REPORT_RESULT, report);
+    }
+
+    /**
+     * Render the {@code EXECUTION_OUTPUT} per-step analysis map into a single readable
+     * block for the report prompt. Returns an empty string when nothing was accumulated.
+     */
+    @SuppressWarnings("unchecked")
+    private String renderExecutionOutput(OverAllState state) {
+        Object existing = state.value(SqlAgentSpec.StateKey.EXECUTION_OUTPUT, (Object) null);
+        if (!(existing instanceof Map)) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        ((Map<String, String>) existing).forEach((key, value) -> {
+            sb.append("- ").append(key).append(": ").append(value == null ? "" : value).append("\n");
+        });
+        return sb.toString().trim();
     }
 }

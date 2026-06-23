@@ -19,6 +19,7 @@ public final class SqlAgentSpec {
         public static final String SCHEMA_LINKING = "SCHEMA_LINKING";
         public static final String FEASIBILITY_ASSESSMENT = "FEASIBILITY_ASSESSMENT";
         public static final String PLANNER = "PLANNER";
+        public static final String HITL_GATE = "HITL_GATE";
         public static final String HITL = "HITL";
         public static final String PLAN_DISPATCH = "PLAN_DISPATCH";
         public static final String SQL_GENERATION = "SQL_GENERATION";
@@ -56,8 +57,14 @@ public final class SqlAgentSpec {
         public static final String PLAN = "plan";
         public static final String CURRENT_STEP = "currentStep";
         public static final String REPAIR_COUNT = "repairCount";
+        /** Accumulated per-step analysis conclusions (Map<Integer,String>) — consumed by the report node. */
+        public static final String EXECUTION_OUTPUT = "executionOutput";
 
         // ---- HITL ----
+        /** Frontend "auto-confirm" switch (true = skip the LLM gate entirely). */
+        public static final String AUTO_CONFIRM = "autoConfirm";
+        /** LLM-gate decision: does this plan need human review? */
+        public static final String NEEDS_HUMAN_REVIEW = "needsHumanReview";
         public static final String CONFIRMATION_APPROVED = "confirmationApproved";
         public static final String CONFIRMATION_FEEDBACK = "confirmationFeedback";
 
@@ -88,5 +95,6 @@ public final class SqlAgentSpec {
         public static final String SQL_ERROR_FIXER = "sql-error-fixer";
         public static final String PYTHON_GENERATOR = "python-generator";
         public static final String PYTHON_ANALYZE = "python-analyze";
+        public static final String HITL_GATE = "hitl-gate";
     }
 }
