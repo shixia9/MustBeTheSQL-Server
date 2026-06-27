@@ -2,9 +2,11 @@ package com.sql.logic.engine.infrastructure.config;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.sql.logic.engine.domain.agent.dto.ForeignKeyRelation;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -12,7 +14,7 @@ import java.util.concurrent.TimeUnit;
  */
 @Configuration
 public class CaffeineCacheConfig {
-    
+
     /**
      * General Single-level Cache: key-value
      */
@@ -32,6 +34,18 @@ public class CaffeineCacheConfig {
         return Caffeine.newBuilder()
                 .maximumSize(10000)
                 .expireAfterWrite(30, TimeUnit.MINUTES)  // Expires 30 minutes after writing
+                .build();
+    }
+
+    /**
+     * Foreign Key Relation Cache: connectionId -> List of ForeignKeyRelation.
+     * Cached per database connection with 30-minute TTL, matching the DDL cache pattern.
+     */
+    @Bean
+    public Cache<Long, List<ForeignKeyRelation>> fkRelationCache() {
+        return Caffeine.newBuilder()
+                .maximumSize(1000)
+                .expireAfterWrite(30, TimeUnit.MINUTES)
                 .build();
     }
 

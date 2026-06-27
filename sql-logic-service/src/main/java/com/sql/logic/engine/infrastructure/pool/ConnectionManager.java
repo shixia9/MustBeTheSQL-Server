@@ -2,7 +2,6 @@ package com.sql.logic.engine.infrastructure.pool;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.github.benmanes.caffeine.cache.RemovalListener;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
 import com.zaxxer.hikari.HikariConfig;
@@ -11,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.concurrent.TimeUnit;
 
@@ -40,6 +40,22 @@ public class ConnectionManager {
 
     public void releaseConnection(Long connectionId) {
         dataSourceCache.invalidate(connectionId);
+    }
+
+    /**
+     * Lightweight connection test — NO Hikari pool created.
+     * Uses {@link java.sql.DriverManager} directly so the test has zero side effects:
+     * no cached DataSource, no leftover pool threads.
+     */
+    public boolean testConnection(DbConnectionConf conf) {
+        String url = buildJdbcUrl(conf);
+        try (Connection conn = DriverManager.getConnection(url, conf.getUsername(), conf.getPassword())) {
+            return conn.isValid(5);
+        } catch (SQLException e) {
+            log.warn("Connection test failed for {}:{}: {}",
+                    conf.getHost(), conf.getPort(), e.getMessage());
+            return false;
+        }
     }
 
     /**

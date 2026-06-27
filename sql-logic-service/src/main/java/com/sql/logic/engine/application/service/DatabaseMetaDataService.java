@@ -2,6 +2,7 @@ package com.sql.logic.engine.application.service;
 
 import com.sql.logic.engine.infrastructure.dialect.DialectFactory;
 import com.sql.logic.engine.infrastructure.dialect.MetaData;
+import com.sql.logic.engine.infrastructure.dialect.model.ColumnDTO;
 import com.sql.logic.engine.infrastructure.dialect.model.SchemaDTO;
 import com.sql.logic.engine.infrastructure.dialect.model.TableDTO;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
@@ -112,6 +113,22 @@ public class DatabaseMetaDataService {
         return sb.toString();
     }
     
+    /**
+     * Get column metadata for a specific table.
+     * Returns list of ColumnDTO with name, dataType, comment, primaryKey info.
+     * Used by ColumnSampleService and SchemaLinkingNode for schema prompt rendering.
+     */
+    public List<ColumnDTO> getTableColumns(Long connectionId, String tableName) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf == null) throw new IllegalArgumentException("Connection not found");
+        try (Connection conn = databaseAppService.getConnection(connectionId)) {
+            MetaData metaData = dialectFactory.getMetaData(conf.getDbType());
+            return metaData.columns(conn, null, tableName);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to fetch columns for table " + tableName, e);
+        }
+    }
+
     private String cleanDDL(String rawDdl) {
         // Remove AUTO_INCREMENT, ENGINE, DEFAULT CHARSET etc. to save tokens
         return rawDdl.replaceAll("AUTO_INCREMENT=\\d+", "")

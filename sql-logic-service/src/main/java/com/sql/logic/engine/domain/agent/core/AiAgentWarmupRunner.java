@@ -7,6 +7,8 @@ import com.sql.logic.engine.domain.agent.strategy.ProviderType;
 import com.sql.logic.engine.infrastructure.dao.UserLlmConfigDao;
 import com.sql.logic.engine.infrastructure.llm.OpenAILLMStrategy;
 import com.sql.logic.engine.infrastructure.po.UserLlmConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -18,6 +20,8 @@ import java.util.Set;
 
 @Component
 public class AiAgentWarmupRunner implements ApplicationRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(AiAgentWarmupRunner.class);
 
     private final AiAgentManager aiAgentManager;
     private final AiAgentFactory aiAgentFactory;
@@ -42,13 +46,13 @@ public class AiAgentWarmupRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
-        System.out.println("[AiAgentWarmupRunner] Starting AI Agent Warmup process...");
+        log.info("[AiAgentWarmupRunner] Starting AI Agent Warmup process...");
 
-        // 1. Create system default LLM strategy and register it
-        LLMStrategy defaultStrategy = new OpenAILLMStrategy(defaultChatClientBuilder);
+        // 1. Create system default LLM strategy (with NON_EMPTY ObjectMapper fix for extra_body)
+        LLMStrategy defaultStrategy = aiAgentFactory.createDefaultSystemStrategy();
         llmClientManager.registerClient(0L, defaultStrategy);
 
-        // 2. Create system default agent (userId=0) using the default strategy
+        // 2. Create system default agent (userId=0) using the NON_EMPTY-fixed strategy
         AiAgent defaultAgent = aiAgentFactory.createDefaultAgent(defaultChatClientBuilder);
         defaultAgent.setSchemaContextProvider(this::buildDynamicSchemaContext);
         aiAgentManager.registerAgent(0L, defaultAgent);
@@ -69,7 +73,7 @@ public class AiAgentWarmupRunner implements ApplicationRunner {
                     llmClientManager.registerClient(config.getId(), strategy);
                     usersWithConfigs.add(config.getUserId());
                 } catch (Exception e) {
-                    System.err.println("[AiAgentWarmupRunner] Failed to create LLM client for config " + config.getId() + ": " + e.getMessage());
+                    log.error("[AiAgentWarmupRunner] Failed to create LLM client for config {}: {}", config.getId(), e.getMessage());
                 }
             }
         }
@@ -81,8 +85,8 @@ public class AiAgentWarmupRunner implements ApplicationRunner {
             aiAgentManager.registerAgent(userId, agent);
         }
 
-        System.out.println("[AiAgentWarmupRunner] Warmup completed. Agents: " + (1 + usersWithConfigs.size())
-                + ", LLM clients: " + (1 + (configs != null ? configs.size() : 0)));
+        log.info("[AiAgentWarmupRunner] Warmup completed. Agents: {}, LLM clients: {}",
+                1 + usersWithConfigs.size(), 1 + (configs != null ? configs.size() : 0));
     }
 
     /**
@@ -119,7 +123,7 @@ public class AiAgentWarmupRunner implements ApplicationRunner {
                     sb.append(ddl).append("\n\n");
                 }
             } catch (Exception e) {
-                System.err.println("Failed to fetch DDL for table: " + tableName);
+                log.warn("[AiAgentWarmupRunner] Failed to fetch DDL for table: {}", tableName);
             }
         }
         return sb.toString();

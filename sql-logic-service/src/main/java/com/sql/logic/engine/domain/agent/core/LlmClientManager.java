@@ -4,6 +4,8 @@ import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.infrastructure.dao.UserLlmConfigDao;
 import com.sql.logic.engine.infrastructure.po.UserLlmConfig;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -21,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class LlmClientManager {
 
+    private static final Logger log = LoggerFactory.getLogger(LlmClientManager.class);
+
     private final ConcurrentHashMap<Long, LLMStrategy> clientCache = new ConcurrentHashMap<>();
     private final UserLlmConfigDao userLlmConfigDao;
 
@@ -33,7 +37,7 @@ public class LlmClientManager {
      */
     public void registerClient(Long configId, LLMStrategy strategy) {
         clientCache.put(configId, strategy);
-        System.out.println("[LlmClientManager] Registered LLM client for config: " + configId);
+        log.info("[LlmClientManager] Registered LLM client for config: {}", configId);
     }
 
     /**
@@ -48,6 +52,35 @@ public class LlmClientManager {
             }
         }
         // Fallback to system default
+        return clientCache.get(0L);
+    }
+
+    /**
+     * Resolve the best LLM strategy for a request.
+     * <p>
+     * Resolution order:
+     * 1. If llmConfigId is explicitly provided and found, use it.
+     * 2. If userId is provided, look up the user's default active config.
+     * 3. Fall back to system default (key 0).
+     * <p>
+     * This matches the behavior of SQLGenerateAppService for non-agent flows.
+     */
+    public LLMStrategy resolveStrategy(Long llmConfigId, Long userId) {
+        // 1. Explicit config
+        if (llmConfigId != null && llmConfigId > 0) {
+            LLMStrategy strategy = clientCache.get(llmConfigId);
+            if (strategy != null) {
+                return strategy;
+            }
+        }
+        // 2. User default
+        if (userId != null && userId > 0) {
+            LLMStrategy userDefault = getDefaultForUser(userId);
+            if (userDefault != null) {
+                return userDefault;
+            }
+        }
+        // 3. System default
         return clientCache.get(0L);
     }
 
@@ -89,7 +122,7 @@ public class LlmClientManager {
      */
     public void removeClient(Long configId) {
         clientCache.remove(configId);
-        System.out.println("[LlmClientManager] Removed LLM client for config: " + configId);
+        log.info("[LlmClientManager] Removed LLM client for config: {}", configId);
     }
 
     /**
@@ -102,7 +135,7 @@ public class LlmClientManager {
         for (UserLlmConfig config : configs) {
             clientCache.remove(config.getId());
         }
-        System.out.println("[LlmClientManager] Removed all LLM clients for user: " + userId);
+        log.info("[LlmClientManager] Removed all LLM clients for user: {}", userId);
     }
 
     /**

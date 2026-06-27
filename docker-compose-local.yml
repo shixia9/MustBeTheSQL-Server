@@ -32,3 +32,17 @@ services:
       - "8848:8848"
       - "9848:9848"
     restart: always
+
+  # Dedicated PostgreSQL+pgvector for the RAG vector store (Phase 5).
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: sql_logic_engine_pgvector
+    environment:
+      POSTGRES_DB: sql_logic_vector
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgvector_data_local:/var/lib/postgresql/data
+    restart: always

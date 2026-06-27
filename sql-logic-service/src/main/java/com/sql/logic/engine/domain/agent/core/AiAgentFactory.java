@@ -1,5 +1,7 @@
 package com.sql.logic.engine.domain.agent.core;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.strategy.ProviderType;
 import com.sql.logic.engine.infrastructure.llm.AnthropicLLMStrategy;
 import com.sql.logic.engine.infrastructure.llm.OpenAILLMStrategy;
@@ -12,10 +14,28 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.stereotype.Component;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.web.client.RestClient;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 @Component
 public class AiAgentFactory {
+
+    /**
+     * Jackson MixIn to override ChatCompletionRequest's class-level @JsonInclude(NON_NULL).
+     * <p>
+     * Spring AI's ChatCompletionRequest has a compact constructor that replaces null
+     * extraBody with an empty HashMap, and its class-level @JsonInclude(NON_NULL)
+     * takes precedence over ObjectMapper's default inclusion setting.
+     * NON_EMPTY excludes the empty "extra_body": {} from serialization
+     * which would otherwise cause HTTP 400 on OpenAI-compatible API proxies.
+     */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    private static interface ChatCompletionRequestMixIn {}
 
     @Value("${spring.ai.openai.base-url:https://api.openai.com}")
     private String defaultOpenAiBaseUrl;
@@ -23,15 +43,29 @@ public class AiAgentFactory {
     @Value("${spring.ai.anthropic.base-url:https://api.anthropic.com}")
     private String defaultAnthropicBaseUrl;
 
+    @Value("${spring.ai.openai.api-key:}")
+    private String defaultApiKey;
+
+    @Value("${spring.ai.openai.chat.options.model:}")
+    private String defaultModelName;
+
+    // Cache the ObjectMapper with NON_EMPTY setting
+    private volatile ObjectMapper nonEmptyObjectMapper;
+
     // ========================
-    // Agent creation (one per user)
+    // Agent creation
     // ========================
 
     /**
-     * Create the system default agent using Spring AI's auto-configured ChatClient.Builder.
+     * Create the system default agent.
+     * <p>
+     * IMPORTANT: Uses createDefaultSystemStrategy() which has the NON_EMPTY ObjectMapper
+     * fix, NOT the auto-configured ChatClient.Builder (which would trigger extra_body bug).
      */
     public AiAgent createDefaultAgent(ChatClient.Builder defaultChatClientBuilder) {
-        OpenAILLMStrategy strategy = new OpenAILLMStrategy(defaultChatClientBuilder);
+        // Use the NON_EMPTY-fixed strategy instead of the auto-configured builder
+        // which would serialize extra_body: {} and cause 400 errors on OpenAI-compatible APIs
+        LLMStrategy strategy = createDefaultSystemStrategy();
         return new SqlAiAgentImpl(strategy);
     }
 
@@ -41,8 +75,6 @@ public class AiAgentFactory {
 
     /**
      * Create an LLMStrategy for a specific provider/config combination.
-     * This is called by LlmClientManager and AiAgentWarmupRunner to pool
-     * LLM client instances keyed by configId.
      */
     public LLMStrategy createLLMStrategy(ProviderType providerType, String apiKey, String baseUrl, String modelName) {
         return switch (providerType) {
@@ -52,14 +84,52 @@ public class AiAgentFactory {
     }
 
     /**
+     * Create the system default LLMStrategy directly (bypassing auto-configured builder).
+     * This ensures the OpenAiApi uses a RestClient with NON_EMPTY ObjectMapper,
+     * preventing "extra_body": {} from being serialized to API requests.
+     * <p>
+     * Uses the model name from config (spring.ai.openai.chat.options.model).
+     */
+    public LLMStrategy createDefaultSystemStrategy() {
+        String modelName = (defaultModelName != null && !defaultModelName.isBlank()) ? defaultModelName : null;
+        return createOpenAiStrategy(defaultApiKey, defaultOpenAiBaseUrl, modelName);
+    }
+
+    /**
      * Create an OpenAI-compatible LLMStrategy with custom credentials.
+     * Uses a custom RestClient with NON_EMPTY ObjectMapper to prevent
+     * empty extraBody serialization (fixes HTTP 400 on OpenAI-compatible APIs).
+     * <p>
+     * Also configures connect/read timeouts via JDK HttpClient to prevent
+     * ClosedChannelException on unstable networks.
      */
     private OpenAILLMStrategy createOpenAiStrategy(String apiKey, String baseUrl, String modelName) {
         String finalBaseUrl = (baseUrl != null && !baseUrl.trim().isEmpty()) ? baseUrl : defaultOpenAiBaseUrl;
 
+        // Build a JDK HttpClient with explicit connect timeout to prevent
+        // ClosedChannelException when connecting to API proxies on unstable networks.
+        // JDK HttpClient defaults can be too aggressive; 30s connect / 120s read is safe for LLM calls.
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(120));
+
+        // Custom RestClient with NON_EMPTY ObjectMapper — this is the fix for
+        // "extra_body": {} being sent in the ChatCompletionRequest JSON body.
+        // The ChatCompletionRequest Record's all-args constructor replaces null
+        // extraBody with an empty HashMap, and default Jackson serializes it.
+        RestClient.Builder restClientBuilder = RestClient.builder()
+                .messageConverters(converters -> {
+                    converters.removeIf(MappingJackson2HttpMessageConverter.class::isInstance);
+                    converters.add(0, new MappingJackson2HttpMessageConverter(getNonEmptyObjectMapper()));
+                })
+                .requestFactory(requestFactory);
+
         OpenAiApi openAiApi = OpenAiApi.builder()
                 .baseUrl(finalBaseUrl)
                 .apiKey(apiKey)
+                .restClientBuilder(restClientBuilder)
                 .build();
 
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
@@ -101,5 +171,29 @@ public class AiAgentFactory {
         ChatClient chatClient = ChatClient.builder(chatModel).build();
 
         return new AnthropicLLMStrategy(chatClient.mutate());
+    }
+
+    /**
+     * Lazy-initialize the ObjectMapper with NON_EMPTY inclusion.
+     * This prevents "extra_body": {} from being serialized by bypassing
+     * the default serialization which always includes empty Maps.
+     * <p>
+     * Uses a Jackson MixIn to override ChatCompletionRequest's class-level
+     * @JsonInclude(NON_NULL) with NON_EMPTY, because the class annotation
+     * takes precedence over ObjectMapper's default SerializationInclusion.
+     */
+    private ObjectMapper getNonEmptyObjectMapper() {
+        if (nonEmptyObjectMapper == null) {
+            synchronized (this) {
+                if (nonEmptyObjectMapper == null) {
+                    nonEmptyObjectMapper = new ObjectMapper();
+                    nonEmptyObjectMapper.setSerializationInclusion(JsonInclude.Include.NON_EMPTY);
+                    // MixIn overrides ChatCompletionRequest's class-level @JsonInclude(NON_NULL)
+                    // which would otherwise keep the empty extraBody Map in serialized JSON
+                    nonEmptyObjectMapper.addMixIn(OpenAiApi.ChatCompletionRequest.class, ChatCompletionRequestMixIn.class);
+                }
+            }
+        }
+        return nonEmptyObjectMapper;
     }
 }
