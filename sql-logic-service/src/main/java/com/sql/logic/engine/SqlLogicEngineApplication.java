@@ -2,9 +2,16 @@ package com.sql.logic.engine;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 
-@SpringBootApplication
+/**
+ * Excludes {@link PgVectorStoreAutoConfiguration} because Phase 5 wires
+ * {@code PgVectorStore} manually against the dedicated PG {@code JdbcTemplate}
+ * — the auto-config would otherwise bind the vector store to the default
+ * (MySQL business) JdbcTemplate. See {@code PgVectorStoreConfig}.
+ */
+@SpringBootApplication(exclude = { PgVectorStoreAutoConfiguration.class })
 @EnableDiscoveryClient
 public class SqlLogicEngineApplication {
 

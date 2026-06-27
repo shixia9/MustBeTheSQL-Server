@@ -252,6 +252,11 @@ public class SqlAgentController {
             case SqlAgentSpec.Node.EVIDENCE_RECALL:
                 data.put("rewriteQuery", state.value(SqlAgentSpec.StateKey.REWRITE_QUERY, ""));
                 data.put("evidence", state.value(SqlAgentSpec.StateKey.EVIDENCE, ""));
+                // Phase 5 structured arrays for the frontend card
+                Object egl = state.value(SqlAgentSpec.StateKey.EVIDENCE_GLOSSARY, List.of());
+                data.put("evidenceGlossary", egl != null ? egl : List.of());
+                Object efaq = state.value(SqlAgentSpec.StateKey.EVIDENCE_FAQ, List.of());
+                data.put("evidenceFaq", efaq != null ? efaq : List.of());
                 break;
             case SqlAgentSpec.Node.SCHEMA_LINKING:
                 data.put("tableRelation", state.value(SqlAgentSpec.StateKey.TABLE_RELATION, ""));

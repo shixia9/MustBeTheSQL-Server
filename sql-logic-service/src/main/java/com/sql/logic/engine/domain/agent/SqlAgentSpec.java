@@ -44,6 +44,10 @@ public final class SqlAgentSpec {
         // ---- Evidence Recall ----
         public static final String REWRITE_QUERY = "rewriteQuery";
         public static final String EVIDENCE = "evidence";
+        /** Structured glossary entries (List<Map>) recalled by Phase 5 RAG — for the frontend card. */
+        public static final String EVIDENCE_GLOSSARY = "evidenceGlossary";
+        /** Structured few-shot Q/A entries (List<Map>) recalled by Phase 5 RAG — for the frontend card. */
+        public static final String EVIDENCE_FAQ = "evidenceFaq";
 
         // ---- Schema Linking ----
         public static final String TABLE_RELATION = "tableRelation";
@@ -96,5 +100,42 @@ public final class SqlAgentSpec {
         public static final String PYTHON_GENERATOR = "python-generator";
         public static final String PYTHON_ANALYZE = "python-analyze";
         public static final String HITL_GATE = "hitl-gate";
+        /** Glossary knowledge wrapper (Phase 5 RAG) — {businessKnowledge}. */
+        public static final String EVIDENCE_GLOSSARY = "evidence-glossary";
+        /** Few-shot knowledge wrapper (Phase 5 RAG) — {agentKnowledge}. */
+        public static final String EVIDENCE_KNOWLEDGE = "evidence-knowledge";
+    }
+
+    // ======================== Retrieval (Phase 5 RAG) ========================
+
+    /**
+     * pgvector metadata keys and channel types for the four-channel vector retrieval.
+     * Modeled after the reference project's {@code DataAgentSpec.Retrieval}.
+     * <p>
+     * Documents in {@code vector_store} carry these as {@code metadata} for
+     * {@code FilterExpressionBuilder} filtering. Partitioning is by
+     * {@code userId} + {@code connectionId} (this project's multi-tenant identity)
+     * and {@code vectorType}.
+     */
+    public static final class Retrieval {
+        private Retrieval() {}
+
+        public static final class DocumentMetadataKey {
+            public static final String VECTOR_TYPE = "vectorType";
+            public static final String USER_ID = "userId";
+            public static final String CONNECTION_ID = "connectionId";
+            public static final String KNOWLEDGE_ID = "knowledgeId";
+        }
+
+        public static final class VectorType {
+            /** Business glossary term (user-managed). */
+            public static final String GLOSSARY_KNOWLEDGE = "GLOSSARY_KNOWLEDGE";
+            /** Few-shot Q/A pair (user-managed). */
+            public static final String QUESTION_KNOWLEDGE = "QUESTION_KNOWLEDGE";
+            /** Live-schema table doc — reserved for a future schema-vector channel. */
+            public static final String TABLE = "TABLE";
+            /** Live-schema column doc — reserved for a future schema-vector channel. */
+            public static final String COLUMN = "COLUMN";
+        }
     }
 }

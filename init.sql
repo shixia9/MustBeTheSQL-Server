@@ -120,3 +120,20 @@ CREATE TABLE IF NOT EXISTS sql_audit_log (
     error_message TEXT,
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- user-managed business knowledge (glossary + few-shot QA) for RAG.
+CREATE TABLE IF NOT EXISTS business_knowledge (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL COMMENT 'Owner of this knowledge row',
+    connection_id BIGINT NOT NULL COMMENT 'The user DB connection this knowledge scopes to',
+    vector_type VARCHAR(32) NOT NULL COMMENT 'GLOSSARY_KNOWLEDGE | QUESTION_KNOWLEDGE',
+    term VARCHAR(255) DEFAULT NULL COMMENT 'Glossary term',
+    description TEXT COMMENT 'Glossary description / definition',
+    question TEXT COMMENT 'FAQ question',
+    answer TEXT COMMENT 'FAQ answer (e.g. reference SQL)',
+    synonyms VARCHAR(500) DEFAULT NULL COMMENT 'Glossary synonyms (comma-separated)',
+    status TINYINT(1) DEFAULT 1 COMMENT '0: pending re-embed (embedding failed), 1: active',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_user_conn_type (user_id, connection_id, vector_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='User-managed business knowledge (glossary + few-shot QA)';

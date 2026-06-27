@@ -68,6 +68,8 @@ public class SqlAgentGraphConfiguration {
             // Evidence Recall keys
             strategies.put(SqlAgentSpec.StateKey.REWRITE_QUERY, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.EVIDENCE, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.EVIDENCE_GLOSSARY, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.EVIDENCE_FAQ, new ReplaceStrategy());
 
             // Schema Linking keys
             strategies.put(SqlAgentSpec.StateKey.TABLE_RELATION, new ReplaceStrategy());
