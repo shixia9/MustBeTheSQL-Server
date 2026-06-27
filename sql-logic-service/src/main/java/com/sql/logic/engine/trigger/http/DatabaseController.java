@@ -109,6 +109,14 @@ public class DatabaseController {
     @PostMapping("/test")
     public Result<Boolean> testConnection(@RequestBody DbConnectionConf conf) {
         try {
+            String userIdStr = (String) StpUtil.getLoginId();
+            if (userIdStr == null || !userIdStr.matches("\\d+")) {
+                return Result.error(400, "Invalid user ID in session");
+            }
+            Long userId = Long.valueOf(userIdStr);
+            if (userId != conf.getUserId()) {
+                return Result.error(400, "User ID mismatch");
+            }
             boolean success = databaseAppService.testConnection(conf);
             return Result.success(success);
         } catch (IllegalArgumentException e) {

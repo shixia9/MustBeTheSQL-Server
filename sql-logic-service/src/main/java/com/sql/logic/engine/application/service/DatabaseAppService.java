@@ -4,6 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sql.logic.engine.infrastructure.dao.DbConnectionConfDao;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
 import com.sql.logic.engine.infrastructure.pool.ConnectionManager;
+
+import jodd.util.StringUtil;
+
 import org.springframework.stereotype.Service;
 
 import java.sql.Connection;
@@ -51,7 +54,7 @@ public class DatabaseAppService {
         if (existing == null || !existing.getUserId().equals(userId)) {
             throw new IllegalArgumentException("Connection not found or permission denied");
         }
-        if (conf.getPassword() == null || conf.getPassword().isEmpty()) {
+        if (StringUtil.isEmpty(conf.getPassword()) && conf.getId() != null) {
             conf.setPassword(existing.getPassword()); // keep old password if not updated
         }
         dbConnectionConfDao.updateById(conf);
@@ -76,18 +79,13 @@ public class DatabaseAppService {
 
     public boolean testConnection(DbConnectionConf conf) {
         // If testing an existing connection without providing password again
-        if (conf.getPassword() == null && conf.getId() != null) {
+        if (StringUtil.isEmpty(conf.getPassword()) && conf.getId() != null) {
             DbConnectionConf existing = dbConnectionConfDao.selectById(conf.getId());
             if (existing != null) {
                 conf.setPassword(existing.getPassword());
             }
         }
-        
-        try (Connection conn = connectionManager.getConnection(conf)) {
-            return conn.isValid(5); // 5 seconds timeout
-        } catch (SQLException e) {
-            throw new IllegalArgumentException("Connection failed: " + e.getMessage());
-        }
+        return connectionManager.testConnection(conf);
     }
 
     public Connection getConnection(Long connectionId) throws SQLException {
