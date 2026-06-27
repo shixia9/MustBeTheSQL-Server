@@ -2,7 +2,6 @@ package com.sql.logic.engine.domain.agent.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
-import com.alibaba.cloud.ai.graph.StateGraph;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
@@ -58,9 +57,9 @@ public class PlanDispatchNode implements NodeAction {
 
         List<PlanStep> steps = plan.executionPlan();
         if (currentStep > steps.size()) {
-            log.info("[PlanDispatch] All {} steps dispatched — done.", steps.size());
+            log.info("[PlanDispatch] All {} steps dispatched — routing to REPORT.", steps.size());
             out.put(SqlAgentSpec.StateKey.CURRENT_STEP, 1);  // reset cursor
-            out.put(SqlAgentSpec.StateKey.NEXT_NODE, StateGraph.END);
+            out.put(SqlAgentSpec.StateKey.NEXT_NODE, SqlAgentSpec.Node.REPORT);
             return out;
         }
 
