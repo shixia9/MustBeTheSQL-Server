@@ -1,4 +1,4 @@
-# 📊 Must Be The SQL
+# 📊 Must Be The SQL （更新中）
 
 <p align="center">
   <img src="https://img.shields.io/badge/Java-21-blue" />
