@@ -91,12 +91,17 @@ public class ConnectionManager {
     }
 
     private String buildJdbcUrl(DbConnectionConf conf) {
+        String dbName = conf.getDbName();
         if ("mysql".equalsIgnoreCase(conf.getDbType())) {
-            return String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=UTC", 
-                    conf.getHost(), conf.getPort(), conf.getDbName());
+            String base = String.format("jdbc:mysql://%s:%d", conf.getHost(), conf.getPort());
+            return dbName != null && !dbName.isBlank()
+                    ? base + "/" + dbName + "?useSSL=false&serverTimezone=UTC"
+                    : base + "?useSSL=false&serverTimezone=UTC";
         } else if ("postgresql".equalsIgnoreCase(conf.getDbType())) {
-            return String.format("jdbc:postgresql://%s:%d/%s", 
-                    conf.getHost(), conf.getPort(), conf.getDbName());
+            String base = String.format("jdbc:postgresql://%s:%d", conf.getHost(), conf.getPort());
+            return dbName != null && !dbName.isBlank()
+                    ? base + "/" + dbName
+                    : base;
         }
         throw new IllegalArgumentException("Unsupported database type: " + conf.getDbType());
     }

@@ -49,6 +49,7 @@ public class SqlExecutionNode implements NodeAction {
         String sql = state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, "");
         Long connectionId = AgentStateUtil.toLong(state.value(SqlAgentSpec.StateKey.CONNECTION_ID, (Long) null));
         Long userId = AgentStateUtil.toLong(state.value(SqlAgentSpec.StateKey.USER_ID, (Long) null));
+        String schemaName = state.value(SqlAgentSpec.StateKey.SCHEMA_NAME, "");
         int currentStep = readInt(state, SqlAgentSpec.StateKey.CURRENT_STEP, 1);
         int fixAttemptCount = readInt(state, SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT, 0);
 
@@ -63,7 +64,7 @@ public class SqlExecutionNode implements NodeAction {
             return out;
         }
 
-        SqlExecutionResult result = sqlExecutionService.execute(userId, connectionId, sql);
+        SqlExecutionResult result = sqlExecutionService.execute(userId, connectionId, sql, schemaName);
 
         if (result.hasError()) {
             log.info("[SqlExecutionNode] SQL failed (step={}, fixAttempt={}) — {}",

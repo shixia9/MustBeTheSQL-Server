@@ -71,8 +71,12 @@ public class ColumnSampleService {
      * @param tableNames   list of table names to sample
      * @return formatted schema string with sampled data, or empty string if no tables
      */
+    public String getColumnSamples(Long connectionId, List<String> tableNames, String schemaName) {
+        return getColumnSamples(connectionId, tableNames, schemaName, DEFAULT_MAX_COLUMNS, DEFAULT_SAMPLE_LIMIT);
+    }
+
     public String getColumnSamples(Long connectionId, List<String> tableNames) {
-        return getColumnSamples(connectionId, tableNames, DEFAULT_MAX_COLUMNS, DEFAULT_SAMPLE_LIMIT);
+        return getColumnSamples(connectionId, tableNames, null, DEFAULT_MAX_COLUMNS, DEFAULT_SAMPLE_LIMIT);
     }
 
     /**
@@ -85,7 +89,7 @@ public class ColumnSampleService {
      * @return formatted schema string with sampled data
      */
     public String getColumnSamples(Long connectionId, List<String> tableNames,
-                                   int maxColumnsPerTable, int sampleLimit) {
+                                   String schemaName, int maxColumnsPerTable, int sampleLimit) {
         if (tableNames == null || tableNames.isEmpty() || connectionId == null) {
             return "";
         }

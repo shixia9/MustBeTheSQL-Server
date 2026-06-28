@@ -3,11 +3,13 @@ package com.sql.logic.engine.trigger.http;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sql.logic.engine.application.service.AgentHistoryAppService;
 import com.sql.logic.engine.application.service.UserAppService;
 import com.sql.logic.engine.common.dto.SqlGenerateRequest;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner.AgentRunHandle;
+import com.sql.logic.engine.infrastructure.po.AgentExecution;
 
 import cn.dev33.satoken.stp.StpUtil;
 import org.slf4j.Logger;
@@ -16,7 +18,9 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,13 +57,16 @@ public class SqlAgentController {
     private final SqlAgentRunner sqlAgentRunner;
     private final UserAppService userAppService;
     private final ObjectMapper objectMapper;
+    private final AgentHistoryAppService agentHistoryAppService;
 
     public SqlAgentController(SqlAgentRunner sqlAgentRunner,
-                              UserAppService userAppService,
-                              ObjectMapper objectMapper) {
+                            UserAppService userAppService,
+                            ObjectMapper objectMapper,
+                            AgentHistoryAppService agentHistoryAppService) {
         this.sqlAgentRunner = sqlAgentRunner;
         this.userAppService = userAppService;
         this.objectMapper = objectMapper;
+        this.agentHistoryAppService = agentHistoryAppService;
     }
 
     /**
@@ -94,6 +101,7 @@ public class SqlAgentController {
                 currentUserId,
                 request.getLlmConfigId(),
                 request.getTableNames(),
+                request.getSchemaContext(),
                 autoConfirm
         );
 
@@ -102,6 +110,11 @@ public class SqlAgentController {
                 .map(this::nodeOutputToJson)
                 .filter(json -> !json.isEmpty())  // Skip empty (START/END pseudo-nodes)
                 .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId)))
+                .doFinally(signalType -> {
+                    if (signalType != SignalType.CANCEL) {
+                        recordExecution(handle, request, currentUserId);
+                    }
+                })
                 .onErrorResume(e -> {
                     log.error("[SqlAgentController] SSE stream error (threadId={})", threadId, e);
                     return Flux.just("{\"type\":\"ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
@@ -147,6 +160,11 @@ public class SqlAgentController {
                 .map(this::nodeOutputToJson)
                 .filter(json -> !json.isEmpty())
                 .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId)))
+                .doFinally(signalType -> {
+                    if (signalType != SignalType.CANCEL) {
+                        recordExecution(handle, null, currentUserId);
+                    }
+                })
                 .onErrorResume(e -> {
                     log.error("[SqlAgentController] SSE resume error (threadId={})", threadId, e);
                     return Flux.just("{\"type\":\"ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
@@ -376,4 +394,37 @@ public class SqlAgentController {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "");
     }
+
+    private void recordExecution(AgentRunHandle handle, SqlGenerateRequest request, Long userId) {
+    try {
+        if (handle.isHaltedAtHitl()) return;
+        
+        AgentExecution exec = new AgentExecution();
+        exec.setUserId(userId);
+        exec.setInput("");
+        exec.setSummary("");
+        exec.setStatus("COMPLETED");
+        exec.setThreadId(handle.getThreadId());
+        exec.setTotalDurationMs(0L);
+        exec.setCreateTime(LocalDateTime.now());
+        
+        if (request != null) {
+            exec.setConnectionId(request.getConnectionId());
+            exec.setSchemaName(request.getSchemaContext());
+            exec.setInput(request.getUserInput());
+            exec.setSummary(request.getUserInput() != null
+                ? request.getUserInput().substring(0, Math.min(request.getUserInput().length(), 100))
+                : "");
+        } else {
+            var ctx = handle.getContext();
+            exec.setConnectionId(ctx.getConnectionId());
+            exec.setSchemaName(ctx.getSchemaName());
+        }
+        
+        agentHistoryAppService.saveExecution(exec);
+        log.info("[SqlAgentController] Recorded agent execution id={}", exec.getId());
+    } catch (Exception e) {
+        log.warn("[SqlAgentController] Failed to record execution history: {}", e.getMessage());
+    }
+}
 }

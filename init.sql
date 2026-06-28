@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS db_connection_conf (
     port INT NOT NULL,
     username VARCHAR(100) NOT NULL,
     password VARCHAR(255) NOT NULL,
-    db_name VARCHAR(100) NOT NULL,
+    db_name VARCHAR(100) DEFAULT NULL,
     is_test TINYINT(1) DEFAULT 0
 );
 
@@ -137,3 +137,31 @@ CREATE TABLE IF NOT EXISTS business_knowledge (
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_user_conn_type (user_id, connection_id, vector_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='User-managed business knowledge (glossary + few-shot QA)';
+
+-- Agent execution history — records each agentic run's summary and per-node steps.
+CREATE TABLE IF NOT EXISTS agent_execution (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    connection_id BIGINT DEFAULT NULL,
+    schema_name VARCHAR(100) DEFAULT NULL,
+    input TEXT NOT NULL COMMENT 'Original user natural language query',
+    summary VARCHAR(200) DEFAULT NULL COMMENT 'AI-generated or truncated title for history display',
+    status VARCHAR(32) DEFAULT 'COMPLETED' COMMENT 'COMPLETED, ERROR, CANCELLED',
+    thread_id VARCHAR(64) DEFAULT NULL COMMENT 'graph-core checkpoint threadId',
+    total_tokens INT DEFAULT 0,
+    total_duration_ms BIGINT DEFAULT 0,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_time (user_id, create_time DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent execution summary';
+
+CREATE TABLE IF NOT EXISTS agent_execution_step (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    execution_id BIGINT NOT NULL COMMENT 'FK to agent_execution.id',
+    node_name VARCHAR(64) NOT NULL COMMENT 'EVIDENCE_RECALL, SCHEMA_LINKING, etc.',
+    sequence_no INT NOT NULL COMMENT 'Step ordering within the execution',
+    status VARCHAR(32) DEFAULT 'SUCCESS' COMMENT 'SUCCESS, ERROR, SKIPPED',
+    duration_ms BIGINT DEFAULT 0,
+    output_data JSON DEFAULT NULL COMMENT 'Node-level output payload',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_execution (execution_id, sequence_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent execution per-node detail';

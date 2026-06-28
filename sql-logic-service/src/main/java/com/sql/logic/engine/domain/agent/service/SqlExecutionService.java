@@ -47,21 +47,22 @@ public class SqlExecutionService {
 
     /**
      * Execute a SQL statement on the user's selected database connection.
+     * Prepends schema context (USE/SET search_path) when a schemaName is provided.
      *
      * @param userId       the logged-in user ID (for connection access control)
      * @param connectionId the target database connection ID
      * @param sql          the SQL to execute (must be a read-only SELECT)
+     * @param schemaName   optional schema to scope the query to (null for connection default)
      * @return a structured result; success → columns/rows populated, {@code errorMsg} null;
      *         failure → {@code errorMsg} set (validation error or SQLException).
      */
-    public SqlExecutionResult execute(Long userId, Long connectionId, String sql) {
+    public SqlExecutionResult execute(Long userId, Long connectionId, String sql, String schemaName) {
         if (sql == null || sql.isBlank()) {
             return SqlExecutionResult.error("SQL statement is empty.");
         }
 
-        // Read-only gate: reject anything that isn't a SELECT (protects against
-        // LLM-emitted destructive/DDL statements being auto-executed).
-        String finalSql = ensureSafeRead(sql);
+        // Resolve schema context and prepare full SQL
+        String finalSql = prepareSqlWithSchema(userId, connectionId, sql, schemaName);
         if (finalSql == null) {
             return SqlExecutionResult.error("Generated SQL is not a read-only SELECT and was blocked.");
         }
@@ -77,7 +78,6 @@ public class SqlExecutionService {
             long latency = System.currentTimeMillis() - t0;
 
             if (!hasResultSet) {
-                // A read-only gate guarantees a ResultSet; reaching here is anomalous.
                 return SqlExecutionResult.error("Statement returned no result set.");
             }
 
@@ -95,9 +95,43 @@ public class SqlExecutionService {
         }
     }
 
+    /** Backward-compatible overload without schemaName. */
+    public SqlExecutionResult execute(Long userId, Long connectionId, String sql) {
+        return execute(userId, connectionId, sql, null);
+    }
+
     /**
-     * Ensure the SQL is a safe SELECT. Returns the (possibly LIMIT-appended) SQL
-     * to execute, or {@code null} if the statement is not a read-only SELECT.
+     * Prepare the SQL with schema context: determine the DB type, validate the SQL,
+     * and prepend USE/SET search_path when a schema name is provided.
+     */
+    private String prepareSqlWithSchema(Long userId, Long connectionId, String sql, String schemaName) {
+        // Read-only gate first
+        String safeSql = ensureSafeRead(sql);
+        if (safeSql == null) return null;
+
+        // No schema specified — use SQL as-is
+        if (schemaName == null || schemaName.isBlank()) return safeSql;
+
+        // Determine DB type and prepend appropriate schema context
+        try {
+            String dbType = databaseAppService.getConnectionDbType(connectionId);
+            if (dbType == null) return safeSql;
+
+            if (dbType.toLowerCase().contains("mysql")) {
+                // Backtick-quote schema name for MySQL
+                return "USE `" + schemaName + "`; " + safeSql;
+            } else if (dbType.toLowerCase().contains("postgres")) {
+                // Double-quote for PostgreSQL
+                return "SET search_path TO \"" + schemaName + "\"; " + safeSql;
+            }
+        } catch (Exception e) {
+            log.warn("[SqlExecutionService] Failed to resolve DB type for schema context, using SQL as-is: {}", e.getMessage());
+        }
+        return safeSql;
+    }
+
+    /**
+     * Backward-compatible overload without schemaName.
      */
     private String ensureSafeRead(String sql) {
         String trimmed = sql.trim();

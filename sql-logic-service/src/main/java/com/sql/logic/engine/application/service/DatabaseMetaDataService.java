@@ -37,18 +37,26 @@ public class DatabaseMetaDataService {
     }
 
     public List<String> getTableNames(Long connectionId) {
+        return getTableNames(connectionId, null);
+    }
+
+    public List<String> getTableNames(Long connectionId, String schemaName) {
         DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
         if (conf == null) throw new IllegalArgumentException("Connection not found");
         
         try (Connection conn = databaseAppService.getConnection(connectionId)) {
             MetaData metaData = dialectFactory.getMetaData(conf.getDbType());
-            return metaData.tables(conn, null).stream().map(TableDTO::getName).collect(Collectors.toList());
+            return metaData.tables(conn, schemaName).stream().map(TableDTO::getName).collect(Collectors.toList());
         } catch (SQLException e) {
             throw new RuntimeException("Failed to fetch table names: " + e.getMessage(), e);
         }
     }
 
     public String getTableDDL(Long connectionId, String tableName) {
+        return getTableDDL(connectionId, null, tableName);
+    }
+
+    public String getTableDDL(Long connectionId, String schemaName, String tableName) {
         // Check cache first
         Cache<String, String> connCache = ddlCache.get(connectionId, key -> 
             Caffeine.newBuilder()
@@ -60,7 +68,7 @@ public class DatabaseMetaDataService {
         if (ddl != null) {
             return ddl;
         }
-        ddl = fetchDDLFromDatabase(connectionId, tableName);
+        ddl = fetchDDLFromDatabase(connectionId, schemaName, tableName);
         if (ddl != null) {
             connCache.put(tableName, ddl);
         }
@@ -71,25 +79,25 @@ public class DatabaseMetaDataService {
         ddlCache.invalidate(connectionId);
     }
 
-    private String fetchDDLFromDatabase(Long connectionId, String tableName) {
+    private String fetchDDLFromDatabase(Long connectionId, String schemaName, String tableName) {
         DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
         if (conf == null) return null;
         try (Connection conn = databaseAppService.getConnection(connectionId)) {
             MetaData metaData = dialectFactory.getMetaData(conf.getDbType());
-            String ddl = metaData.tableDDL(conn, null, tableName);
+            String ddl = metaData.tableDDL(conn, schemaName, tableName);
             if (ddl != null && !ddl.trim().isEmpty()) {
                 return cleanDDL(ddl);
             }
-            return buildFallbackDDL(conn, tableName);
+            return buildFallbackDDL(conn, schemaName, tableName);
         } catch (Exception e) {
             throw new RuntimeException("Failed to fetch DDL for table " + tableName, e);
         }
     }
     
-    private String buildFallbackDDL(Connection conn, String tableName) throws SQLException {
+    private String buildFallbackDDL(Connection conn, String schemaName, String tableName) throws SQLException {
         StringBuilder sb = new StringBuilder("CREATE TABLE ").append(tableName).append(" (\n");
         DatabaseMetaData metaData = conn.getMetaData();
-        try (ResultSet rs = metaData.getColumns(conn.getCatalog(), conn.getSchema(), tableName, "%")) {
+        try (ResultSet rs = metaData.getColumns(schemaName != null ? schemaName : conn.getCatalog(), conn.getSchema(), tableName, "%")) {
             boolean hasColumns = false;
             while (rs.next()) {
                 hasColumns = true;
@@ -119,11 +127,15 @@ public class DatabaseMetaDataService {
      * Used by ColumnSampleService and SchemaLinkingNode for schema prompt rendering.
      */
     public List<ColumnDTO> getTableColumns(Long connectionId, String tableName) {
+        return getTableColumns(connectionId, null, tableName);
+    }
+
+    public List<ColumnDTO> getTableColumns(Long connectionId, String schemaName, String tableName) {
         DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
         if (conf == null) throw new IllegalArgumentException("Connection not found");
         try (Connection conn = databaseAppService.getConnection(connectionId)) {
             MetaData metaData = dialectFactory.getMetaData(conf.getDbType());
-            return metaData.columns(conn, null, tableName);
+            return metaData.columns(conn, schemaName, tableName);
         } catch (SQLException e) {
             throw new RuntimeException("Failed to fetch columns for table " + tableName, e);
         }

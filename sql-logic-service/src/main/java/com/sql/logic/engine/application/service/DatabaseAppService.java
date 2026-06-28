@@ -36,9 +36,9 @@ public class DatabaseAppService {
     }
 
     public DbConnectionConf addConnection(DbConnectionConf conf) {
-        // Simple validation
+        // Simple validation — dbName is optional (connect to server, browse all schemas)
         if (conf.getName() == null || conf.getHost() == null || conf.getPort() == null ||
-            conf.getUsername() == null || conf.getPassword() == null || conf.getDbName() == null) {
+            conf.getUsername() == null || conf.getPassword() == null) {
             throw new IllegalArgumentException("Missing required connection parameters");
         }
         conf.setIsTest(0); // Users can only add their own non-test connections
@@ -55,7 +55,8 @@ public class DatabaseAppService {
             throw new IllegalArgumentException("Connection not found or permission denied");
         }
         if (StringUtil.isEmpty(conf.getPassword()) && conf.getId() != null) {
-            conf.setPassword(existing.getPassword()); // keep old password if not updated
+            conf.setPassword(existing.getPassword());
+            conf.setDbName(existing.getDbName()); // keep old password if not updated
         }
         dbConnectionConfDao.updateById(conf);
         // Invalidate cached DataSource so a fresh pool is created with updated config
@@ -83,6 +84,7 @@ public class DatabaseAppService {
             DbConnectionConf existing = dbConnectionConfDao.selectById(conf.getId());
             if (existing != null) {
                 conf.setPassword(existing.getPassword());
+            conf.setDbName(existing.getDbName());
             }
         }
         return connectionManager.testConnection(conf);
@@ -111,5 +113,14 @@ public class DatabaseAppService {
     public Connection getConnectionForUser(Long userId, Long connectionId) throws SQLException {
         assertUserCanAccessConnection(userId, connectionId);
         return getConnection(connectionId);
+    }
+
+    /**
+     * Get the database type (e.g., "mysql", "postgresql") for a connection.
+     * Used by agent nodes to determine schema context dialect.
+     */
+    public String getConnectionDbType(Long connectionId) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        return conf != null ? conf.getDbType() : null;
     }
 }

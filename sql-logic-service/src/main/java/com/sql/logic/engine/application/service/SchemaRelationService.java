@@ -52,8 +52,14 @@ public class SchemaRelationService {
      * @param connectionId the database connection ID
      * @return list of ForeignKeyRelation representing all FK constraints
      */
-    public List<ForeignKeyRelation> getForeignKeyRelations(Long connectionId) {
-        return fkRelationCache.get(connectionId, this::fetchForeignKeyRelations);
+    public List<ForeignKeyRelation> getForeignKeyRelations(Long connectionId) { return getForeignKeyRelations(connectionId, null); }
+
+    public List<ForeignKeyRelation> getForeignKeyRelations(Long connectionId, String schemaName) {
+        if (schemaName != null) {
+            return fetchForeignKeyRelations(connectionId, schemaName);
+        }
+        // Fallback: use cached version which reads schema from conf.getDbName()
+        return fkRelationCache.get(connectionId, id -> fetchForeignKeyRelations(id, null));
     }
 
     /**
@@ -67,6 +73,22 @@ public class SchemaRelationService {
      * @param coreTables   the initial set of table names
      * @return expanded set including FK-connected tables
      */
+    public Set<String> expandWithJoinTables(Long connectionId, Set<String> coreTables, String schemaName) {
+        if (coreTables == null || coreTables.isEmpty()) {
+            return Collections.emptySet();
+        }
+        List<ForeignKeyRelation> allRelations = getForeignKeyRelations(connectionId, schemaName);
+        Set<String> expanded = new LinkedHashSet<>(coreTables);
+
+        for (ForeignKeyRelation fk : allRelations) {
+            if (coreTables.contains(fk.getSourceTable()) || coreTables.contains(fk.getTargetTable())) {
+                expanded.add(fk.getSourceTable());
+                expanded.add(fk.getTargetTable());
+            }
+        }
+        return expanded;
+    }
+
     public Set<String> expandWithJoinTables(Long connectionId, Set<String> coreTables) {
         if (coreTables == null || coreTables.isEmpty()) {
             return Collections.emptySet();
@@ -112,21 +134,20 @@ public class SchemaRelationService {
      * Fetch FK relations from the database via INFORMATION_SCHEMA.
      * Uses a single query rather than N+1 getImportedKeys() calls.
      */
-    private List<ForeignKeyRelation> fetchForeignKeyRelations(Long connectionId) {
+    private List<ForeignKeyRelation> fetchForeignKeyRelations(Long connectionId, String schemaName) {
         DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
-        if (conf == null) {
-            throw new IllegalArgumentException("Connection not found: " + connectionId);
+        if (schemaName == null && conf != null) {
+            schemaName = conf.getDbName();
         }
-
-        String schemaName = conf.getDbName(); // For MySQL, TABLE_SCHEMA = database name
-        boolean isPostgreSQL = conf.getDbType() != null && conf.getDbType().toLowerCase().contains("postgres");
-
-        // For PostgreSQL, the schema name might differ from dbName
-        // (typically "public" for the default schema)
-        if (isPostgreSQL) {
-            // Use dbName as schema for PostgreSQL, fallback to "public"
-            // Most PostgreSQL setups use "public" as the default schema
-            schemaName = conf.getDbName() != null ? conf.getDbName() : "public";
+        // For PG, default schema is "public" if none specified
+        boolean isPostgreSQL = conf != null && conf.getDbType() != null
+                && conf.getDbType().toLowerCase().contains("postgres");
+        if (isPostgreSQL && schemaName == null) {
+            schemaName = "public";
+        }
+        if (schemaName == null) {
+            log.warn("[SchemaRelationService] No schema specified for connectionId={}, skipping FK fetch", connectionId);
+            return Collections.emptyList();
         }
 
         String sql = "SELECT kcu.TABLE_NAME, kcu.COLUMN_NAME, " +

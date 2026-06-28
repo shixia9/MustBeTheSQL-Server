@@ -63,6 +63,7 @@ public class SqlAgentGraphConfiguration {
             strategies.put(SqlAgentSpec.StateKey.CONNECTION_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.LLM_CONFIG_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.DB_TYPE, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.SCHEMA_NAME, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.TABLE_NAMES, new ReplaceStrategy());
 
             // Evidence Recall keys

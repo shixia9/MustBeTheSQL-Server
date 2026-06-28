@@ -40,6 +40,7 @@ public final class SqlAgentSpec {
         public static final String CONNECTION_ID = "connectionId";
         public static final String LLM_CONFIG_ID = "llmConfigId";
         public static final String DB_TYPE = "dbType";
+        public static final String SCHEMA_NAME = "schemaName";
 
         // ---- Evidence Recall ----
         public static final String REWRITE_QUERY = "rewriteQuery";

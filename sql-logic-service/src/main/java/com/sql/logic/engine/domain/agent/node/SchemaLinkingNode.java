@@ -81,6 +81,7 @@ public class SchemaLinkingNode implements NodeAction {
                 state.value(SqlAgentSpec.StateKey.LLM_CONFIG_ID, (Long) null));
         Long userId = AgentStateUtil.toLong(
                 state.value(SqlAgentSpec.StateKey.USER_ID, (Long) null));
+        String schemaName = state.value(SqlAgentSpec.StateKey.SCHEMA_NAME, "");
 
         // If no rewritten query, fall back to original input
         if (rewriteQuery == null || rewriteQuery.isBlank()) {
@@ -93,7 +94,7 @@ public class SchemaLinkingNode implements NodeAction {
         }
 
         // 2. Collect initial table names (from state or all tables)
-        List<String> tableNames = getInitialTableNames(state, connectionId);
+        List<String> tableNames = getInitialTableNames(state, connectionId, schemaName);
         if (tableNames.isEmpty()) {
             log.warn("[SchemaLinkingNode] No tables found for connectionId={}", connectionId);
             return Map.of(SqlAgentSpec.StateKey.TABLE_RELATION, "");
@@ -103,12 +104,12 @@ public class SchemaLinkingNode implements NodeAction {
 
         // 3. Expand table set with FK-connected tables
         Set<String> expandedTables = schemaRelationService.expandWithJoinTables(
-                connectionId, new LinkedHashSet<>(tableNames));
+                connectionId, new LinkedHashSet<>(tableNames), schemaName);
         List<String> expandedTableList = new ArrayList<>(expandedTables);
         log.info("[SchemaLinkingNode] Expanded tables: {} -> {} tables", tableNames.size(), expandedTableList.size());
 
         // 4. Get FK relations for all expanded tables
-        List<ForeignKeyRelation> allRelations = schemaRelationService.getForeignKeyRelations(connectionId);
+        List<ForeignKeyRelation> allRelations = schemaRelationService.getForeignKeyRelations(connectionId, schemaName);
         List<ForeignKeyRelation> relevantRelations = schemaRelationService.filterRelationsForTables(
                 allRelations, expandedTables);
 
@@ -117,10 +118,10 @@ public class SchemaLinkingNode implements NodeAction {
         String schemaContext;
         if (isLargeSchema) {
             // Condensed format: table names + column names only, no full DDL or samples
-            schemaContext = buildCondensedSchemaContext(connectionId, expandedTableList, relevantRelations);
+            schemaContext = buildCondensedSchemaContext(connectionId, schemaName, expandedTableList, relevantRelations);
         } else {
             // Full format: DDL + FK expressions + data samples
-            schemaContext = buildFullSchemaContext(connectionId, expandedTableList, relevantRelations);
+            schemaContext = buildFullSchemaContext(connectionId, schemaName, expandedTableList, relevantRelations);
         }
 
         // 6. Render mix-selector prompt and call LLM for table filtering
@@ -159,12 +160,12 @@ public class SchemaLinkingNode implements NodeAction {
 
         // 8. Re-expand filtered tables with FK relations (in case filter removed bridging tables)
         Set<String> finalTableSet = schemaRelationService.expandWithJoinTables(
-                connectionId, new LinkedHashSet<>(filteredTableNames));
+                connectionId, new LinkedHashSet<>(filteredTableNames), schemaName);
         List<ForeignKeyRelation> finalRelations = schemaRelationService.filterRelationsForTables(
                 allRelations, finalTableSet);
 
         // 9. Build final filtered schema context (always full format for the filtered set)
-        String filteredSchema = buildFullSchemaContext(connectionId, new ArrayList<>(finalTableSet), finalRelations);
+        String filteredSchema = buildFullSchemaContext(connectionId, schemaName, new ArrayList<>(finalTableSet), finalRelations);
 
         // 10. Build FK expressions string
         String fkExpressions = columnSampleService.buildForeignKeyExpressions(finalRelations);
@@ -186,7 +187,7 @@ public class SchemaLinkingNode implements NodeAction {
      * Get initial table names from state (user-selected tables) or from the database.
      */
     @SuppressWarnings("unchecked")
-    private List<String> getInitialTableNames(OverAllState state, Long connectionId) {
+    private List<String> getInitialTableNames(OverAllState state, Long connectionId, String schemaName) {
         // Try to get user-selected table names from state
         Object tableNamesObj = state.value(SqlAgentSpec.StateKey.TABLE_NAMES, null);
         if (tableNamesObj instanceof List<?>) {
@@ -198,7 +199,7 @@ public class SchemaLinkingNode implements NodeAction {
 
         // Fall back to all tables in the database
         try {
-            return databaseMetaDataService.getTableNames(connectionId);
+            return databaseMetaDataService.getTableNames(connectionId, schemaName);
         } catch (Exception e) {
             log.error("[SchemaLinkingNode] Failed to fetch table names for connectionId={}", connectionId, e);
             return Collections.emptyList();
@@ -208,13 +209,13 @@ public class SchemaLinkingNode implements NodeAction {
     /**
      * Build full schema context with DDL + FK expressions + data samples.
      */
-    private String buildFullSchemaContext(Long connectionId, List<String> tableNames,
+    private String buildFullSchemaContext(Long connectionId, String schemaName, List<String> tableNames,
                                            List<ForeignKeyRelation> relations) {
         StringBuilder sb = new StringBuilder();
 
         // DDL for each table
         for (String tableName : tableNames) {
-            String ddl = databaseMetaDataService.getTableDDL(connectionId, tableName);
+            String ddl = databaseMetaDataService.getTableDDL(connectionId, schemaName, tableName);
             if (ddl != null && !ddl.isBlank()) {
                 sb.append(ddl).append("\n\n");
             }
@@ -227,7 +228,7 @@ public class SchemaLinkingNode implements NodeAction {
         }
 
         // Data samples
-        String samples = columnSampleService.getColumnSamples(connectionId, tableNames);
+        String samples = columnSampleService.getColumnSamples(connectionId, tableNames, schemaName);
         if (!samples.isBlank()) {
             sb.append("\n").append(samples);
         }
@@ -239,14 +240,14 @@ public class SchemaLinkingNode implements NodeAction {
      * Build condensed schema context for large schemas.
      * Uses only table names + column names/types without full DDL or data samples.
      */
-    private String buildCondensedSchemaContext(Long connectionId, List<String> tableNames,
+    private String buildCondensedSchemaContext(Long connectionId, String schemaName, List<String> tableNames,
                                                 List<ForeignKeyRelation> relations) {
         StringBuilder sb = new StringBuilder();
 
         for (String tableName : tableNames) {
             sb.append("# Table: ").append(tableName).append("\n[\n");
             try {
-                var columns = databaseMetaDataService.getTableColumns(connectionId, tableName);
+                var columns = databaseMetaDataService.getTableColumns(connectionId, schemaName, tableName);
                 for (var col : columns) {
                     sb.append("(").append(col.getName()).append(": ").append(col.getDataType());
                     if (Boolean.TRUE.equals(col.getPrimaryKey())) {
