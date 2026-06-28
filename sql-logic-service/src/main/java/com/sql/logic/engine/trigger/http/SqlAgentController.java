@@ -9,6 +9,8 @@ import com.sql.logic.engine.common.dto.SqlGenerateRequest;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner.AgentRunHandle;
+import com.sql.logic.engine.domain.agent.core.AgentRunContext;
+import com.sql.logic.engine.domain.agent.service.SessionSummaryService;
 import com.sql.logic.engine.infrastructure.po.AgentExecution;
 
 import cn.dev33.satoken.stp.StpUtil;
@@ -58,15 +60,18 @@ public class SqlAgentController {
     private final UserAppService userAppService;
     private final ObjectMapper objectMapper;
     private final AgentHistoryAppService agentHistoryAppService;
+    private final SessionSummaryService sessionSummaryService;
 
     public SqlAgentController(SqlAgentRunner sqlAgentRunner,
                             UserAppService userAppService,
                             ObjectMapper objectMapper,
-                            AgentHistoryAppService agentHistoryAppService) {
+                            AgentHistoryAppService agentHistoryAppService,
+                            SessionSummaryService sessionSummaryService) {
         this.sqlAgentRunner = sqlAgentRunner;
         this.userAppService = userAppService;
         this.objectMapper = objectMapper;
         this.agentHistoryAppService = agentHistoryAppService;
+        this.sessionSummaryService = sessionSummaryService;
     }
 
     /**
@@ -107,7 +112,7 @@ public class SqlAgentController {
 
         String threadId = handle.getThreadId();
         return handle.getFlux()
-                .map(this::nodeOutputToJson)
+                .map(o -> nodeOutputToJson(o, handle.getContext()))
                 .filter(json -> !json.isEmpty())  // Skip empty (START/END pseudo-nodes)
                 .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId)))
                 .doFinally(signalType -> {
@@ -157,7 +162,7 @@ public class SqlAgentController {
 
         String threadId = handle.getThreadId();
         return handle.getFlux()
-                .map(this::nodeOutputToJson)
+                .map(o -> nodeOutputToJson(o, handle.getContext()))
                 .filter(json -> !json.isEmpty())
                 .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId)))
                 .doFinally(signalType -> {
@@ -234,7 +239,7 @@ public class SqlAgentController {
      * Convert a NodeOutput to an SSE JSON string. Skips START/END pseudo-nodes, extracts
      * the node-relevant (non-sensitive) state into {@code data}.
      */
-    private String nodeOutputToJson(NodeOutput output) {
+    private String nodeOutputToJson(NodeOutput output, AgentRunContext runContext) {
         try {
             String nodeName = output.node();
 
@@ -246,10 +251,24 @@ public class SqlAgentController {
             event.put("nodeName", nodeName);
             event.put("outputType", "FINISHED");
 
+            String outputDataJson = null;
             OverAllState state = output.state();
             if (state != null) {
-                event.put("data", extractNodeData(nodeName, state));
+                Map<String, Object> data = extractNodeData(nodeName, state);
+                event.put("data", data);
+                try {
+                    outputDataJson = objectMapper.writeValueAsString(data);
+                } catch (Exception ignore) { /* best-effort */ }
             }
+
+            // Buffer the per-node step for later persistence (history timeline replay).
+            // A non-fatal failure here must NOT break the SSE stream.
+            if (runContext != null) {
+                try {
+                    runContext.appendStep(nodeName, "SUCCESS", null, outputDataJson);
+                } catch (Exception ignore) { /* sequencing only */ }
+            }
+
             return objectMapper.writeValueAsString(event);
         } catch (Exception e) {
             log.error("[SqlAgentController] Failed to serialize NodeOutput", e);
@@ -397,34 +416,110 @@ public class SqlAgentController {
 
     private void recordExecution(AgentRunHandle handle, SqlGenerateRequest request, Long userId) {
     try {
+        // Pause at the HITL node: do not record yet — the resumed /continue call
+        // records the consolidated history once the run truly finishes.
         if (handle.isHaltedAtHitl()) return;
-        
+
+        String userInput = request != null && request.getUserInput() != null
+                ? request.getUserInput() : "";
+        // For a resumed session there is no request object; recover the original
+        // question from the graph state so the summary/title still reflects it.
+        if (userInput.isBlank()) {
+            userInput = readStateValue(handle, SqlAgentSpec.StateKey.INPUT, "");
+        }
+
         AgentExecution exec = new AgentExecution();
         exec.setUserId(userId);
-        exec.setInput("");
-        exec.setSummary("");
+        exec.setInput(userInput);
+        exec.setSummary(summariseSessionTitle(handle, userInput));
         exec.setStatus("COMPLETED");
         exec.setThreadId(handle.getThreadId());
         exec.setTotalDurationMs(0L);
         exec.setCreateTime(LocalDateTime.now());
-        
+
         if (request != null) {
             exec.setConnectionId(request.getConnectionId());
             exec.setSchemaName(request.getSchemaContext());
-            exec.setInput(request.getUserInput());
-            exec.setSummary(request.getUserInput() != null
-                ? request.getUserInput().substring(0, Math.min(request.getUserInput().length(), 100))
-                : "");
         } else {
             var ctx = handle.getContext();
             exec.setConnectionId(ctx.getConnectionId());
             exec.setSchemaName(ctx.getSchemaName());
         }
-        
+
         agentHistoryAppService.saveExecution(exec);
-        log.info("[SqlAgentController] Recorded agent execution id={}", exec.getId());
+        log.info("[SqlAgentController] Recorded agent execution id={}, summary='{}'",
+                exec.getId(), exec.getSummary());
+
+        // Persist the buffered per-node steps so the history timeline can be replayed.
+        // Steps captured before the HITL pause PLUS resumed steps share the same context,
+        // so draining yields the full session. Failures here never block the response.
+        try {
+            java.util.List<com.sql.logic.engine.infrastructure.po.AgentExecutionStep> steps =
+                    handle.getContext().drainSteps();
+            if (steps != null && !steps.isEmpty()) {
+                LocalDateTime now = LocalDateTime.now();
+                for (com.sql.logic.engine.infrastructure.po.AgentExecutionStep s : steps) {
+                    s.setExecutionId(exec.getId());
+                    if (s.getCreateTime() == null) s.setCreateTime(now);
+                }
+                agentHistoryAppService.saveSteps(steps);
+                log.info("[SqlAgentController] Persisted {} step records for execution id={}",
+                        steps.size(), exec.getId());
+            }
+        } catch (Exception stepEx) {
+            log.warn("[SqlAgentController] Failed to persist step history: {}", stepEx.getMessage());
+        }
     } catch (Exception e) {
         log.warn("[SqlAgentController] Failed to record execution history: {}", e.getMessage());
     }
 }
+
+    /**
+     * Build a compact conversation excerpt (final report + generated SQL) from the
+     * finished graph state, then ask the {@link SessionSummaryService} for a short
+     * title. Best-effort: degrades to a truncated user input on any failure.
+     */
+    private String summariseSessionTitle(AgentRunHandle handle, String userInput) {
+        String report = readStateValue(handle, SqlAgentSpec.StateKey.REPORT_RESULT, "");
+        String sql = readStateValue(handle, SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, "");
+        StringBuilder transcript = new StringBuilder();
+        if (report != null && !report.isBlank()) {
+            transcript.append(report.trim());
+        }
+        if (sql != null && !sql.isBlank()) {
+            if (transcript.length() > 0) transcript.append("\n\n");
+            transcript.append("生成SQL:\n").append(sql.trim());
+        }
+        Long llmConfigId = readLongState(handle, SqlAgentSpec.StateKey.LLM_CONFIG_ID);
+        return sessionSummaryService.summarise(userInput, transcript.toString(), llmConfigId, handle.getContext().getUserId());
+    }
+
+    /** Best-effort read of a String state value from the finished run's snapshot. */
+    private String readStateValue(AgentRunHandle handle, String key, String def) {
+        try {
+            if (handle.getRunnableConfig() == null) return def;
+            var snapshot = sqlAgentRunner.getCompiledGraph().getState(handle.getRunnableConfig());
+            var state = snapshot == null ? null : snapshot.state();
+            if (state == null) return def;
+            Object v = state.value(key, def);
+            return v == null ? def : String.valueOf(v);
+        } catch (Exception e) {
+            log.debug("[SqlAgentController] readStateValue('{}') failed: {}", key, e.getMessage());
+            return def;
+        }
+    }
+
+    /** Best-effort read of a Long state value from the finished run's snapshot. */
+    private Long readLongState(AgentRunHandle handle, String key) {
+        try {
+            if (handle.getRunnableConfig() == null) return null;
+            var snapshot = sqlAgentRunner.getCompiledGraph().getState(handle.getRunnableConfig());
+            var state = snapshot == null ? null : snapshot.state();
+            if (state == null) return null;
+            Object v = state.value(key, null);
+            return com.sql.logic.engine.domain.agent.AgentStateUtil.toLong(v);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 }

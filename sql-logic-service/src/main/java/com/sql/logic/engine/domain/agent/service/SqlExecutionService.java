@@ -61,14 +61,28 @@ public class SqlExecutionService {
             return SqlExecutionResult.error("SQL statement is empty.");
         }
 
-        // Resolve schema context and prepare full SQL
-        String finalSql = prepareSqlWithSchema(userId, connectionId, sql, schemaName);
+        // Read-only validation + LIMIT safety injection. The schema context is applied
+        // per-connection below via setCatalog/setSchema — never by prepending a second
+        // statement, which the MySQL driver rejects without allowMultiQueries=true.
+        String finalSql = ensureSafeRead(sql);
         if (finalSql == null) {
             return SqlExecutionResult.error("Generated SQL is not a read-only SELECT and was blocked.");
         }
 
+        String dbType = null;
+        try {
+            dbType = databaseAppService.getConnectionDbType(connectionId);
+        } catch (Exception e) {
+            log.warn("[SqlExecutionService] Failed to resolve DB type: {}", e.getMessage());
+        }
+
         try (Connection conn = databaseAppService.getConnectionForUser(userId, connectionId);
              Statement stmt = conn.createStatement()) {
+
+            // Scope the connection to the chosen schema. setCatalog/setSchema take effect
+            // on the live connection for the statements issued on it — a single statement
+            // per execute(), so JDBC multi-statement semantics never come into play.
+            applySchemaContext(conn, dbType, schemaName);
 
             stmt.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
             stmt.setMaxRows(MAX_ROWS);
@@ -83,7 +97,8 @@ public class SqlExecutionService {
 
             try (ResultSet rs = stmt.getResultSet()) {
                 QueryResult qr = readResultSet(rs);
-                log.info("[SqlExecutionService] OK rows={} latency={}ms", qr.rows.size(), latency);
+                log.info("[SqlExecutionService] OK rows={} latency={}ms schema={}",
+                        qr.rows.size(), latency, schemaName);
                 return new SqlExecutionResult(qr.columns, qr.rows, qr.rows.size());
             }
         } catch (SQLException e) {
@@ -101,33 +116,33 @@ public class SqlExecutionService {
     }
 
     /**
-     * Prepare the SQL with schema context: determine the DB type, validate the SQL,
-     * and prepend USE/SET search_path when a schema name is provided.
+     * Apply the schema context to a live JDBC connection for the duration of this
+     * execution. Uses {@link Connection#setCatalog} for MySQL (which maps to the database
+     * / schema name) and {@link Connection#setSchema} for PostgreSQL.
      */
-    private String prepareSqlWithSchema(Long userId, Long connectionId, String sql, String schemaName) {
-        // Read-only gate first
-        String safeSql = ensureSafeRead(sql);
-        if (safeSql == null) return null;
-
-        // No schema specified — use SQL as-is
-        if (schemaName == null || schemaName.isBlank()) return safeSql;
-
-        // Determine DB type and prepend appropriate schema context
-        try {
-            String dbType = databaseAppService.getConnectionDbType(connectionId);
-            if (dbType == null) return safeSql;
-
-            if (dbType.toLowerCase().contains("mysql")) {
-                // Backtick-quote schema name for MySQL
-                return "USE `" + schemaName + "`; " + safeSql;
-            } else if (dbType.toLowerCase().contains("postgres")) {
-                // Double-quote for PostgreSQL
-                return "SET search_path TO \"" + schemaName + "\"; " + safeSql;
+    private void applySchemaContext(Connection conn, String dbType, String schemaName) throws SQLException {
+        if (schemaName == null || schemaName.isBlank()) return;
+        if (dbType == null || dbType.isBlank()) {
+            // Best-effort: try catalog first (works for MySQL), fall back to schema.
+            try { conn.setCatalog(schemaName); } catch (SQLException ignore) {
+                try { conn.setSchema(schemaName); } catch (SQLException ignore2) { /* leave default */ }
             }
-        } catch (Exception e) {
-            log.warn("[SqlExecutionService] Failed to resolve DB type for schema context, using SQL as-is: {}", e.getMessage());
+            return;
         }
-        return safeSql;
+        String type = dbType.toLowerCase();
+        try {
+            if (type.contains("mysql")) {
+                conn.setCatalog(schemaName);
+            } else if (type.contains("postgres")) {
+                conn.setSchema(schemaName);
+            } else {
+                conn.setSchema(schemaName);
+            }
+        } catch (SQLException e) {
+            // Some drivers/configs reject setCatalog/setSchema on a pooled connection;
+            // degrade silently rather than aborting — the unqualified SQL still runs.
+            log.debug("[SqlExecutionService] applySchemaContext(schema='{}') ignored: {}", schemaName, e.getMessage());
+        }
     }
 
     /**

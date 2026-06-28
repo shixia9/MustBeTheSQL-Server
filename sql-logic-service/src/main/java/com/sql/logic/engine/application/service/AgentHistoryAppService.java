@@ -48,6 +48,23 @@ public class AgentHistoryAppService {
         return agentExecutionDao.selectPage(p, qw);
     }
 
+    /**
+     * Page the user's agent executions, optionally filtering by a keyword that
+     * matches the AI-generated {@code summary} OR the original {@code input}.
+     * The keyword is matched with a LIKE '%kw%' on both columns (OR-joined).
+     */
+    public Page<AgentExecution> listExecutions(Long userId, int page, int size, String keyword) {
+        Page<AgentExecution> p = new Page<>(page, size);
+        QueryWrapper<AgentExecution> qw = new QueryWrapper<>();
+        qw.eq("user_id", userId);
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            qw.and(w -> w.like("summary", kw).or().like("input", kw));
+        }
+        qw.orderByDesc("create_time");
+        return agentExecutionDao.selectPage(p, qw);
+    }
+
     public AgentExecution getExecution(Long id) {
         return agentExecutionDao.selectById(id);
     }
