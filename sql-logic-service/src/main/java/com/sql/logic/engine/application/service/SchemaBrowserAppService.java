@@ -13,14 +13,19 @@ import org.springframework.stereotype.Service;
 import java.sql.Connection;
 import java.util.List;
 
+/**
+ * Schema browser service — fetches live database metadata (schemas, tables, columns,
+ * indexes, DDL) from a user's database connection. Renamed from {@code WorkspaceAppService}
+ * in Phase A to avoid collision with the multi-tenant workspace management service.
+ */
 @Service
-public class WorkspaceAppService {
+public class SchemaBrowserAppService {
 
     private final DatabaseAppService databaseAppService;
     private final DialectFactory dialectFactory;
     private final DbConnectionConfDao dbConnectionConfDao;
 
-    public WorkspaceAppService(DatabaseAppService databaseAppService, DialectFactory dialectFactory, DbConnectionConfDao dbConnectionConfDao) {
+    public SchemaBrowserAppService(DatabaseAppService databaseAppService, DialectFactory dialectFactory, DbConnectionConfDao dbConnectionConfDao) {
         this.databaseAppService = databaseAppService;
         this.dialectFactory = dialectFactory;
         this.dbConnectionConfDao = dbConnectionConfDao;

@@ -4,26 +4,16 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
-
 import java.time.LocalDateTime;
 
 @Data
-@TableName("agent_execution")
-public class AgentExecution {
-
+@TableName("workspace_member")
+public class WorkspaceMember {
     @TableId(type = IdType.AUTO)
     private Long id;
-    private Long userId;
-    private Long connectionId;
     private Long workspaceId;
-    private String schemaName;
-    private String input;
-    private String summary;
-    private String status;
-    private String threadId;
-    private Integer totalTokens;
-    private Integer modelCalls;
-    private Integer toolCalls;
-    private Long totalDurationMs;
+    private Long userId;
+    private String role;  // OWNER, ADMIN, MEMBER, VIEWER
     private LocalDateTime createTime;
+    private LocalDateTime updateTime;
 }

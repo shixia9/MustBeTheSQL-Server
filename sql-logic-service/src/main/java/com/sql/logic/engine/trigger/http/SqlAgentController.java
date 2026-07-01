@@ -105,6 +105,7 @@ public class SqlAgentController {
                 request.getUserInput(),
                 currentUserId,
                 request.getLlmConfigId(),
+                request.getWorkspaceId(),
                 request.getTableNames(),
                 request.getSchemaContext(),
                 autoConfirm
@@ -250,6 +251,7 @@ public class SqlAgentController {
             Map<String, Object> event = new LinkedHashMap<>();
             event.put("nodeName", nodeName);
             event.put("outputType", "FINISHED");
+            event.put("messageType", messageTypeForNode(nodeName));
 
             String outputDataJson = null;
             OverAllState state = output.state();
@@ -265,7 +267,21 @@ public class SqlAgentController {
             // A non-fatal failure here must NOT break the SSE stream.
             if (runContext != null) {
                 try {
-                    runContext.appendStep(nodeName, "SUCCESS", null, outputDataJson);
+                    int seq = runContext.appendStep(nodeName, "SUCCESS", null, outputDataJson);
+                    // Accumulate tracing data (latency + node type). Token counts
+                    // are captured by TracingLlmClientWrapper (Phase B). Best-effort.
+                    com.sql.logic.engine.domain.trace.TraceContext tc = runContext.getTraceContext();
+                    if (tc != null) {
+                        tc.recordStep(seq, nodeName, "SUCCESS", 0, 0, 0L,
+                                messageTypeForNode(nodeName));
+                        if ("SQL_GENERATION".equals(nodeName) || "PYTHON_GENERATION".equals(nodeName)
+                                || "SQL_FIXER".equals(nodeName) || "PYTHON_ANALYSIS".equals(nodeName)
+                                || "EVIDENCE_RECALL".equals(nodeName) || "SCHEMA_LINKING".equals(nodeName)
+                                || "FEASIBILITY_ASSESSMENT".equals(nodeName) || "PLANNER".equals(nodeName)
+                                || "REPORT".equals(nodeName)) {
+                            tc.incrementModelCalls();
+                        }
+                    }
                 } catch (Exception ignore) { /* sequencing only */ }
             }
 
@@ -437,13 +453,24 @@ public class SqlAgentController {
         exec.setTotalDurationMs(0L);
         exec.setCreateTime(LocalDateTime.now());
 
+        // Phase A3: populate trace summary fields from TraceContext (best-effort).
+        com.sql.logic.engine.domain.trace.TraceContext tc = handle.getContext().getTraceContext();
+        if (tc != null) {
+            exec.setTotalTokens(tc.getTotalInputTokens() + tc.getTotalOutputTokens());
+            exec.setModelCalls(tc.getModelCalls());
+            exec.setToolCalls(0);
+            exec.setTotalDurationMs(System.currentTimeMillis() - tc.getStartTime());
+        }
+
         if (request != null) {
             exec.setConnectionId(request.getConnectionId());
             exec.setSchemaName(request.getSchemaContext());
+            exec.setWorkspaceId(request.getWorkspaceId());
         } else {
             var ctx = handle.getContext();
             exec.setConnectionId(ctx.getConnectionId());
             exec.setSchemaName(ctx.getSchemaName());
+            exec.setWorkspaceId(ctx.getWorkspaceId());
         }
 
         agentHistoryAppService.saveExecution(exec);
@@ -457,10 +484,24 @@ public class SqlAgentController {
             java.util.List<com.sql.logic.engine.infrastructure.po.AgentExecutionStep> steps =
                     handle.getContext().drainSteps();
             if (steps != null && !steps.isEmpty()) {
+                // Phase A3: enrich each step with trace data (latency/tokens/nodeType) where available.
+                com.sql.logic.engine.domain.trace.TraceContext stepTc = handle.getContext().getTraceContext();
                 LocalDateTime now = LocalDateTime.now();
                 for (com.sql.logic.engine.infrastructure.po.AgentExecutionStep s : steps) {
                     s.setExecutionId(exec.getId());
                     if (s.getCreateTime() == null) s.setCreateTime(now);
+                    if (stepTc != null) {
+                        try {
+                            String key = s.getSequenceNo() + ":" + s.getNodeName();
+                            com.sql.logic.engine.domain.trace.TraceContext.StepTrace st = stepTc.getSteps().get(key);
+                            if (st != null) {
+                                s.setInputTokens(st.inputTokens);
+                                s.setOutputTokens(st.outputTokens);
+                                s.setLatencyMs(st.latencyMs);
+                                if (s.getNodeType() == null) s.setNodeType(st.nodeType);
+                            }
+                        } catch (Exception ignore) { /* best-effort enrichment */ }
+                    }
                 }
                 agentHistoryAppService.saveSteps(steps);
                 log.info("[SqlAgentController] Persisted {} step records for execution id={}",
@@ -521,5 +562,28 @@ public class SqlAgentController {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // ---- Phase A2: node-to-messageType mapping for SSE events ----
+
+    private static final java.util.Map<String, String> NODE_MESSAGE_TYPES = java.util.Map.ofEntries(
+        java.util.Map.entry("EVIDENCE_RECALL", "THINKING"),
+        java.util.Map.entry("SCHEMA_LINKING", "THINKING"),
+        java.util.Map.entry("FEASIBILITY_ASSESSMENT", "THINKING"),
+        java.util.Map.entry("PLANNER", "THINKING"),
+        java.util.Map.entry("HITL_GATE", "STATUS"),
+        java.util.Map.entry("HITL", "STATUS"),
+        java.util.Map.entry("PLAN_DISPATCH", "STATUS"),
+        java.util.Map.entry("SQL_GENERATION", "TOOL_CALL"),
+        java.util.Map.entry("SQL_EXECUTION", "TOOL_RESULT"),
+        java.util.Map.entry("SQL_FIXER", "THINKING"),
+        java.util.Map.entry("PYTHON_GENERATION", "TOOL_CALL"),
+        java.util.Map.entry("PYTHON_EXECUTION", "TOOL_RESULT"),
+        java.util.Map.entry("PYTHON_ANALYSIS", "THINKING"),
+        java.util.Map.entry("REPORT", "REPORT")
+    );
+
+    private String messageTypeForNode(String nodeName) {
+        return NODE_MESSAGE_TYPES.getOrDefault(nodeName, "STATUS");
     }
 }

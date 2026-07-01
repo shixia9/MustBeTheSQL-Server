@@ -50,13 +50,25 @@ public class AgentHistoryAppService {
 
     /**
      * Page the user's agent executions, optionally filtering by a keyword that
-     * matches the AI-generated {@code summary} OR the original {@code input}.
+     * matches the AI-generated {@code summary} OR the original {@code input},
+     * and optionally scoped to a workspace.
      * The keyword is matched with a LIKE '%kw%' on both columns (OR-joined).
      */
     public Page<AgentExecution> listExecutions(Long userId, int page, int size, String keyword) {
+        return listExecutions(userId, page, size, keyword, null);
+    }
+
+    /**
+     * Same as above but with optional workspace_id scoping.
+     * When {@code workspaceId} is null, falls back to user-level isolation (backward compat).
+     */
+    public Page<AgentExecution> listExecutions(Long userId, int page, int size, String keyword, Long workspaceId) {
         Page<AgentExecution> p = new Page<>(page, size);
         QueryWrapper<AgentExecution> qw = new QueryWrapper<>();
         qw.eq("user_id", userId);
+        if (workspaceId != null) {
+            qw.eq("workspace_id", workspaceId);
+        }
         if (keyword != null && !keyword.isBlank()) {
             String kw = keyword.trim();
             qw.and(w -> w.like("summary", kw).or().like("input", kw));

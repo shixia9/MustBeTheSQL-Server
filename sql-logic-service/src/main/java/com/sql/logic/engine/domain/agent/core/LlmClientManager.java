@@ -146,4 +146,18 @@ public class LlmClientManager {
         query.eq("user_id", userId).eq("status", 1);
         return userLlmConfigDao.selectCount(query) > 0;
     }
+
+    /**
+     * send a minimal non-streaming prompt to the resolved LLM strategy
+     * to verify connectivity. Returns a short acknowledgement string on success
+     * or throws on failure. Used by the LLM config "Test Connection" feature.
+     */
+    public String testPing(Long configId, Long userId) {
+        LLMStrategy strategy = resolveStrategy(configId, userId);
+        if (strategy == null) {
+            throw new IllegalStateException("No LLM strategy available for config " + configId);
+        }
+        String result = strategy.generateSql("Reply with: OK", (tokens, content) -> { /* ignore token accounting */ });
+        return result != null && !result.isBlank() ? result.trim() : "OK";
+    }
 }

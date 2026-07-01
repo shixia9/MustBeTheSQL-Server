@@ -49,6 +49,19 @@ public class LlmConfigController {
         return Result.success(null);
     }
 
+    /**
+     * test connectivity to an LLM provider config. Sends a minimal
+     * ping and returns success/latency for the frontend health-status indicator.
+     */
+    @PostMapping("/{configId}/test")
+    public Result<java.util.Map<String, Object>> testConnection(@PathVariable Long configId) {
+        try {
+            return Result.success(llmConfigAppService.testConnection(getCurrentUserId(), configId));
+        } catch (Exception e) {
+            return Result.error(500, e.getMessage());
+        }
+    }
+
     @PostMapping("/{configId}/setDefault")
     public Result<Void> setDefaultConfig(@PathVariable Long configId) {
         llmConfigAppService.setDefaultConfig(getCurrentUserId(), configId);

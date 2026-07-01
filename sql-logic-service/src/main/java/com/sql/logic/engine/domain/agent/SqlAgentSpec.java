@@ -39,6 +39,7 @@ public final class SqlAgentSpec {
         public static final String USER_ID = "userId";
         public static final String CONNECTION_ID = "connectionId";
         public static final String LLM_CONFIG_ID = "llmConfigId";
+        public static final String WORKSPACE_ID = "workspaceId";
         public static final String DB_TYPE = "dbType";
         public static final String SCHEMA_NAME = "schemaName";
 
@@ -107,7 +108,7 @@ public final class SqlAgentSpec {
         public static final String EVIDENCE_KNOWLEDGE = "evidence-knowledge";
     }
 
-    // ======================== Retrieval (Phase 5 RAG) ========================
+    // ======================== Retrieval ========================
 
     /**
      * pgvector metadata keys and channel types for the four-channel vector retrieval.

@@ -64,7 +64,7 @@ public class SqlAgentRunner {
      * {@link #resume(String, boolean, String, Long)} continues from.
      */
     public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
-                                  Long llmConfigId, List<String> tableNames, String schemaName, boolean autoConfirm) {
+                                  Long llmConfigId, Long workspaceId, List<String> tableNames, String schemaName, boolean autoConfirm) {
         String threadId = UUID.randomUUID().toString();
         RunnableConfig rc = RunnableConfig.builder().threadId(threadId).build();
 
@@ -77,6 +77,7 @@ public class SqlAgentRunner {
         initialState.put(SqlAgentSpec.StateKey.TABLE_NAMES, tableNames != null ? tableNames : List.of());
         initialState.put(SqlAgentSpec.StateKey.SCHEMA_NAME, schemaName != null ? schemaName : "");
         initialState.put(SqlAgentSpec.StateKey.AUTO_CONFIRM, autoConfirm);
+        initialState.put(SqlAgentSpec.StateKey.WORKSPACE_ID, workspaceId);
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
 
         log.info("[SqlAgentRunner] Starting graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, input='{}'",
@@ -88,14 +89,15 @@ public class SqlAgentRunner {
                 .doOnComplete(() -> log.info("[SqlAgentRunner] Graph execution (threadId={}) stream complete", threadId))
                 .doOnError(e -> log.error("[SqlAgentRunner] Graph execution (threadId={}) error", threadId, e));
 
-        AgentRunContext context = new AgentRunContext(threadId, userId, connectionId, llmConfigId, tableNames, schemaName, autoConfirm, rc);
+        AgentRunContext context = new AgentRunContext(threadId, userId, connectionId, llmConfigId, workspaceId, tableNames, schemaName, autoConfirm, rc);
+        context.setTraceContext(new com.sql.logic.engine.domain.trace.TraceContext(threadId, userId, workspaceId));
         return new AgentRunHandle(threadId, context, rc, flux);
     }
 
     /** Convenience overload (autoConfirm defaults to true — Phase 3 behaviour preserved). */
     public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
                                   Long llmConfigId, List<String> tableNames) {
-        return execute(connectionId, userInput, userId, llmConfigId, tableNames, null, true);
+        return execute(connectionId, userInput, userId, llmConfigId, null, tableNames, null, true);
     }
 
     /**

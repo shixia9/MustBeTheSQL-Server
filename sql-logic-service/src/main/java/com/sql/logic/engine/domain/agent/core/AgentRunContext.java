@@ -1,6 +1,7 @@
 package com.sql.logic.engine.domain.agent.core;
 
 import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.infrastructure.po.AgentExecutionStep;
 
 import java.util.List;
@@ -26,6 +27,7 @@ public class AgentRunContext {
     private final Long userId;
     private final Long connectionId;
     private final Long llmConfigId;
+    private final Long workspaceId;
     private final String schemaName;
     private final List<String> tableNames;
     private final boolean autoConfirm;
@@ -36,13 +38,16 @@ public class AgentRunContext {
     private final ConcurrentLinkedQueue<AgentExecutionStep> stepBuffer = new ConcurrentLinkedQueue<>();
     /** Monotonic sequence number for steps across the (possibly resumed) run. */
     private final AtomicInteger nextSequence = new AtomicInteger(1);
+    /** trace carrier — accumulates timing/token data per node. Nullable for backward compat. */
+    private TraceContext traceContext;
 
     public AgentRunContext(String threadId, Long userId, Long connectionId, Long llmConfigId,
-                           List<String> tableNames, String schemaName, boolean autoConfirm, RunnableConfig runnableConfig) {
+                           Long workspaceId, List<String> tableNames, String schemaName, boolean autoConfirm, RunnableConfig runnableConfig) {
         this.threadId = threadId;
         this.userId = userId;
         this.connectionId = connectionId;
         this.llmConfigId = llmConfigId;
+        this.workspaceId = workspaceId;
         this.tableNames = tableNames;
         this.schemaName = schemaName;
         this.autoConfirm = autoConfirm;
@@ -54,11 +59,15 @@ public class AgentRunContext {
     public Long getUserId() { return userId; }
     public Long getConnectionId() { return connectionId; }
     public Long getLlmConfigId() { return llmConfigId; }
+    public Long getWorkspaceId() { return workspaceId; }
     public String getSchemaName() { return schemaName; }
     public List<String> getTableNames() { return tableNames; }
     public boolean isAutoConfirm() { return autoConfirm; }
     public RunnableConfig getRunnableConfig() { return runnableConfig; }
     public long getCreatedAt() { return createdAt; }
+
+    public TraceContext getTraceContext() { return traceContext; }
+    public void setTraceContext(TraceContext traceContext) { this.traceContext = traceContext; }
 
     /**
      * Append a per-node step record to the in-memory buffer and return the assigned

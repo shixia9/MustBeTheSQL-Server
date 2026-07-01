@@ -239,6 +239,36 @@ public class LlmConfigAppService {
         return llmClientManager.hasActiveConfig(userId);
     }
 
+    /**
+     * test connectivity to an LLM provider config by sending a minimal
+     * chat completion and measuring round-trip latency. Best-effort: any failure
+     * returns success=false with the underlying error message.
+     */
+    public java.util.Map<String, Object> testConnection(Long userId, Long configId) {
+        java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
+        UserLlmConfig config = userLlmConfigDao.selectById(configId);
+        if (config == null || !config.getUserId().equals(userId) || config.getStatus() != 1) {
+            result.put("success", false);
+            result.put("latencyMs", 0);
+            result.put("message", "Config not found or inactive");
+            return result;
+        }
+        long start = System.currentTimeMillis();
+        try {
+            String ack = llmClientManager.testPing(configId, userId);
+            long latency = System.currentTimeMillis() - start;
+            result.put("success", true);
+            result.put("latencyMs", latency);
+            result.put("message", ack != null ? ack : "OK");
+        } catch (Exception e) {
+            long latency = System.currentTimeMillis() - start;
+            result.put("success", false);
+            result.put("latencyMs", latency);
+            result.put("message", e.getMessage() != null ? e.getMessage() : "Connection failed");
+        }
+        return result;
+    }
+
     // ---- Private helpers ----
 
     private void clearDefaultForUser(Long userId) {
