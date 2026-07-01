@@ -252,6 +252,7 @@ public class SqlAgentController {
             event.put("nodeName", nodeName);
             event.put("outputType", "FINISHED");
             event.put("messageType", messageTypeForNode(nodeName));
+            event.put("sequenceNo", 0); // placeholder; set below after appendStep
 
             String outputDataJson = null;
             OverAllState state = output.state();
@@ -268,6 +269,7 @@ public class SqlAgentController {
             if (runContext != null) {
                 try {
                     int seq = runContext.appendStep(nodeName, "SUCCESS", null, outputDataJson);
+                    event.put("sequenceNo", seq); // chronological ordering key for the frontend
                     // Accumulate tracing data (latency + node type). Token counts
                     // are captured by TracingLlmClientWrapper (Phase B). Best-effort.
                     com.sql.logic.engine.domain.trace.TraceContext tc = runContext.getTraceContext();
