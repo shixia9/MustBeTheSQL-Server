@@ -1,13 +1,19 @@
 package com.sql.logic.engine.application.service;
 
 import com.sql.logic.engine.common.dto.AddMemberRequest;
+import com.sql.logic.engine.common.dto.CreateInvitationRequest;
 import com.sql.logic.engine.common.dto.CreateWorkspaceRequest;
+import com.sql.logic.engine.common.dto.InvitationDTO;
 import com.sql.logic.engine.common.dto.UpdateMemberRoleRequest;
 import com.sql.logic.engine.common.dto.WorkspaceDTO;
 import com.sql.logic.engine.common.dto.WorkspaceMemberDTO;
 import com.sql.logic.engine.domain.workspace.WorkspaceDomainService;
 import com.sql.logic.engine.domain.workspace.WorkspaceRole;
+import com.sql.logic.engine.infrastructure.dao.UserInfoDao;
+import com.sql.logic.engine.infrastructure.dao.WorkspaceDao;
+import com.sql.logic.engine.infrastructure.po.UserInfo;
 import com.sql.logic.engine.infrastructure.po.Workspace;
+import com.sql.logic.engine.infrastructure.po.WorkspaceInvitation;
 import com.sql.logic.engine.infrastructure.po.WorkspaceMember;
 import org.springframework.stereotype.Service;
 
@@ -19,9 +25,13 @@ import java.util.stream.Collectors;
 public class WorkspaceManagementAppService {
 
     private final WorkspaceDomainService workspaceDomainService;
+    private final WorkspaceDao workspaceDao;
+    private final UserInfoDao userInfoDao;
 
-    public WorkspaceManagementAppService(WorkspaceDomainService workspaceDomainService) {
+    public WorkspaceManagementAppService(WorkspaceDomainService workspaceDomainService, WorkspaceDao workspaceDao, UserInfoDao userInfoDao) {
         this.workspaceDomainService = workspaceDomainService;
+        this.workspaceDao = workspaceDao;
+        this.userInfoDao = userInfoDao;
     }
 
     /**
@@ -169,6 +179,59 @@ public class WorkspaceManagementAppService {
         dto.setUserId(m.getUserId());
         dto.setRole(m.getRole());
         dto.setCreateTime(m.getCreateTime());
+        return dto;
+    }
+
+    public InvitationDTO createInvitation(Long workspaceId, CreateInvitationRequest req, Long actorUserId) {
+        String role = req.getRole() != null ? req.getRole() : "MEMBER";
+        int hours = req.getExpiresInHours() != null ? req.getExpiresInHours() : 72;
+        WorkspaceInvitation inv = workspaceDomainService.createInvitation(workspaceId, actorUserId, role, hours);
+        return mapToInvitationDTO(inv);
+    }
+
+    public List<InvitationDTO> listInvitations(Long workspaceId, Long actorUserId) {
+        List<WorkspaceInvitation> invs = workspaceDomainService.listInvitations(workspaceId, actorUserId);
+        if (invs == null || invs.isEmpty()) return Collections.emptyList();
+        return invs.stream().map(this::mapToInvitationDTO).collect(Collectors.toList());
+    }
+
+    public void revokeInvitation(Long workspaceId, Long invitationId, Long actorUserId) {
+        workspaceDomainService.revokeInvitation(workspaceId, invitationId, actorUserId);
+    }
+
+    public InvitationDTO getInvitationByToken(String token) {
+        WorkspaceInvitation inv = workspaceDomainService.getInvitationByToken(token);
+        if (inv == null) {
+            return null;
+        }
+        return mapToInvitationDTO(inv);
+    }
+
+    public void acceptInvitation(String token, Long userId) {
+        workspaceDomainService.acceptInvitation(token, userId);
+    }
+
+    private InvitationDTO mapToInvitationDTO(WorkspaceInvitation inv) {
+        InvitationDTO dto = new InvitationDTO();
+        dto.setId(inv.getId());
+        dto.setWorkspaceId(inv.getWorkspaceId());
+        dto.setCreatorId(inv.getCreatorId());
+        dto.setToken(inv.getToken());
+        dto.setRole(inv.getRole());
+        dto.setExpiresAt(inv.getExpiresAt());
+        dto.setMaxUses(inv.getMaxUses());
+        dto.setUseCount(inv.getUseCount());
+        dto.setIsActive(inv.getIsActive() == 1);
+        dto.setCreateTime(inv.getCreateTime());
+
+        // Resolve workspace name
+        Workspace ws = workspaceDao.selectById(inv.getWorkspaceId());
+        dto.setWorkspaceName(ws != null ? ws.getName() : "Unknown");
+
+        // Resolve creator name
+        UserInfo creator = userInfoDao.selectById(inv.getCreatorId());
+        dto.setCreatorName(creator != null ? creator.getUsername() : "Unknown");
+
         return dto;
     }
 }

@@ -2,7 +2,9 @@ package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.WorkspaceManagementAppService;
 import com.sql.logic.engine.common.dto.AddMemberRequest;
+import com.sql.logic.engine.common.dto.CreateInvitationRequest;
 import com.sql.logic.engine.common.dto.CreateWorkspaceRequest;
+import com.sql.logic.engine.common.dto.InvitationDTO;
 import com.sql.logic.engine.common.dto.UpdateMemberRoleRequest;
 import com.sql.logic.engine.common.dto.WorkspaceDTO;
 import com.sql.logic.engine.common.dto.WorkspaceMemberDTO;
@@ -123,6 +125,72 @@ public class WorkspaceManagementController {
         if (userId == null) return Result.error(400, "Invalid user ID in session");
         try {
             workspaceManagementAppService.removeMember(id, memberUserId, userId);
+            return Result.success(null);
+        } catch (IllegalArgumentException e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    // POST /api/v1/workspaces/{id}/invitations — create invitation link
+    @PostMapping("/{id}/invitations")
+    public Result<InvitationDTO> createInvitation(@PathVariable Long id, @RequestBody CreateInvitationRequest request) {
+        Long userId = getCurrentUserId();
+        if (userId == null) return Result.error(400, "Invalid user ID in session");
+        try {
+            InvitationDTO inv = workspaceManagementAppService.createInvitation(id, request, userId);
+            return Result.success(inv);
+        } catch (IllegalArgumentException e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    // GET /api/v1/workspaces/{id}/invitations — list invitation links
+    @GetMapping("/{id}/invitations")
+    public Result<List<InvitationDTO>> listInvitations(@PathVariable Long id) {
+        Long userId = getCurrentUserId();
+        if (userId == null) return Result.error(400, "Invalid user ID in session");
+        try {
+            List<InvitationDTO> list = workspaceManagementAppService.listInvitations(id, userId);
+            return Result.success(list);
+        } catch (IllegalArgumentException e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    // DELETE /api/v1/workspaces/{id}/invitations/{invitationId} — revoke invitation
+    @DeleteMapping("/{id}/invitations/{invitationId}")
+    public Result<Void> revokeInvitation(@PathVariable Long id, @PathVariable Long invitationId) {
+        Long userId = getCurrentUserId();
+        if (userId == null) return Result.error(400, "Invalid user ID in session");
+        try {
+            workspaceManagementAppService.revokeInvitation(id, invitationId, userId);
+            return Result.success(null);
+        } catch (IllegalArgumentException e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    // GET /api/v1/workspaces/invitations/{token} — get invitation details (public, no auth required)
+    @GetMapping("/invitations/{token}")
+    public Result<InvitationDTO> getInvitationByToken(@PathVariable String token) {
+        try {
+            InvitationDTO inv = workspaceManagementAppService.getInvitationByToken(token);
+            if (inv == null) {
+                return Result.error(404, "Invitation not found");
+            }
+            return Result.success(inv);
+        } catch (IllegalArgumentException e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
+    // POST /api/v1/workspaces/invitations/{token}/accept — accept invitation (requires auth)
+    @PostMapping("/invitations/{token}/accept")
+    public Result<Void> acceptInvitation(@PathVariable String token) {
+        Long userId = getCurrentUserId();
+        if (userId == null) return Result.error(400, "Invalid user ID in session");
+        try {
+            workspaceManagementAppService.acceptInvitation(token, userId);
             return Result.success(null);
         } catch (IllegalArgumentException e) {
             return Result.error(400, e.getMessage());

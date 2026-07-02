@@ -1,23 +1,29 @@
 package com.sql.logic.engine.domain.workspace;
 
 import com.sql.logic.engine.infrastructure.dao.WorkspaceDao;
+import com.sql.logic.engine.infrastructure.dao.WorkspaceInvitationDao;
 import com.sql.logic.engine.infrastructure.dao.WorkspaceMemberDao;
 import com.sql.logic.engine.infrastructure.po.Workspace;
+import com.sql.logic.engine.infrastructure.po.WorkspaceInvitation;
 import com.sql.logic.engine.infrastructure.po.WorkspaceMember;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class WorkspaceDomainService {
 
     private final WorkspaceDao workspaceDao;
     private final WorkspaceMemberDao workspaceMemberDao;
+    private final WorkspaceInvitationDao workspaceInvitationDao;
 
-    public WorkspaceDomainService(WorkspaceDao workspaceDao, WorkspaceMemberDao workspaceMemberDao) {
+    public WorkspaceDomainService(WorkspaceDao workspaceDao, WorkspaceMemberDao workspaceMemberDao, WorkspaceInvitationDao workspaceInvitationDao) {
         this.workspaceDao = workspaceDao;
         this.workspaceMemberDao = workspaceMemberDao;
+        this.workspaceInvitationDao = workspaceInvitationDao;
     }
 
     @Transactional
@@ -179,5 +185,98 @@ public class WorkspaceDomainService {
         } catch (IllegalArgumentException e) {
             return false;
         }
+    }
+
+    @Transactional
+    public WorkspaceInvitation createInvitation(Long workspaceId, Long creatorId, String role, int expiresInHours) {
+        getWorkspace(workspaceId);
+        assertManageAccess(workspaceId, creatorId);
+
+        if (role == null || !isValidRole(role)) {
+            throw new IllegalArgumentException("Invalid role: " + role);
+        }
+
+        if (WorkspaceRole.OWNER.name().equals(role)) {
+            throw new IllegalArgumentException("Cannot create invitation with OWNER role");
+        }
+
+        if (expiresInHours <= 0 || expiresInHours > 720) {
+            throw new IllegalArgumentException("Expiration must be between 1 and 720 hours");
+        }
+
+        WorkspaceInvitation inv = new WorkspaceInvitation();
+        inv.setWorkspaceId(workspaceId);
+        inv.setCreatorId(creatorId);
+        inv.setToken(UUID.randomUUID().toString().replace("-", ""));
+        inv.setRole(role);
+        inv.setExpiresAt(LocalDateTime.now().plusHours(expiresInHours));
+        inv.setMaxUses(null);
+        inv.setUseCount(0);
+        inv.setIsActive(1);
+        workspaceInvitationDao.insert(inv);
+        return inv;
+    }
+
+    public List<WorkspaceInvitation> listInvitations(Long workspaceId, Long actorUserId) {
+        getWorkspace(workspaceId);
+        assertManageAccess(workspaceId, actorUserId);
+        return workspaceInvitationDao.findByWorkspaceId(workspaceId);
+    }
+
+    @Transactional
+    public void revokeInvitation(Long workspaceId, Long invitationId, Long actorUserId) {
+        getWorkspace(workspaceId);
+        assertManageAccess(workspaceId, actorUserId);
+
+        WorkspaceInvitation inv = workspaceInvitationDao.selectById(invitationId);
+        if (inv == null || !inv.getWorkspaceId().equals(workspaceId)) {
+            throw new IllegalArgumentException("Invitation not found");
+        }
+        inv.setIsActive(0);
+        workspaceInvitationDao.updateById(inv);
+    }
+
+    public WorkspaceInvitation getInvitationByToken(String token) {
+        return workspaceInvitationDao.findByToken(token);
+    }
+
+    @Transactional
+    public void acceptInvitation(String token, Long userId) {
+        WorkspaceInvitation inv = workspaceInvitationDao.findByToken(token);
+        if (inv == null) {
+            throw new IllegalArgumentException("Invalid invitation token");
+        }
+        if (inv.getIsActive() == null || inv.getIsActive() != 1) {
+            throw new IllegalArgumentException("This invitation has been revoked");
+        }
+        if (inv.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException("This invitation has expired");
+        }
+        if (inv.getMaxUses() != null && inv.getUseCount() >= inv.getMaxUses()) {
+            throw new IllegalArgumentException("This invitation has reached its maximum number of uses");
+        }
+
+        // Ensure workspace still exists
+        Workspace workspace = workspaceDao.selectById(inv.getWorkspaceId());
+        if (workspace == null || workspace.getStatus() == 0) {
+            throw new IllegalArgumentException("The workspace no longer exists");
+        }
+
+        // Check if user is already a member
+        WorkspaceMember existing = workspaceMemberDao.findByWorkspaceAndUser(inv.getWorkspaceId(), userId);
+        if (existing != null) {
+            throw new IllegalArgumentException("You are already a member of this workspace");
+        }
+
+        // Add member
+        WorkspaceMember member = new WorkspaceMember();
+        member.setWorkspaceId(inv.getWorkspaceId());
+        member.setUserId(userId);
+        member.setRole(inv.getRole());
+        workspaceMemberDao.insert(member);
+
+        // Increment use count
+        inv.setUseCount(inv.getUseCount() + 1);
+        workspaceInvitationDao.updateById(inv);
     }
 }
