@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Simple Python Sandbox Executor (Phase 4).
+ * Simple Python Sandbox Executor.
  * <p>
  * Runs a generated Python script under a controlled environment. The script must read
  * JSON from {@code sys.stdin} and print a JSON object to stdout (see python-generator.st).
@@ -32,6 +32,8 @@ import java.util.concurrent.TimeUnit;
  * Configurable via environment variables:
  * <ul>
  *   <li>{@code AGENT_PYTHON_DOCKER_IMAGE} — override the sandbox image (default continuumio/anaconda3).</li>
+ *   <li>{@code AGENT_PYTHON_DOCKER_BIN} — full path to the Docker binary (e.g. {@code D:/Docker/resources/bin/docker.exe}).
+ *       Useful when Docker is not in the Java process PATH (common under CYGWIN).</li>
  *   <li>{@code AGENT_PYTHON_MEMORY_LIMIT} — Docker memory limit (default 512m).</li>
  *   <li>{@code AGENT_PYTHON_LOCAL_BIN} — override local interpreter (default "python").</li>
  *   <li>{@code AGENT_PYTHON_FALLBACK_LOCAL} — enable local fallback (default true).</li>
@@ -42,7 +44,7 @@ public class SimplePythonExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(SimplePythonExecutor.class);
 
-    private static final String DEFAULT_DOCKER_IMAGE = "docker.xuanyuan.run/continuumio/anaconda";
+    private static final String DEFAULT_DOCKER_IMAGE = "docker.xuanyuan.run/continuumio/anaconda3:main";
     private static final String DEFAULT_MEMORY_LIMIT = "512m";
     private static final String DEFAULT_LOCAL_BIN = "python";
     private static final long DEFAULT_TIMEOUT_SEC = 60;
@@ -64,10 +66,13 @@ public class SimplePythonExecutor {
             workDir = Files.createTempDirectory("ai_python_exec_").toFile();
             File scriptFile = new File(workDir, "script.py");
             File dataFile = new File(workDir, "input.json");
-            Files.write(scriptFile.toPath(), (pythonCode == null ? "" : pythonCode).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            // Prepend encoding declaration so Python 2 also handles Chinese comments/strings
+            String encodedScript = "# -*- coding: utf-8 -*-\n" + (pythonCode == null ? "" : pythonCode);
+            Files.write(scriptFile.toPath(), encodedScript.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             Files.write(dataFile.toPath(), (inputJson == null ? "" : inputJson).getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (isDockerAvailable()) {
+                log.info("[SimplePythonExecutor] Using Docker sandbox.");
                 return runInDocker(scriptFile, dataFile, workDir, timeoutSec);
             }
 
@@ -101,7 +106,7 @@ public class SimplePythonExecutor {
         String memoryLimit = envOrDefault("AGENT_PYTHON_MEMORY_LIMIT", DEFAULT_MEMORY_LIMIT);
 
         List<String> command = new ArrayList<>();
-        command.add("docker");
+        command.add(dockerBin());
         command.add("run");
         command.add("--rm");
         command.add("-i");
@@ -116,14 +121,31 @@ public class SimplePythonExecutor {
         command.add("--security-opt");
         command.add("no-new-privileges");
         command.add("-v");
-        command.add(workDir.getAbsolutePath() + ":/work:ro");
+        // Convert Windows backslashes to forward slashes for Docker Desktop compatibility
+        command.add(workDir.getAbsolutePath().replace('\\', '/') + ":/work:ro");
         command.add("-w");
         command.add("/work");
         command.add(image);
         command.add("python");
         command.add("/work/script.py");
 
-        return runProcess(command, dataFile, timeoutSec, "docker " + image);
+        log.info("[SimplePythonExecutor] Running Docker command: {}", String.join(" ", command));
+
+        // Fix PATH so Docker can find its credential helper (docker-credential-desktop).
+        // When dockerBin() is a full path, the parent dir also has the credential helper
+        // but may not be in the Java process PATH.
+        ProcessBuilder pb = new ProcessBuilder(command).redirectInput(dataFile);
+        String binDir = new File(dockerBin()).getParent();
+        if (binDir != null) {
+            String currentPath = pb.environment().get("PATH");
+            if (currentPath == null) {
+                pb.environment().put("PATH", binDir);
+            } else if (!currentPath.contains(binDir)) {
+                pb.environment().put("PATH", binDir + File.pathSeparator + currentPath);
+            }
+        }
+
+        return runProcess(pb, timeoutSec, "docker " + image);
     }
 
     // ------------------------------------------------------------------
@@ -132,6 +154,7 @@ public class SimplePythonExecutor {
 
     private PythonExecutionResult runLocally(File scriptFile, File dataFile, long timeoutSec) {
         String bin = localBin();
+        log.info("[SimplePythonExecutor] Using local Python interpreter: {}", bin);
         return runProcess(List.of(bin, scriptFile.getAbsolutePath()), dataFile, timeoutSec, "local " + bin);
     }
 
@@ -140,11 +163,13 @@ public class SimplePythonExecutor {
     // ------------------------------------------------------------------
 
     private PythonExecutionResult runProcess(List<String> command, File inputFile, long timeoutSec, String label) {
+        return runProcess(new ProcessBuilder(command).redirectInput(inputFile), timeoutSec, label);
+    }
+
+    private PythonExecutionResult runProcess(ProcessBuilder pb, long timeoutSec, String label) {
         Process process = null;
         try {
-            process = new ProcessBuilder(command)
-                    .redirectInput(inputFile)
-                    .start();
+            process = pb.start();
         } catch (Exception e) {
             return PythonExecutionResult.fail("", "Failed to start process (" + label + "): " + e.getMessage());
         }
@@ -179,12 +204,31 @@ public class SimplePythonExecutor {
     // ------------------------------------------------------------------
 
     private boolean isDockerAvailable() {
-        try {
-            Process p = new ProcessBuilder("docker", "--version").start();
-            return p.waitFor(3, TimeUnit.SECONDS) && p.exitValue() == 0;
-        } catch (Exception e) {
-            return false;
+        String bin = dockerBin();
+        String[] candidates;
+        if (!"docker".equals(bin)) {
+            // User explicitly configured a docker binary path — just check existence
+            candidates = new String[]{bin};
+        } else if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
+            candidates = new String[]{bin, bin + ".exe"};
+        } else {
+            candidates = new String[]{bin};
         }
+        for (String candidate : candidates) {
+            try {
+                Process p = new ProcessBuilder(candidate, "--version").start();
+                if (p.waitFor(3, TimeUnit.SECONDS) && p.exitValue() == 0) {
+                    return true;
+                }
+            } catch (Exception e) { /* try next */ }
+        }
+        return false;
+    }
+
+    private String dockerBin() {
+        String configured = envOrDefault("AGENT_PYTHON_DOCKER_BIN", "");
+        if (!configured.isBlank()) return configured;
+        return "docker";
     }
 
     private boolean isLocalFallbackEnabled() {
