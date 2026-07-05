@@ -66,6 +66,10 @@ public class LlmClientManager {
      * This matches the behavior of SQLGenerateAppService for non-agent flows.
      */
     public LLMStrategy resolveStrategy(Long llmConfigId, Long userId) {
+        // Explicit system default
+        if (llmConfigId != null && llmConfigId == 0) {
+            return clientCache.get(0L);
+        }
         // 1. Explicit config
         if (llmConfigId != null && llmConfigId > 0) {
             LLMStrategy strategy = clientCache.get(llmConfigId);

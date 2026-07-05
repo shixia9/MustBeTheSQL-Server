@@ -52,6 +52,9 @@ public class SQLGenerateAppService {
         if (llmConfigId != null && llmConfigId > 0) {
             // User explicitly selected a specific config
             strategy = llmClientManager.getClient(llmConfigId);
+        } else if (llmConfigId != null && llmConfigId == 0) {
+            // User explicitly selected system default
+            strategy = llmClientManager.getClient(0L);
         } else {
             // Use user's default config, or fall back to system default
             strategy = llmClientManager.getDefaultForUser(userId);

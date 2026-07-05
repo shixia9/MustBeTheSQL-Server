@@ -42,7 +42,7 @@ public class SimplePythonExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(SimplePythonExecutor.class);
 
-    private static final String DEFAULT_DOCKER_IMAGE = "continuumio/anaconda3:latest";
+    private static final String DEFAULT_DOCKER_IMAGE = "docker.xuanyuan.run/continuumio/anaconda";
     private static final String DEFAULT_MEMORY_LIMIT = "512m";
     private static final String DEFAULT_LOCAL_BIN = "python";
     private static final long DEFAULT_TIMEOUT_SEC = 60;

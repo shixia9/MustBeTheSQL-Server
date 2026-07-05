@@ -274,7 +274,7 @@ public class SqlAgentController {
                     // are captured by TracingLlmClientWrapper (Phase B). Best-effort.
                     com.sql.logic.engine.domain.trace.TraceContext tc = runContext.getTraceContext();
                     if (tc != null) {
-                        tc.recordStep(seq, nodeName, "SUCCESS", 0, 0, 0L,
+                        tc.recordStep(seq, nodeName, "SUCCESS", 0, 0,
                                 messageTypeForNode(nodeName));
                         if ("SQL_GENERATION".equals(nodeName) || "PYTHON_GENERATION".equals(nodeName)
                                 || "SQL_FIXER".equals(nodeName) || "PYTHON_ANALYSIS".equals(nodeName)
@@ -460,7 +460,9 @@ public class SqlAgentController {
         if (tc != null) {
             exec.setTotalTokens(tc.getTotalInputTokens() + tc.getTotalOutputTokens());
             exec.setModelCalls(tc.getModelCalls());
-            exec.setToolCalls(0);
+            exec.setToolCalls((int) tc.getSteps().values().stream()
+                    .filter(st -> "TOOL_RESULT".equals(st.nodeType))
+                    .count());
             exec.setTotalDurationMs(System.currentTimeMillis() - tc.getStartTime());
         }
 

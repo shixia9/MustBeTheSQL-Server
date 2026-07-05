@@ -18,12 +18,14 @@ public class TraceContext {
     private final AtomicInteger totalInputTokens;
     private final AtomicInteger totalOutputTokens;
     private final ConcurrentMap<String, StepTrace> steps;  // key=sequence:nodeName
+    private volatile long lastStepTimeMs;
 
     public TraceContext(String threadId, Long userId, Long workspaceId) {
         this.threadId = threadId;
         this.userId = userId;
         this.workspaceId = workspaceId;
         this.startTime = System.currentTimeMillis();
+        this.lastStepTimeMs = this.startTime;
         this.modelCalls = new AtomicInteger(0);
         this.totalInputTokens = new AtomicInteger(0);
         this.totalOutputTokens = new AtomicInteger(0);
@@ -37,9 +39,25 @@ public class TraceContext {
 
     public void incrementModelCalls() { modelCalls.incrementAndGet(); }
 
+    /** Record a completed step with latency computed from wall-clock time.
+     *  The latency is the wall-clock delta since the previous step completion
+     *  (or since execution start for the first step). */
     public void recordStep(int sequence, String nodeName, String status, int inputTokens, int outputTokens, long latencyMs, String nodeType) {
         String key = sequence + ":" + nodeName;
         steps.computeIfAbsent(key, k -> new StepTrace()).fill(sequence, nodeName, status, inputTokens, outputTokens, latencyMs, nodeType);
+    }
+
+    /** Record a step with auto-computed wall-clock latency. */
+    public void recordStep(int sequence, String nodeName, String status, int inputTokens, int outputTokens, String nodeType) {
+        long now = System.currentTimeMillis();
+        long latency = now - lastStepTimeMs;
+        lastStepTimeMs = now;
+        recordStep(sequence, nodeName, status, inputTokens, outputTokens, latency, nodeType);
+    }
+
+    /** Mark the last step time to a specific value (e.g., to reset after a pause). */
+    public void touchLastStepTime() {
+        this.lastStepTimeMs = System.currentTimeMillis();
     }
 
     // Getters
