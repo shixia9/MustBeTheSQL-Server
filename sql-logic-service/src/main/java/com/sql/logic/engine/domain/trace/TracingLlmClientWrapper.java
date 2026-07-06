@@ -54,19 +54,26 @@ public class TracingLlmClientWrapper implements LLMStrategy {
             if (tokenAndSqlCallback != null) {
                 tokenAndSqlCallback.accept(tokens, sql);
             }
+        }).doOnError(e -> {
+            reportCall(0, false, System.currentTimeMillis() - start);
         });
     }
 
     @Override
     public String generateSql(String prompt, BiConsumer<Integer, String> tokenAndSqlCallback) {
         long start = System.currentTimeMillis();
-        String result = delegate.generateSql(prompt, (tokens, sql) -> {
-            reportCall(tokens, true, System.currentTimeMillis() - start);
-            if (tokenAndSqlCallback != null) {
-                tokenAndSqlCallback.accept(tokens, sql);
-            }
-        });
-        return result;
+        try {
+            String result = delegate.generateSql(prompt, (tokens, sql) -> {
+                reportCall(tokens, true, System.currentTimeMillis() - start);
+                if (tokenAndSqlCallback != null) {
+                    tokenAndSqlCallback.accept(tokens, sql);
+                }
+            });
+            return result;
+        } catch (Exception e) {
+            reportCall(0, false, System.currentTimeMillis() - start);
+            throw e;
+        }
     }
 
     /**

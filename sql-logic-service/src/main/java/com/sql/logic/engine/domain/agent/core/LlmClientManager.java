@@ -199,13 +199,18 @@ public class LlmClientManager {
         return result != null && !result.isBlank() ? result.trim() : "OK";
     }
 
+    // public LLMStrategy resolveTraced(Long llmConfigId, Long userId, TraceContext traceContext,
+    //                                   String nodeName, LlmCallReporter reporter) {
+    //     LLMStrategy raw = resolveStrategy(llmConfigId, userId);
+    //     Long effectiveConfigId = resolveEffectiveConfigId(llmConfigId, userId);
+    //     return new TracingLlmClientWrapper(raw, traceContext, nodeName, reporter,
+    //             effectiveConfigId, userId);
+    // }
+
     public LLMStrategy resolveTraced(Long llmConfigId, Long userId, TraceContext traceContext,
-                                      String nodeName, LlmCallReporter reporter) {
-        LLMStrategy raw = resolveStrategy(llmConfigId, userId);
-        Long effectiveConfigId = resolveEffectiveConfigId(llmConfigId, userId);
-        return new TracingLlmClientWrapper(raw, traceContext, nodeName, reporter,
-                effectiveConfigId, userId);
-    }
+                                  String nodeName, LlmCallReporter reporter) {
+    return resolveWithStrategy(llmConfigId, userId, null, traceContext, nodeName, reporter);
+}
 
     private Long resolveEffectiveConfigId(Long llmConfigId, Long userId) {
         if (llmConfigId != null && llmConfigId == 0) {
