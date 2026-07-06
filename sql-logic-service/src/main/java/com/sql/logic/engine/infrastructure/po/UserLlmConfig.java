@@ -23,6 +23,17 @@ public class UserLlmConfig {
     private String modelName;
     private Integer isDefault;  // 1 = default config for this user
     private Integer status;     // 0: Inactive, 1: Active
+    // ---- Phase B: high availability (all nullable, backward-compatible) ----
+    /** LOCAL | ROUND_ROBIN | LATENCY_FIRST | SUCCESS_RATE_FIRST | SMART; null = legacy direct call. */
+    private String strategyType;
+    /** JSON-encoded list of configIds to fall back to when this primary fails (in order). */
+    private String fallbackChain;
+    /** CLOSED | OPEN | HALF_OPEN — managed by CircuitBreaker; persisted for cross-restart state. */
+    private String circuitState;
+    private Date circuitOpenedAt;
+    private Date lastSuccessAt;
+    private Date lastFailureAt;
+    private Integer consecutiveFailures;
     private Date createTime;
     private Date updateTime;
 }

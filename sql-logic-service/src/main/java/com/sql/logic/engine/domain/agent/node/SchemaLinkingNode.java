@@ -12,7 +12,9 @@ import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.dto.ForeignKeyRelation;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.infrastructure.util.MarkdownParserUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,19 +57,22 @@ public class SchemaLinkingNode implements NodeAction {
     private final LlmClientManager llmClientManager;
     private final PromptManager promptManager;
     private final ObjectMapper objectMapper;
+    private final LlmCallReporter llmCallReporter;
 
     public SchemaLinkingNode(SchemaRelationService schemaRelationService,
                              ColumnSampleService columnSampleService,
                              DatabaseMetaDataService databaseMetaDataService,
                              LlmClientManager llmClientManager,
                              PromptManager promptManager,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             LlmCallReporter llmCallReporter) {
         this.schemaRelationService = schemaRelationService;
         this.columnSampleService = columnSampleService;
         this.databaseMetaDataService = databaseMetaDataService;
         this.llmClientManager = llmClientManager;
         this.promptManager = promptManager;
         this.objectMapper = objectMapper;
+        this.llmCallReporter = llmCallReporter;
     }
 
     @Override
@@ -131,7 +136,9 @@ public class SchemaLinkingNode implements NodeAction {
                 "evidence", evidence == null || evidence.isBlank() ? "无" : evidence
         ));
 
-        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
+        LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,
+                (TraceContext) state.value(SqlAgentSpec.StateKey.TRACE_CONTEXT).orElse(null),
+                SqlAgentSpec.Node.SCHEMA_LINKING, llmCallReporter);
         String llmResponse = strategy.generateSql(prompt, null);
 
         // 7. Parse LLM response as List<String> of table names

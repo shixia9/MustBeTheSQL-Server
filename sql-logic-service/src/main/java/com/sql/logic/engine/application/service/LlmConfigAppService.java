@@ -3,18 +3,26 @@ package com.sql.logic.engine.application.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.sql.logic.engine.common.dto.LlmConfigCreateRequest;
+import com.sql.logic.engine.common.dto.LlmConfigMetricsResponse;
 import com.sql.logic.engine.common.dto.LlmConfigResponse;
+import com.sql.logic.engine.common.dto.LlmConfigStrategyUpdateRequest;
 import com.sql.logic.engine.common.dto.LlmConfigUpdateRequest;
 import com.sql.logic.engine.common.util.UrlValidationUtil;
 import com.sql.logic.engine.domain.agent.core.AiAgentManager;
 import com.sql.logic.engine.domain.agent.core.AiAgentWarmupRunner;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.ha.circuit.CircuitBreaker;
 import com.sql.logic.engine.domain.agent.strategy.ProviderType;
+import com.sql.logic.engine.infrastructure.dao.LlmCallMetricsDao;
 import com.sql.logic.engine.infrastructure.dao.UserLlmConfigDao;
+import com.sql.logic.engine.infrastructure.po.LlmCallMetrics;
 import com.sql.logic.engine.infrastructure.po.UserLlmConfig;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.List;
 
@@ -25,15 +33,24 @@ public class LlmConfigAppService {
     private final AiAgentWarmupRunner aiAgentWarmupRunner;
     private final AiAgentManager aiAgentManager;
     private final LlmClientManager llmClientManager;
+    private final LlmCallMetricsDao llmCallMetricsDao;
+    private final CircuitBreaker circuitBreaker;
+    private final ObjectMapper objectMapper;
 
     public LlmConfigAppService(UserLlmConfigDao userLlmConfigDao,
                                AiAgentWarmupRunner aiAgentWarmupRunner,
                                AiAgentManager aiAgentManager,
-                               LlmClientManager llmClientManager) {
+                               LlmClientManager llmClientManager,
+                               LlmCallMetricsDao llmCallMetricsDao,
+                               CircuitBreaker circuitBreaker,
+                               ObjectMapper objectMapper) {
         this.userLlmConfigDao = userLlmConfigDao;
         this.aiAgentWarmupRunner = aiAgentWarmupRunner;
         this.aiAgentManager = aiAgentManager;
         this.llmClientManager = llmClientManager;
+        this.llmCallMetricsDao = llmCallMetricsDao;
+        this.circuitBreaker = circuitBreaker;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -280,6 +297,54 @@ public class LlmConfigAppService {
         userLlmConfigDao.update(null, updateWrapper);
     }
 
+    public void updateStrategy(Long userId, Long configId, LlmConfigStrategyUpdateRequest request) {
+        UserLlmConfig config = userLlmConfigDao.selectById(configId);
+        if (config == null || !config.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("Config not found or access denied");
+        }
+        config.setStrategyType(request.getStrategyType());
+        if (request.getFallbackChain() != null) {
+            try {
+                config.setFallbackChain(objectMapper.writeValueAsString(request.getFallbackChain()));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Invalid fallback chain format", e);
+            }
+        }
+        config.setUpdateTime(new Date());
+        userLlmConfigDao.updateById(config);
+    }
+
+    public LlmConfigMetricsResponse getMetrics(Long userId, Long configId) {
+        UserLlmConfig config = userLlmConfigDao.selectById(configId);
+        if (config == null || !config.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("Config not found or access denied");
+        }
+
+        LocalDateTime since = LocalDateTime.now()
+                .minusMinutes(5)
+                .truncatedTo(ChronoUnit.MINUTES);
+
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<LlmCallMetrics> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        wrapper.eq("config_id", configId);
+        wrapper.ge("window_start", since);
+        List<LlmCallMetrics> rows = llmCallMetricsDao.selectList(wrapper);
+
+        int success = 0, failure = 0;
+        long latency = 0L;
+        for (LlmCallMetrics row : rows) {
+            success += row.getSuccessCount() != null ? row.getSuccessCount() : 0;
+            failure += row.getFailureCount() != null ? row.getFailureCount() : 0;
+            latency += row.getTotalLatencyMs() != null ? row.getTotalLatencyMs() : 0L;
+        }
+        int total = success + failure;
+        double successRate = total == 0 ? 1.0 : (double) success / total;
+        long avgLatency = total == 0 ? 0L : latency / total;
+        String circuitState = config.getCircuitState() != null ? config.getCircuitState() : "CLOSED";
+
+        return new LlmConfigMetricsResponse(configId, successRate, avgLatency, circuitState, total);
+    }
+
     private LlmConfigResponse toResponse(UserLlmConfig config) {
         LlmConfigResponse response = new LlmConfigResponse();
         response.setId(config.getId());
@@ -290,6 +355,9 @@ public class LlmConfigAppService {
         response.setModelName(config.getModelName());
         response.setIsDefault(config.getIsDefault() == 1);
         response.setStatus(config.getStatus());
+        response.setStrategyType(config.getStrategyType());
+        response.setFallbackChain(config.getFallbackChain());
+        response.setCircuitState(config.getCircuitState());
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         response.setCreateTime(config.getCreateTime() != null ? sdf.format(config.getCreateTime()) : null);
         response.setUpdateTime(config.getUpdateTime() != null ? sdf.format(config.getUpdateTime()) : null);

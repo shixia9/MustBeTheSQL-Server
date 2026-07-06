@@ -7,7 +7,9 @@ import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.dto.HitlGateDTO;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.trace.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.converter.BeanOutputConverter;
@@ -40,10 +42,13 @@ public class HitlGateNode implements NodeAction {
 
     private final LlmClientManager llmClientManager;
     private final PromptManager promptManager;
+    private final LlmCallReporter llmCallReporter;
 
-    public HitlGateNode(LlmClientManager llmClientManager, PromptManager promptManager) {
+    public HitlGateNode(LlmClientManager llmClientManager, PromptManager promptManager,
+                        LlmCallReporter llmCallReporter) {
         this.llmClientManager = llmClientManager;
         this.promptManager = promptManager;
+        this.llmCallReporter = llmCallReporter;
     }
 
     @Override
@@ -74,7 +79,9 @@ public class HitlGateNode implements NodeAction {
         boolean needsReview = false;
         String reason = "";
         try {
-            LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
+            LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,
+                    (TraceContext) state.value(SqlAgentSpec.StateKey.TRACE_CONTEXT).orElse(null),
+                    SqlAgentSpec.Node.HITL_GATE, llmCallReporter);
             String raw = strategy.generateSql(prompt, null);
             HitlGateDTO dto = parse(raw, converter);
             if (dto != null && dto.needsReview() != null) {

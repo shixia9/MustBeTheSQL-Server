@@ -8,7 +8,9 @@ import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.dto.EvidenceQueryRewriteDTO;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.infrastructure.dao.BusinessKnowledgeDao;
 import com.sql.logic.engine.infrastructure.po.BusinessKnowledge;
 import org.slf4j.Logger;
@@ -49,14 +51,17 @@ public class EvidenceRecallNode implements NodeAction {
     private final PromptManager promptManager;
     private final VectorSearchService vectorSearchService;
     private final BusinessKnowledgeDao businessKnowledgeDao;
+    private final LlmCallReporter llmCallReporter;
 
     public EvidenceRecallNode(LlmClientManager llmClientManager, PromptManager promptManager,
                                VectorSearchService vectorSearchService,
-                               BusinessKnowledgeDao businessKnowledgeDao) {
+                               BusinessKnowledgeDao businessKnowledgeDao,
+                               LlmCallReporter llmCallReporter) {
         this.llmClientManager = llmClientManager;
         this.promptManager = promptManager;
         this.vectorSearchService = vectorSearchService;
         this.businessKnowledgeDao = businessKnowledgeDao;
+        this.llmCallReporter = llmCallReporter;
     }
 
     @Override
@@ -76,7 +81,9 @@ public class EvidenceRecallNode implements NodeAction {
                 "latest_query", userInput,
                 "format", converter.getFormat()
         ));
-        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
+        LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,
+                (TraceContext) state.value(SqlAgentSpec.StateKey.TRACE_CONTEXT).orElse(null),
+                SqlAgentSpec.Node.EVIDENCE_RECALL, llmCallReporter);
         String rewriteResponse = strategy.generateSql(prompt, null);
         String rewriteQuery = extractQuery(rewriteResponse == null ? "" : rewriteResponse.trim(), converter);
         log.info("[EvidenceRecallNode] Input: {}, Rewritten: {}", userInput, rewriteQuery);

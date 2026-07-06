@@ -9,6 +9,8 @@ import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.trace.TraceContext;
+import com.sql.logic.engine.domain.trace.TraceContextRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -40,10 +42,13 @@ public class SqlAgentRunner {
 
     private final CompiledGraph compiledGraph;
     private final HitlSessionRegistry hitlSessionRegistry;
+    private final TraceContextRegistry traceContextRegistry;
 
     public SqlAgentRunner(StateGraph sqlAgentGraph, MemorySaver sqlAgentMemorySaver,
-                          HitlSessionRegistry hitlSessionRegistry) {
+                          HitlSessionRegistry hitlSessionRegistry,
+                          TraceContextRegistry traceContextRegistry) {
         this.hitlSessionRegistry = hitlSessionRegistry;
+        this.traceContextRegistry = traceContextRegistry;
         try {
             this.compiledGraph = sqlAgentGraph.compile(CompileConfig.builder()
                     .saverConfig(SaverConfig.builder().register(sqlAgentMemorySaver).build())
@@ -90,7 +95,10 @@ public class SqlAgentRunner {
                 .doOnError(e -> log.error("[SqlAgentRunner] Graph execution (threadId={}) error", threadId, e));
 
         AgentRunContext context = new AgentRunContext(threadId, userId, connectionId, llmConfigId, workspaceId, tableNames, schemaName, autoConfirm, rc);
-        context.setTraceContext(new com.sql.logic.engine.domain.trace.TraceContext(threadId, userId, workspaceId));
+        TraceContext traceContext = new TraceContext(threadId, userId, workspaceId);
+        context.setTraceContext(traceContext);
+        traceContextRegistry.register(threadId, traceContext);
+        initialState.put(SqlAgentSpec.StateKey.TRACE_CONTEXT, traceContext);
         return new AgentRunHandle(threadId, context, rc, flux);
     }
 

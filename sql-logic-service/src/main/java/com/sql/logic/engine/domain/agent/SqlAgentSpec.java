@@ -29,6 +29,12 @@ public final class SqlAgentSpec {
         public static final String PYTHON_EXECUTION = "PYTHON_EXECUTION";
         public static final String PYTHON_ANALYSIS = "PYTHON_ANALYSIS";
         public static final String REPORT = "REPORT";
+        // ---- Task split workflow ----
+        public static final String MEMORY_RECALL = "MEMORY_RECALL";
+        public static final String ANALYZER = "ANALYZER";
+        public static final String TASK_SPLIT = "TASK_SPLIT";
+        public static final String TASK_DISPATCH = "TASK_DISPATCH";
+        public static final String SUMMARIZE = "SUMMARIZE";
     }
 
     // ======================== State Keys ========================
@@ -40,6 +46,8 @@ public final class SqlAgentSpec {
         public static final String CONNECTION_ID = "connectionId";
         public static final String LLM_CONFIG_ID = "llmConfigId";
         public static final String WORKSPACE_ID = "workspaceId";
+        public static final String THREAD_ID = "threadId";
+        public static final String SESSION_ID = "sessionId";
         public static final String DB_TYPE = "dbType";
         public static final String SCHEMA_NAME = "schemaName";
 
@@ -87,6 +95,18 @@ public final class SqlAgentSpec {
 
         // ---- Report ----
         public static final String REPORT_RESULT = "reportResult";
+
+        // ---- Task Split workflow ----
+        public static final String COMPLEXITY = "complexity";
+        public static final String SUBTASKS = "subtasks";
+        public static final String CURRENT_SUBTASK = "currentSubtask";
+        public static final String SUBTASK_RESULTS = "subtaskResults";
+
+        // ---- Trace context (carried through state) ----
+        public static final String TRACE_CONTEXT = "traceContext";
+
+        // ---- Memory ----
+        public static final String USER_MEMORY = "userMemory";
     }
 
     // ======================== Prompt Template Names ========================
@@ -106,6 +126,10 @@ public final class SqlAgentSpec {
         public static final String EVIDENCE_GLOSSARY = "evidence-glossary";
         /** Few-shot knowledge wrapper (Phase 5 RAG) — {agentKnowledge}. */
         public static final String EVIDENCE_KNOWLEDGE = "evidence-knowledge";
+        public static final String COMPLEXITY_ANALYZER = "complexity-analyzer";
+        public static final String TASK_SPLIT = "task-split";
+        public static final String SUMMARIZE = "summarize";
+        public static final String MEMORY_EXTRACTION = "memory-extraction";
     }
 
     // ======================== Retrieval ========================

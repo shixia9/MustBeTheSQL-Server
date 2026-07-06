@@ -9,7 +9,9 @@ import com.sql.logic.engine.domain.agent.dto.Plan;
 import com.sql.logic.engine.domain.agent.dto.PlanStep;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.infrastructure.dao.DbConnectionConfDao;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
 import com.sql.logic.engine.infrastructure.util.MarkdownParserUtil;
@@ -40,15 +42,18 @@ public class SqlGenerationNode implements NodeAction {
     private final PromptManager promptManager;
     private final DbConnectionConfDao dbConnectionConfDao;
     private final ObjectMapper objectMapper;
+    private final LlmCallReporter llmCallReporter;
 
     public SqlGenerationNode(LlmClientManager llmClientManager,
-                             PromptManager promptManager,
-                             DbConnectionConfDao dbConnectionConfDao,
-                             ObjectMapper objectMapper) {
+                              PromptManager promptManager,
+                              DbConnectionConfDao dbConnectionConfDao,
+                              ObjectMapper objectMapper,
+                              LlmCallReporter llmCallReporter) {
         this.llmClientManager = llmClientManager;
         this.promptManager = promptManager;
         this.dbConnectionConfDao = dbConnectionConfDao;
         this.objectMapper = objectMapper;
+        this.llmCallReporter = llmCallReporter;
     }
 
     @Override
@@ -94,7 +99,9 @@ public class SqlGenerationNode implements NodeAction {
                 "execution_description_section", ""  // Description is the primary driver when no planner is wired
         ));
 
-        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
+        LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,
+                (TraceContext) state.value(SqlAgentSpec.StateKey.TRACE_CONTEXT).orElse(null),
+                SqlAgentSpec.Node.SQL_GENERATION, llmCallReporter);
         String sql = strategy.generateSql(prompt, null);
         sql = MarkdownParserUtil.extractRawText(sql);
 

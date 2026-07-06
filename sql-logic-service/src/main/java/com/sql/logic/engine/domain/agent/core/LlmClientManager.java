@@ -1,14 +1,33 @@
 package com.sql.logic.engine.domain.agent.core;
 
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.agent.ha.CandidateInstance;
+import com.sql.logic.engine.domain.agent.ha.AffinityStore;
+import com.sql.logic.engine.domain.agent.ha.HaConstants;
+import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
+import com.sql.logic.engine.domain.agent.ha.MetricsSnapshot;
+import com.sql.logic.engine.domain.agent.ha.circuit.CircuitBreaker;
+import com.sql.logic.engine.domain.agent.ha.strategy.LoadBalancingStrategy;
+import com.sql.logic.engine.domain.agent.ha.strategy.LoadBalancingStrategyFactory;
+import com.sql.logic.engine.domain.trace.TraceContext;
+import com.sql.logic.engine.domain.trace.TracingLlmClientWrapper;
+import com.sql.logic.engine.infrastructure.dao.LlmCallMetricsDao;
 import com.sql.logic.engine.infrastructure.dao.UserLlmConfigDao;
+import com.sql.logic.engine.infrastructure.po.LlmCallMetrics;
 import com.sql.logic.engine.infrastructure.po.UserLlmConfig;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -27,9 +46,24 @@ public class LlmClientManager {
 
     private final ConcurrentHashMap<Long, LLMStrategy> clientCache = new ConcurrentHashMap<>();
     private final UserLlmConfigDao userLlmConfigDao;
+    private final LlmCallMetricsDao llmCallMetricsDao;
+    private final LoadBalancingStrategyFactory strategyFactory;
+    private final CircuitBreaker circuitBreaker;
+    private final AffinityStore affinityStore;
+    private final ObjectMapper objectMapper;
 
-    public LlmClientManager(UserLlmConfigDao userLlmConfigDao) {
+    public LlmClientManager(UserLlmConfigDao userLlmConfigDao,
+                            LlmCallMetricsDao llmCallMetricsDao,
+                            LoadBalancingStrategyFactory strategyFactory,
+                            CircuitBreaker circuitBreaker,
+                            AffinityStore affinityStore,
+                            ObjectMapper objectMapper) {
         this.userLlmConfigDao = userLlmConfigDao;
+        this.llmCallMetricsDao = llmCallMetricsDao;
+        this.strategyFactory = strategyFactory;
+        this.circuitBreaker = circuitBreaker;
+        this.affinityStore = affinityStore;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -163,5 +197,156 @@ public class LlmClientManager {
         }
         String result = strategy.generateSql("Reply with: OK", (tokens, content) -> { /* ignore token accounting */ });
         return result != null && !result.isBlank() ? result.trim() : "OK";
+    }
+
+    public LLMStrategy resolveTraced(Long llmConfigId, Long userId, TraceContext traceContext,
+                                      String nodeName, LlmCallReporter reporter) {
+        LLMStrategy raw = resolveStrategy(llmConfigId, userId);
+        Long effectiveConfigId = resolveEffectiveConfigId(llmConfigId, userId);
+        return new TracingLlmClientWrapper(raw, traceContext, nodeName, reporter,
+                effectiveConfigId, userId);
+    }
+
+    private Long resolveEffectiveConfigId(Long llmConfigId, Long userId) {
+        if (llmConfigId != null && llmConfigId == 0) {
+            return 0L;
+        }
+        if (llmConfigId != null && llmConfigId > 0 && clientCache.containsKey(llmConfigId)) {
+            return llmConfigId;
+        }
+        if (userId != null && userId > 0) {
+            QueryWrapper<UserLlmConfig> defaultQuery = new QueryWrapper<>();
+            defaultQuery.eq("user_id", userId).eq("is_default", 1).eq("status", 1);
+            UserLlmConfig defaultConfig = userLlmConfigDao.selectOne(defaultQuery);
+            if (defaultConfig != null && clientCache.containsKey(defaultConfig.getId())) {
+                return defaultConfig.getId();
+            }
+            QueryWrapper<UserLlmConfig> anyQuery = new QueryWrapper<>();
+            anyQuery.eq("user_id", userId).eq("status", 1);
+            List<UserLlmConfig> configs = userLlmConfigDao.selectList(anyQuery);
+            for (UserLlmConfig config : configs) {
+                if (clientCache.containsKey(config.getId())) {
+                    return config.getId();
+                }
+            }
+        }
+        return 0L;
+    }
+
+    public LLMStrategy resolveWithStrategy(Long primaryConfigId, Long userId, String sessionId,
+                                            TraceContext traceContext, String nodeName,
+                                            LlmCallReporter reporter) {
+        Long effectiveConfigId = resolveEffectiveConfigId(primaryConfigId, userId);
+        UserLlmConfig config = userLlmConfigDao.selectById(effectiveConfigId);
+
+        List<Long> candidateIds = new ArrayList<>();
+        candidateIds.add(effectiveConfigId);
+        if (config != null && config.getFallbackChain() != null && !config.getFallbackChain().isBlank()) {
+            try {
+                List<Integer> fallbackIds = objectMapper.readValue(config.getFallbackChain(),
+                        new TypeReference<List<Integer>>() {});
+                for (Integer id : fallbackIds) {
+                    if (id != null && id > 0 && !candidateIds.contains(id.longValue())) {
+                        candidateIds.add(id.longValue());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[LlmClientManager] Failed to parse fallback chain for configId={}: {}",
+                        effectiveConfigId, e.getMessage());
+            }
+        }
+
+        if (sessionId != null) {
+            Long bound = affinityStore.getBinding(sessionId);
+            if (bound != null && candidateIds.contains(bound) && !circuitBreaker.isOpen(bound)) {
+                effectiveConfigId = bound;
+            }
+        }
+
+        String strategyType = config != null ? config.getStrategyType() : null;
+        if (strategyType == null || strategyType.isBlank() || "LOCAL".equalsIgnoreCase(strategyType)) {
+            effectiveConfigId = findFirstHealthy(candidateIds);
+            LLMStrategy raw = getClient(effectiveConfigId);
+            LLMStrategy traced = new TracingLlmClientWrapper(raw, traceContext, nodeName, reporter,
+                    effectiveConfigId, userId);
+            if (sessionId != null) {
+                affinityStore.bind(sessionId, effectiveConfigId);
+            }
+            return traced;
+        }
+
+        LoadBalancingStrategy lbStrategy = strategyFactory.getSmartStrategy(strategyType);
+        List<CandidateInstance> candidates = buildCandidates(candidateIds);
+        MetricsSnapshot snapshot = loadMetricsSnapshot(candidateIds);
+
+        LLMStrategy selected = lbStrategy.selectInstance(candidates, snapshot);
+
+        for (CandidateInstance c : candidates) {
+            if (c.getStrategy() == selected) {
+                effectiveConfigId = c.getConfigId();
+                break;
+            }
+        }
+
+        if (sessionId != null) {
+            affinityStore.bind(sessionId, effectiveConfigId);
+        }
+
+        return new TracingLlmClientWrapper(selected, traceContext, nodeName, reporter,
+                effectiveConfigId, userId);
+    }
+
+    private Long findFirstHealthy(List<Long> candidateIds) {
+        for (Long id : candidateIds) {
+            if (!circuitBreaker.isOpen(id) && clientCache.containsKey(id)) {
+                return id;
+            }
+        }
+        return candidateIds.isEmpty() ? 0L : candidateIds.get(0);
+    }
+
+    private List<CandidateInstance> buildCandidates(List<Long> configIds) {
+        List<CandidateInstance> list = new ArrayList<>();
+        MetricsSnapshot snapshot = loadMetricsSnapshot(configIds);
+        for (Long id : configIds) {
+            LLMStrategy strategy = clientCache.get(id);
+            if (strategy == null) continue;
+            MetricsSnapshot.InstanceMetrics m = snapshot.get(id);
+            double successRate = m != null ? m.getSuccessRate() : 1.0;
+            long avgLatency = m != null ? m.getAverageLatencyMs() : 0L;
+            int consecutiveFailures = 0;
+            UserLlmConfig config = userLlmConfigDao.selectById(id);
+            if (config != null && config.getConsecutiveFailures() != null) {
+                consecutiveFailures = config.getConsecutiveFailures();
+            }
+            boolean breakerOpen = circuitBreaker.isOpen(id);
+            list.add(new CandidateInstance(id, strategy, successRate, avgLatency,
+                    consecutiveFailures, breakerOpen));
+        }
+        return list;
+    }
+
+    private MetricsSnapshot loadMetricsSnapshot(List<Long> configIds) {
+        LocalDateTime since = LocalDateTime.now()
+                .minusMinutes(HaConstants.METRICS_WINDOW_MINUTES)
+                .truncatedTo(ChronoUnit.MINUTES);
+
+        Map<Long, MetricsSnapshot.InstanceMetrics> map = new LinkedHashMap<>();
+        for (Long id : configIds) {
+            QueryWrapper<LlmCallMetrics> wrapper = new QueryWrapper<>();
+            wrapper.eq("config_id", id);
+            wrapper.ge("window_start", since);
+            List<LlmCallMetrics> rows = llmCallMetricsDao.selectList(wrapper);
+
+            int success = 0, failure = 0;
+            long totalLatency = 0L;
+            for (LlmCallMetrics row : rows) {
+                success += row.getSuccessCount() != null ? row.getSuccessCount() : 0;
+                failure += row.getFailureCount() != null ? row.getFailureCount() : 0;
+                totalLatency += row.getTotalLatencyMs() != null ? row.getTotalLatencyMs() : 0L;
+            }
+            map.put(id, new MetricsSnapshot.InstanceMetrics(success, failure, totalLatency));
+        }
+        return new MetricsSnapshot(map);
     }
 }
