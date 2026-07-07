@@ -1,8 +1,9 @@
 package com.sql.logic.engine.domain.agent.core;
 
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
-import com.sql.logic.engine.domain.agent.ha.CandidateInstance;
 import com.sql.logic.engine.domain.agent.ha.AffinityStore;
+import com.sql.logic.engine.domain.agent.ha.CandidateInstance;
+import com.sql.logic.engine.domain.agent.ha.FailoverLLMStrategy;
 import com.sql.logic.engine.domain.agent.ha.HaConstants;
 import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.ha.MetricsSnapshot;
@@ -269,15 +270,40 @@ public class LlmClientManager {
         }
 
         String strategyType = config != null ? config.getStrategyType() : null;
-        if (strategyType == null || strategyType.isBlank() || "LOCAL".equalsIgnoreCase(strategyType)) {
-            effectiveConfigId = findFirstHealthy(candidateIds);
-            LLMStrategy raw = getClient(effectiveConfigId);
-            LLMStrategy traced = new TracingLlmClientWrapper(raw, traceContext, nodeName, reporter,
-                    effectiveConfigId, userId);
+        boolean isLocal = strategyType == null || strategyType.isBlank()
+                || "LOCAL".equalsIgnoreCase(strategyType);
+
+        if (isLocal) {
+            // LOCAL: ordered failover across all healthy candidates.
+            // If only one healthy candidate exists, behaviour is unchanged
+            // (a single TracingLlmClientWrapper). When the fallback chain
+            // offers additional healthy candidates, wrap them in a
+            // FailoverLLMStrategy so runtime failures of the primary
+            // transparently fall back within a single request.
+            List<Long> healthy = findAllHealthy(candidateIds);
+            if (healthy.isEmpty()) {
+                effectiveConfigId = candidateIds.isEmpty() ? 0L : candidateIds.get(0);
+                LLMStrategy raw = getClient(effectiveConfigId);
+                if (sessionId != null) {
+                    affinityStore.bind(sessionId, effectiveConfigId);
+                }
+                return new TracingLlmClientWrapper(raw, traceContext, nodeName, reporter,
+                        effectiveConfigId, userId);
+            }
+            if (healthy.size() == 1) {
+                effectiveConfigId = healthy.get(0);
+                LLMStrategy raw = getClient(effectiveConfigId);
+                if (sessionId != null) {
+                    affinityStore.bind(sessionId, effectiveConfigId);
+                }
+                return new TracingLlmClientWrapper(raw, traceContext, nodeName, reporter,
+                        effectiveConfigId, userId);
+            }
+            effectiveConfigId = healthy.get(0);
             if (sessionId != null) {
                 affinityStore.bind(sessionId, effectiveConfigId);
             }
-            return traced;
+            return new FailoverLLMStrategy(healthy, this, traceContext, nodeName, reporter, userId);
         }
 
         LoadBalancingStrategy lbStrategy = strategyFactory.getSmartStrategy(strategyType);
@@ -286,19 +312,35 @@ public class LlmClientManager {
 
         LLMStrategy selected = lbStrategy.selectInstance(candidates, snapshot);
 
+        Long lbSelectedId = effectiveConfigId;
         for (CandidateInstance c : candidates) {
             if (c.getStrategy() == selected) {
-                effectiveConfigId = c.getConfigId();
+                lbSelectedId = c.getConfigId();
                 break;
             }
         }
+        effectiveConfigId = lbSelectedId;
 
         if (sessionId != null) {
             affinityStore.bind(sessionId, effectiveConfigId);
         }
 
-        return new TracingLlmClientWrapper(selected, traceContext, nodeName, reporter,
-                effectiveConfigId, userId);
+        // Build an ordered failover list: LB-selected primary first,
+        // followed by the remaining healthy candidates as fallbacks.
+        List<Long> ordered = new ArrayList<>();
+        ordered.add(effectiveConfigId);
+        for (Long id : candidateIds) {
+            if (id.equals(effectiveConfigId)) continue;
+            if (circuitBreaker.isOpen(id) || !clientCache.containsKey(id)) continue;
+            if (!ordered.contains(id)) {
+                ordered.add(id);
+            }
+        }
+        if (ordered.size() == 1) {
+            return new TracingLlmClientWrapper(selected, traceContext, nodeName, reporter,
+                    effectiveConfigId, userId);
+        }
+        return new FailoverLLMStrategy(ordered, this, traceContext, nodeName, reporter, userId);
     }
 
     private Long findFirstHealthy(List<Long> candidateIds) {
@@ -308,6 +350,21 @@ public class LlmClientManager {
             }
         }
         return candidateIds.isEmpty() ? 0L : candidateIds.get(0);
+    }
+
+    /**
+     * Return every healthy candidate (not circuit-broken and registered),
+     * preserving the input order so the primary is always tried first.
+     */
+    private List<Long> findAllHealthy(List<Long> candidateIds) {
+        List<Long> healthy = new ArrayList<>();
+        for (Long id : candidateIds) {
+            if (id != null && id > 0 && !circuitBreaker.isOpen(id) && clientCache.containsKey(id)
+                    && !healthy.contains(id)) {
+                healthy.add(id);
+            }
+        }
+        return healthy;
     }
 
     private List<CandidateInstance> buildCandidates(List<Long> configIds) {
