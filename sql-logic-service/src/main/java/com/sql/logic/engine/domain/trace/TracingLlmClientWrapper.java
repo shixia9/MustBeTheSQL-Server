@@ -85,10 +85,14 @@ public class TracingLlmClientWrapper implements LLMStrategy {
     private void reportCall(int totalTokens, boolean success, long latencyMs) {
         try {
             int half = totalTokens / 2;
-            traceContext.addTokens(half, totalTokens - half);
+            int out = totalTokens - half;
+            // Global totals + per-node attribution (so agent_execution_step.input_tokens/
+            // output_tokens reflect the node that actually consumed the tokens).
+            traceContext.addTokens(half, out);
+            traceContext.addTokensToCurrentNode(half, out);
             traceContext.incrementModelCalls();
             if (reporter != null) {
-                reporter.report(configId, userId, success, latencyMs, half, totalTokens - half);
+                reporter.report(configId, userId, success, latencyMs, half, out);
             }
         } catch (Exception e) {
             log.warn("[TracingLlmClientWrapper] reportCall error (node={}): {}", nodeName, e.getMessage());
