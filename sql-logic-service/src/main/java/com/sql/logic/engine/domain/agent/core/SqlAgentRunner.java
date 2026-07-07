@@ -172,12 +172,10 @@ public class SqlAgentRunner {
     private Flux<String> buildUnifiedSse(Flux<NodeOutput> graphFlux, Sinks.Many<String> startedSink,
                                          String threadId, AgentRunContext runContext) {
         Flux<String> finished = graphFlux.map(o -> codec.nodeOutputToJson(o, runContext))
-                .filter(s -> !s.isEmpty());
+                .filter(s -> !s.isEmpty())
+                .doFinally(sig -> startedSink.tryEmitComplete());
         return Flux.merge(finished, startedSink.asFlux())
-                .doFinally(sig -> {
-                    startedSink.tryEmitComplete();
-                    sinkRegistry.remove(threadId);
-                });
+                .doFinally(sig -> sinkRegistry.remove(threadId));
     }
 
     public CompiledGraph getCompiledGraph() {
