@@ -3,6 +3,8 @@ package com.sql.logic.engine.trigger.http;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sql.logic.engine.common.response.Result;
+import com.sql.logic.engine.domain.memory.CandidateMemory;
+import com.sql.logic.engine.domain.memory.MemoryDomainService;
 import com.sql.logic.engine.domain.memory.MemoryExtractorService;
 import com.sql.logic.engine.infrastructure.dao.MemoryItemDao;
 import com.sql.logic.engine.infrastructure.po.MemoryItem;
@@ -26,10 +28,14 @@ public class MemoryController {
 
     private final MemoryItemDao memoryItemDao;
     private final MemoryExtractorService memoryExtractorService;
+    private final MemoryDomainService memoryDomainService;
 
-    public MemoryController(MemoryItemDao memoryItemDao, MemoryExtractorService memoryExtractorService) {
+    public MemoryController(MemoryItemDao memoryItemDao,
+                            MemoryExtractorService memoryExtractorService,
+                            MemoryDomainService memoryDomainService) {
         this.memoryItemDao = memoryItemDao;
         this.memoryExtractorService = memoryExtractorService;
+        this.memoryDomainService = memoryDomainService;
     }
 
     private Long getCurrentUserId() {
@@ -56,26 +62,32 @@ public class MemoryController {
     @PostMapping
     public Result<MemoryItem> create(@RequestBody Map<String, Object> body) {
         Long userId = getCurrentUserId();
-        MemoryItem item = new MemoryItem();
-        item.setUserId(userId);
-        item.setType(body.get("type") != null ? String.valueOf(body.get("type")).toUpperCase() : null);
-        item.setContent(body.get("content") != null ? String.valueOf(body.get("content")) : null);
+        String type = body.get("type") != null ? String.valueOf(body.get("type")).toUpperCase() : "PROFILE";
+        String content = body.get("content") != null ? String.valueOf(body.get("content")) : null;
+        if (content == null || content.isBlank()) {
+            return Result.error(400, "Content cannot be empty");
+        }
+        double importance = 0.5;
         if (body.get("importance") != null) {
             try {
-                item.setImportance(new BigDecimal(String.valueOf(body.get("importance"))));
-            } catch (NumberFormatException e) {
-                item.setImportance(BigDecimal.valueOf(0.5));
-            }
+                importance = new BigDecimal(String.valueOf(body.get("importance"))).doubleValue();
+            } catch (NumberFormatException ignored) {}
         }
         @SuppressWarnings("unchecked")
         List<String> tags = body.get("tags") instanceof List
                 ? (List<String>) body.get("tags") : List.of();
-        item.setTags(tags);
-        item.setStatus(1);
-        item.setCreateTime(LocalDateTime.now());
-        item.setUpdateTime(LocalDateTime.now());
-        memoryItemDao.insert(item);
-        return Result.success(item);
+
+        CandidateMemory candidate = new CandidateMemory();
+        candidate.setType(type);
+        candidate.setText(content);
+        candidate.setImportance(importance);
+        candidate.setTags(tags);
+
+        int saved = memoryDomainService.saveMemories(userId, null, null, List.of(candidate));
+        if (saved > 0) {
+            return Result.success(null);
+        }
+        return Result.error(500, "Failed to save memory");
     }
 
     @DeleteMapping("/{id}")

@@ -61,7 +61,7 @@ public class SqlExecutionService {
         } catch (Exception e) {
             log.debug("[SqlExecutionService] Could not resolve db_name from config: {}", e.getMessage());
         }
-        return schemaName; // still blank
+        return null; // explicitly null so callers can distinguish "not provided" from ""
     }
 
     /**
@@ -95,12 +95,23 @@ public class SqlExecutionService {
             log.warn("[SqlExecutionService] Failed to resolve DB type: {}", e.getMessage());
         }
 
-        // Phase A hotfix: when no schema/database is selected, fall back to the
+        // When no schema/database is selected, fall back to the
         // connection config's db_name so MySQL never sees "No database selected".
+        // If still null after fallback, try the JDBC connection's own catalog (the
+        // database baked into the JDBC URL), which HikariCP inherits from the pool config.
         String effectiveSchema = resolveSchemaName(connectionId, schemaName);
 
         try (Connection conn = databaseAppService.getConnectionForUser(userId, connectionId);
              Statement stmt = conn.createStatement()) {
+
+            if (effectiveSchema == null) {
+                try {
+                    String catalog = conn.getCatalog();
+                    if (catalog != null && !catalog.isBlank()) {
+                        effectiveSchema = catalog;
+                    }
+                } catch (SQLException ignored) { /* leave null */ }
+            }
 
             // Scope the connection to the chosen schema. setCatalog/setSchema take effect
             // on the live connection for the statements issued on it — a single statement
