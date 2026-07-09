@@ -9,6 +9,8 @@ import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner.AgentRunHandle;
 import com.sql.logic.engine.domain.agent.service.SessionSummaryService;
+import com.sql.logic.engine.domain.conversation.ConversationContextService;
+import com.sql.logic.engine.domain.memory.MemoryExtractorService;
 import com.sql.logic.engine.infrastructure.po.AgentExecution;
 
 import cn.dev33.satoken.stp.StpUtil;
@@ -61,17 +63,23 @@ public class SqlAgentController {
     private final ObjectMapper objectMapper;
     private final AgentHistoryAppService agentHistoryAppService;
     private final SessionSummaryService sessionSummaryService;
+    private final MemoryExtractorService memoryExtractorService;
+    private final ConversationContextService conversationContextService;
 
     public SqlAgentController(SqlAgentRunner sqlAgentRunner,
                             UserAppService userAppService,
                             ObjectMapper objectMapper,
                             AgentHistoryAppService agentHistoryAppService,
-                            SessionSummaryService sessionSummaryService) {
+                            SessionSummaryService sessionSummaryService,
+                            MemoryExtractorService memoryExtractorService,
+                            ConversationContextService conversationContextService) {
         this.sqlAgentRunner = sqlAgentRunner;
         this.userAppService = userAppService;
         this.objectMapper = objectMapper;
         this.agentHistoryAppService = agentHistoryAppService;
         this.sessionSummaryService = sessionSummaryService;
+        this.memoryExtractorService = memoryExtractorService;
+        this.conversationContextService = conversationContextService;
     }
 
     /**
@@ -100,6 +108,13 @@ public class SqlAgentController {
         log.info("[SqlAgentController] Starting agent stream for userId={}, connectionId={}, autoConfirm={}, input='{}'",
                 currentUserId, request.getConnectionId(), autoConfirm, request.getUserInput());
 
+        // Phase B (B5): resolve the multi-turn conversation (create on first turn) and
+        // load the windowed prior-turn history so the Agent can answer follow-ups.
+        com.sql.logic.engine.infrastructure.po.Conversation conversation = conversationContextService.resolveConversation(
+                request.getConversationId(), currentUserId, request.getUserInput(), request.getLlmConfigId());
+        Long conversationId = conversation.getId();
+        String historySection = conversationContextService.loadHistorySection(conversationId);
+
         AgentRunHandle handle = sqlAgentRunner.execute(
                 request.getConnectionId(),
                 request.getUserInput(),
@@ -108,12 +123,14 @@ public class SqlAgentController {
                 request.getWorkspaceId(),
                 request.getTableNames(),
                 request.getSchemaContext(),
-                autoConfirm
+                autoConfirm,
+                conversationId,
+                historySection
         );
 
         String threadId = handle.getThreadId();
         return handle.getUnifiedSseFlux()
-                .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId)))
+                .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId, conversationId)))
                 .doFinally(signalType -> {
                     if (signalType != SignalType.CANCEL) {
                         recordExecution(handle, request, currentUserId);
@@ -160,8 +177,9 @@ public class SqlAgentController {
         }
 
         String threadId = handle.getThreadId();
+        Long conversationId = handle.getContext().getConversationId();
         return handle.getUnifiedSseFlux()
-                .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId)))
+                .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId, conversationId)))
                 .doFinally(signalType -> {
                     if (signalType != SignalType.CANCEL) {
                         recordExecution(handle, null, currentUserId);
@@ -175,14 +193,15 @@ public class SqlAgentController {
 
     /**
      * Pick the terminal SSE event after the upstream completes: AWAITING_CONFIRMATION
-     * if the run paused at HITL, else COMPLETED.
+     * if the run paused at HITL, else COMPLETED (carrying the conversationId so the
+     * frontend can echo it on follow-up turns).
      */
-    private Mono<String> terminalEvent(AgentRunHandle handle, String threadId, Long userId) {
+    private Mono<String> terminalEvent(AgentRunHandle handle, String threadId, Long userId, Long conversationId) {
         return Mono.fromCallable(() -> {
             if (handle.isHaltedAtHitl()) {
                 return awaitingConfirmationJson(handle, threadId);
             }
-            return completedJson();
+            return completedJson(conversationId);
         });
     }
 
@@ -224,9 +243,14 @@ public class SqlAgentController {
         }
     }
 
-    private String completedJson() {
+    private String completedJson(Long conversationId) {
         try {
-            return objectMapper.writeValueAsString(Map.of("type", "COMPLETED"));
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("type", "COMPLETED");
+            if (conversationId != null) {
+                body.put("conversationId", conversationId);
+            }
+            return objectMapper.writeValueAsString(body);
         } catch (Exception e) {
             return "{\"type\":\"COMPLETED\"}";
         }
@@ -287,6 +311,24 @@ public class SqlAgentController {
         log.info("[SqlAgentController] Recorded agent execution id={}, summary='{}'",
                 exec.getId(), exec.getSummary());
 
+        // Phase B memory extraction (auto trigger #1): after a run truly finishes
+        // (HITL-paused runs return early above), asynchronously extract long-term
+        // memories from this session. Non-blocking + best-effort — never affects the
+        // response. HITL-approved completions flow through here too (their /continue
+        // call reaches recordExecution once the graph ends), covering trigger #2.
+        triggerMemoryExtraction(handle, userId, userInput);
+
+        // Phase B (B5): persist this turn into the conversation so the next follow-up
+        // can recall it as context (sliding window managed by ConversationContextService).
+        Long conversationId = handle.getContext().getConversationId();
+        if (conversationId != null) {
+            String report = readStateValue(handle, SqlAgentSpec.StateKey.REPORT_RESULT, "");
+            String sql = readStateValue(handle, SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, "");
+            String execResult = readStateValue(handle, SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, "");
+            conversationContextService.appendTurn(conversationId, userInput, sql,
+                    report != null && !report.isBlank() ? report : execResult);
+        }
+
         // Persist the buffered per-node steps so the history timeline can be replayed.
         // Steps captured before the HITL pause PLUS resumed steps share the same context,
         // so draining yields the full session. Failures here never block the response.
@@ -329,6 +371,29 @@ public class SqlAgentController {
         log.warn("[SqlAgentController] Failed to record execution history: {}", e.getMessage());
     }
 }
+
+    /**
+     * Phase B memory extraction: hand the finished session (user input + report/SQL
+     * transcript) to the async {@link MemoryExtractorService}. Best-effort and fully
+     * non-blocking — failures are logged inside the service and never propagate.
+     */
+    private void triggerMemoryExtraction(AgentRunHandle handle, Long userId, String userInput) {
+        try {
+            String report = readStateValue(handle, SqlAgentSpec.StateKey.REPORT_RESULT, "");
+            String sql = readStateValue(handle, SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, "");
+            StringBuilder transcript = new StringBuilder();
+            if (report != null && !report.isBlank()) transcript.append(report.trim());
+            if (sql != null && !sql.isBlank()) {
+                if (transcript.length() > 0) transcript.append("\n\n");
+                transcript.append("生成SQL:\n").append(sql.trim());
+            }
+            Long workspaceId = handle.getContext().getWorkspaceId();
+            memoryExtractorService.extractAndPersistAsync(
+                    userId, workspaceId, handle.getThreadId(), userInput, transcript.toString());
+        } catch (Exception e) {
+            log.debug("[SqlAgentController] Memory extraction trigger skipped: {}", e.getMessage());
+        }
+    }
 
     /**
      * Build a compact conversation excerpt (final report + generated SQL) from the

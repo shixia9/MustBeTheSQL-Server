@@ -3,6 +3,7 @@ package com.sql.logic.engine.trigger.http;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sql.logic.engine.common.response.Result;
+import com.sql.logic.engine.domain.memory.MemoryExtractorService;
 import com.sql.logic.engine.infrastructure.dao.MemoryItemDao;
 import com.sql.logic.engine.infrastructure.po.MemoryItem;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -24,9 +25,11 @@ import java.util.Map;
 public class MemoryController {
 
     private final MemoryItemDao memoryItemDao;
+    private final MemoryExtractorService memoryExtractorService;
 
-    public MemoryController(MemoryItemDao memoryItemDao) {
+    public MemoryController(MemoryItemDao memoryItemDao, MemoryExtractorService memoryExtractorService) {
         this.memoryItemDao = memoryItemDao;
+        this.memoryExtractorService = memoryExtractorService;
     }
 
     private Long getCurrentUserId() {
@@ -85,6 +88,21 @@ public class MemoryController {
         item.setStatus(0);
         item.setUpdateTime(LocalDateTime.now());
         memoryItemDao.updateById(item);
+        return Result.success(null);
+    }
+
+    /**
+     * Phase B memory extraction (manual trigger #3): let the user explicitly ask the
+     * Agent to memorise a session. Accepts the original user input plus a session
+     * transcript (report + SQL). Runs async — returns immediately.
+     */
+    @PostMapping("/extract")
+    public Result<Void> extract(@RequestBody Map<String, Object> body) {
+        Long userId = getCurrentUserId();
+        String userInput = body.get("userInput") != null ? String.valueOf(body.get("userInput")) : "";
+        String summary = body.get("summary") != null ? String.valueOf(body.get("summary")) : "";
+        String threadId = body.get("threadId") != null ? String.valueOf(body.get("threadId")) : null;
+        memoryExtractorService.extractAndPersistAsync(userId, null, threadId, userInput, summary);
         return Result.success(null);
     }
 }

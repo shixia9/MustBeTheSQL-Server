@@ -34,6 +34,15 @@ public class MemoryRecallNode implements NodeAction {
 
         Map<String, Object> result = new LinkedHashMap<>();
 
+        // Phase B (B4): honour the Agent Studio memory switch — skip recall when disabled.
+        Object memEnabled = state.value(SqlAgentSpec.StateKey.AGENT_MEMORY_ENABLED, Boolean.TRUE);
+        boolean memoryEnabled = !(memEnabled instanceof Boolean b) || b;
+        if (!memoryEnabled) {
+            result.put(SqlAgentSpec.StateKey.USER_MEMORY, "");
+            log.debug("[MemoryRecallNode] Memory disabled by Agent config, skipping recall");
+            return result;
+        }
+
         try {
             List<Map<String, Object>> memories = memoryDomainService.searchRelevant(
                     userId, userInput, TOP_K);

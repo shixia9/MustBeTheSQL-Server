@@ -40,6 +40,8 @@ public class AgentRunContext {
     private final AtomicInteger nextSequence = new AtomicInteger(1);
     /** trace carrier — accumulates timing/token data per node. Nullable for backward compat. */
     private TraceContext traceContext;
+    /** Phase B (B5): the multi-turn conversation id, so recordExecution can append the turn. */
+    private Long conversationId;
 
     public AgentRunContext(String threadId, Long userId, Long connectionId, Long llmConfigId,
                            Long workspaceId, List<String> tableNames, String schemaName, boolean autoConfirm, RunnableConfig runnableConfig) {
@@ -68,6 +70,9 @@ public class AgentRunContext {
 
     public TraceContext getTraceContext() { return traceContext; }
     public void setTraceContext(TraceContext traceContext) { this.traceContext = traceContext; }
+
+    public Long getConversationId() { return conversationId; }
+    public void setConversationId(Long conversationId) { this.conversationId = conversationId; }
 
     /**
      * Append a per-node step record to the in-memory buffer and return the assigned

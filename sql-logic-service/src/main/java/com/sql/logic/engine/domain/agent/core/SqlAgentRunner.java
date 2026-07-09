@@ -9,6 +9,8 @@ import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.agent.config.AgentRuntimeConfig;
+import com.sql.logic.engine.domain.agent.config.AgentRuntimeConfigService;
 import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.domain.trace.TraceContextRegistry;
 import org.slf4j.Logger;
@@ -49,17 +51,20 @@ public class SqlAgentRunner {
     private final TraceContextRegistry traceContextRegistry;
     private final NodeStartedSinkRegistry sinkRegistry;
     private final AgentSseCodec codec;
+    private final AgentRuntimeConfigService agentRuntimeConfigService;
 
     public SqlAgentRunner(StateGraph sqlAgentGraph, MemorySaver sqlAgentMemorySaver,
                           HitlSessionRegistry hitlSessionRegistry,
                           TraceContextRegistry traceContextRegistry,
                           AgentSseStartedListener sseStartedListener,
                           NodeStartedSinkRegistry sinkRegistry,
-                          AgentSseCodec codec) {
+                          AgentSseCodec codec,
+                          AgentRuntimeConfigService agentRuntimeConfigService) {
         this.hitlSessionRegistry = hitlSessionRegistry;
         this.traceContextRegistry = traceContextRegistry;
         this.sinkRegistry = sinkRegistry;
         this.codec = codec;
+        this.agentRuntimeConfigService = agentRuntimeConfigService;
         try {
             this.compiledGraph = sqlAgentGraph.compile(CompileConfig.builder()
                     .saverConfig(SaverConfig.builder().register(sqlAgentMemorySaver).build())
@@ -82,6 +87,17 @@ public class SqlAgentRunner {
      */
     public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
                                   Long llmConfigId, Long workspaceId, List<String> tableNames, String schemaName, boolean autoConfirm) {
+        return execute(connectionId, userInput, userId, llmConfigId, workspaceId, tableNames, schemaName, autoConfirm, null, "");
+    }
+
+    /**
+     * Phase B (B5) overload: carries the multi-turn {@code conversationId} and the
+     * rendered {@code conversationHistory} section (prior turns, already windowed by
+     * {@code ConversationContextService}) so nodes can inject them into prompts.
+     */
+    public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
+                                  Long llmConfigId, Long workspaceId, List<String> tableNames, String schemaName,
+                                  boolean autoConfirm, Long conversationId, String conversationHistory) {
         String threadId = UUID.randomUUID().toString();
         RunnableConfig rc = RunnableConfig.builder().threadId(threadId).build();
 
@@ -96,9 +112,22 @@ public class SqlAgentRunner {
         initialState.put(SqlAgentSpec.StateKey.AUTO_CONFIRM, autoConfirm);
         initialState.put(SqlAgentSpec.StateKey.WORKSPACE_ID, workspaceId);
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
+        initialState.put(SqlAgentSpec.StateKey.CONVERSATION_ID, conversationId);
+        initialState.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY,
+                conversationHistory == null ? "" : conversationHistory);
 
-        log.info("[SqlAgentRunner] Starting graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, input='{}'",
-                threadId, autoConfirm, connectionId, userId, userInput);
+        // Phase B (B4): resolve the user's default Agent config and carry it in state so
+        // nodes can honour the system prompt, tool toggles, and memory switch.
+        AgentRuntimeConfig agentCfg = agentRuntimeConfigService.resolve(userId);
+        initialState.put(SqlAgentSpec.StateKey.AGENT_SYSTEM_PROMPT,
+                agentCfg.hasSystemPrompt() ? agentCfg.systemPrompt() : "");
+        initialState.put(SqlAgentSpec.StateKey.AGENT_MEMORY_ENABLED, agentCfg.memoryEnabled());
+        initialState.put(SqlAgentSpec.StateKey.AGENT_TOOLS, agentCfg.enabledTools());
+        initialState.put(SqlAgentSpec.StateKey.AGENT_NAME,
+                agentCfg.name() == null ? "" : agentCfg.name());
+
+        log.info("[SqlAgentRunner] Starting graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, conversationId={}, agentId={}, input='{}'",
+                threadId, autoConfirm, connectionId, userId, conversationId, agentCfg.agentId(), userInput);
 
         TraceContext traceContext = new TraceContext(threadId, userId, workspaceId);
         traceContextRegistry.register(threadId, traceContext);
@@ -112,6 +141,7 @@ public class SqlAgentRunner {
 
         AgentRunContext context = new AgentRunContext(threadId, userId, connectionId, llmConfigId, workspaceId, tableNames, schemaName, autoConfirm, rc);
         context.setTraceContext(traceContext);
+        context.setConversationId(conversationId);
 
         Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, threadId, context);
         return new AgentRunHandle(threadId, context, rc, graphFlux, unified);

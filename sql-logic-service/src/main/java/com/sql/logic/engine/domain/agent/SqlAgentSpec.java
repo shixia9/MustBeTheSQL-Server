@@ -48,6 +48,8 @@ public final class SqlAgentSpec {
         public static final String WORKSPACE_ID = "workspaceId";
         public static final String THREAD_ID = "threadId";
         public static final String SESSION_ID = "sessionId";
+        public static final String CONVERSATION_ID = "conversationId";
+        public static final String CONVERSATION_HISTORY = "conversationHistory";
         public static final String DB_TYPE = "dbType";
         public static final String SCHEMA_NAME = "schemaName";
 
@@ -107,6 +109,12 @@ public final class SqlAgentSpec {
 
         // ---- Memory ----
         public static final String USER_MEMORY = "userMemory";
+
+        // ---- Agent Studio config (B4) ----
+        public static final String AGENT_SYSTEM_PROMPT = "agentSystemPrompt";
+        public static final String AGENT_MEMORY_ENABLED = "agentMemoryEnabled";
+        public static final String AGENT_TOOLS = "agentTools";
+        public static final String AGENT_NAME = "agentName";
     }
 
     // ======================== Prompt Template Names ========================

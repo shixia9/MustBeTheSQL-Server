@@ -90,12 +90,35 @@ public class SqlGenerationNode implements NodeAction {
                 ? tableRelation
                 : "（无可用 Schema，请仅基于问题描述谨慎生成 SQL）";
 
+        // Phase B memory injection: turn the recalled USER_MEMORY into a prompt section,
+        // empty when no memory was recalled (keeps the template slot satisfied & backward-compatible).
+        String userMemory = state.value(SqlAgentSpec.StateKey.USER_MEMORY, "");
+        String userMemorySection = (userMemory == null || userMemory.isBlank())
+                ? ""
+                : "## 4. 用户偏好记忆 (尽量遵循)\n" + userMemory;
+
+        // Phase B (B5) multi-turn context: inject prior turns so follow-up questions
+        // (e.g. "按城市拆一下上面那个总数") can reference earlier SQL/results.
+        String conversationHistory = state.value(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "");
+        String conversationHistorySection = (conversationHistory == null || conversationHistory.isBlank())
+                ? ""
+                : "## 3.1 历史对话上下文 (当前问题可能延续此前的分析，可复用其表/字段/口径)\n" + conversationHistory;
+
+        // Phase B (B4): inject the Agent Studio system prompt as an extra role directive.
+        String systemPrompt = state.value(SqlAgentSpec.StateKey.AGENT_SYSTEM_PROMPT, "");
+        String systemPromptSection = (systemPrompt == null || systemPrompt.isBlank())
+                ? ""
+                : "# 附加角色要求 (来自 Agent 配置)\n" + systemPrompt;
+
         String prompt = promptManager.render(SqlAgentSpec.PromptName.NEW_SQL_GENERATE, Map.of(
                 "dialect", dialect,
                 "question", rewriteQuery,
                 "schema_info", schemaInfo,
                 "evidence", evidence == null || evidence.isBlank() ? "无" : evidence,
                 "execution_description", executionDescription,
+                "system_prompt_section", systemPromptSection,
+                "conversation_history_section", conversationHistorySection,
+                "user_memory_section", userMemorySection,
                 "execution_description_section", ""  // Description is the primary driver when no planner is wired
         ));
 

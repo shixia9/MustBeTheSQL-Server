@@ -21,6 +21,7 @@ import com.sql.logic.engine.domain.agent.node.EvidenceRecallNode;
 import com.sql.logic.engine.domain.agent.node.FeasibilityAssessmentNode;
 import com.sql.logic.engine.domain.agent.node.HitlGateNode;
 import com.sql.logic.engine.domain.agent.node.HitlNode;
+import com.sql.logic.engine.domain.agent.node.MemoryRecallNode;
 import com.sql.logic.engine.domain.agent.node.PlanDispatchNode;
 import com.sql.logic.engine.domain.agent.node.PlannerNode;
 import com.sql.logic.engine.domain.agent.node.PythonAnalyzeNode;
@@ -75,6 +76,8 @@ public class SqlAgentGraphConfiguration {
             strategies.put(SqlAgentSpec.StateKey.WORKSPACE_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.THREAD_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.SESSION_ID, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.CONVERSATION_ID, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.DB_TYPE, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.SCHEMA_NAME, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.TABLE_NAMES, new ReplaceStrategy());
@@ -125,6 +128,11 @@ public class SqlAgentGraphConfiguration {
             strategies.put(SqlAgentSpec.StateKey.SUBTASK_RESULTS, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.USER_MEMORY, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.TRACE_CONTEXT, new ReplaceStrategy());
+            // ---- Agent Studio config (B4) ----
+            strategies.put(SqlAgentSpec.StateKey.AGENT_SYSTEM_PROMPT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.AGENT_MEMORY_ENABLED, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.AGENT_TOOLS, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.AGENT_NAME, new ReplaceStrategy());
 
             return strategies;
         };
@@ -172,6 +180,7 @@ public class SqlAgentGraphConfiguration {
                                      PythonExecuteNode pythonExecuteNode,
                                      PythonAnalyzeNode pythonAnalyzeNode,
                                      ReportNode reportNode,
+                                     MemoryRecallNode memoryRecallNode,
                                      AnalyzerNode analyzerNode,
                                      TaskSplitNode taskSplitNode,
                                      TaskDispatchNode taskDispatchNode,
@@ -222,6 +231,7 @@ public class SqlAgentGraphConfiguration {
 
         StateGraph graph = new StateGraph(SqlAgentSpec.GRAPH_NAME, sqlAgentKeyStrategyFactory)
                 // ---- Register nodes ----
+                .addNode(SqlAgentSpec.Node.MEMORY_RECALL, AsyncNodeAction.node_async(memoryRecallNode))
                 .addNode(SqlAgentSpec.Node.EVIDENCE_RECALL, AsyncNodeAction.node_async(evidenceRecallNode))
                 .addNode(SqlAgentSpec.Node.SCHEMA_LINKING, AsyncNodeAction.node_async(schemaLinkingNode))
                 .addNode(SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT, AsyncNodeAction.node_async(feasibilityAssessmentNode))
@@ -238,7 +248,10 @@ public class SqlAgentGraphConfiguration {
                 .addNode(SqlAgentSpec.Node.REPORT, AsyncNodeAction.node_async(reportNode))
 
                 // ---- Edges ----
-                .addEdge(StateGraph.START, SqlAgentSpec.Node.EVIDENCE_RECALL)
+                // Memory recall first (injects USER_MEMORY before evidence rewriting),
+                // then the normal Phase 4 chain. No memory → state stays empty string, no-op.
+                .addEdge(StateGraph.START, SqlAgentSpec.Node.MEMORY_RECALL)
+                .addEdge(SqlAgentSpec.Node.MEMORY_RECALL, SqlAgentSpec.Node.EVIDENCE_RECALL)
                 .addEdge(SqlAgentSpec.Node.EVIDENCE_RECALL, SqlAgentSpec.Node.SCHEMA_LINKING);
 
         if (taskSplitEnabled) {

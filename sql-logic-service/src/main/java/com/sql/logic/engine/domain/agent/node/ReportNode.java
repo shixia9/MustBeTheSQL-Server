@@ -82,11 +82,26 @@ public class ReportNode implements NodeAction {
         }
 
         // Render the report prompt
+        String userMemory = state.value(SqlAgentSpec.StateKey.USER_MEMORY, "");
+        String userMemorySection = (userMemory == null || userMemory.isBlank())
+                ? "无"
+                : userMemory;
+        String conversationHistory = state.value(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "");
+        String conversationHistorySection = (conversationHistory == null || conversationHistory.isBlank())
+                ? "无"
+                : conversationHistory;
+        String systemPrompt = state.value(SqlAgentSpec.StateKey.AGENT_SYSTEM_PROMPT, "");
+        String systemPromptSection = (systemPrompt == null || systemPrompt.isBlank())
+                ? ""
+                : "# 附加角色要求 (来自 Agent 配置)\n" + systemPrompt;
         String prompt = promptManager.render(SqlAgentSpec.PromptName.REPORT_GENERATOR, Map.of(
                 "user_requirements_and_plan", "用户需求: " + rewriteQuery,
                 "analysis_steps_and_data", analysisSteps.toString(),
                 "summary_and_recommendations", "请给出总结与建议",
                 "json_example", "{}",
+                "user_memory_section", userMemorySection,
+                "conversation_history_section", conversationHistorySection,
+                "system_prompt_section", systemPromptSection,
                 "optimization_section", ""
         ));
 

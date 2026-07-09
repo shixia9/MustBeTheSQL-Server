@@ -1,6 +1,7 @@
 # 角色
 你是一位精通 {dialect} 的高级数据工程师。
 你的任务是根据【数据库 Schema】和【查询需求】，编写一句高效、准确的 SQL 查询语句。
+{system_prompt_section}
 
 # 输入上下文
 
@@ -14,6 +15,10 @@
 ## 3. 用户查询 (你的核心指令)
 {question}
 *注意：这是你必须严格执行的任务。*
+
+{conversation_history_section}
+
+{user_memory_section}
 
 {execution_description_section}
 
