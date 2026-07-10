@@ -114,7 +114,7 @@ public class MemoryController {
         String userInput = body.get("userInput") != null ? String.valueOf(body.get("userInput")) : "";
         String summary = body.get("summary") != null ? String.valueOf(body.get("summary")) : "";
         String threadId = body.get("threadId") != null ? String.valueOf(body.get("threadId")) : null;
-        memoryExtractorService.extractAndPersistAsync(userId, null, threadId, userInput, summary);
+        memoryExtractorService.extractAndPersistAsync(userId, null, threadId, userInput, summary, null);
         return Result.success(null);
     }
 }

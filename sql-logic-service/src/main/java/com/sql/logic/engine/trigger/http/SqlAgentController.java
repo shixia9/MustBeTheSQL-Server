@@ -388,8 +388,9 @@ public class SqlAgentController {
                 transcript.append("生成SQL:\n").append(sql.trim());
             }
             Long workspaceId = handle.getContext().getWorkspaceId();
+            Long llmConfigId = handle.getContext().getLlmConfigId();
             memoryExtractorService.extractAndPersistAsync(
-                    userId, workspaceId, handle.getThreadId(), userInput, transcript.toString());
+                    userId, workspaceId, handle.getThreadId(), userInput, transcript.toString(), llmConfigId);
         } catch (Exception e) {
             log.debug("[SqlAgentController] Memory extraction trigger skipped: {}", e.getMessage());
         }

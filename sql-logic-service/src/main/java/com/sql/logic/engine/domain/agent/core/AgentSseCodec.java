@@ -39,6 +39,7 @@ public class AgentSseCodec {
     );
 
     private static final Map<String, String> NODE_MESSAGE_TYPES = java.util.Map.ofEntries(
+            java.util.Map.entry("MEMORY_RECALL", "THINKING"),
             java.util.Map.entry("EVIDENCE_RECALL", "THINKING"),
             java.util.Map.entry("SCHEMA_LINKING", "THINKING"),
             java.util.Map.entry("FEASIBILITY_ASSESSMENT", "THINKING"),
@@ -133,6 +134,9 @@ public class AgentSseCodec {
         Integer currentStep = readInt(state, SqlAgentSpec.StateKey.CURRENT_STEP);
 
         switch (nodeName) {
+            case SqlAgentSpec.Node.MEMORY_RECALL:
+                data.put("userMemory", state.value(SqlAgentSpec.StateKey.USER_MEMORY, ""));
+                break;
             case SqlAgentSpec.Node.EVIDENCE_RECALL:
                 data.put("rewriteQuery", state.value(SqlAgentSpec.StateKey.REWRITE_QUERY, ""));
                 data.put("evidence", state.value(SqlAgentSpec.StateKey.EVIDENCE, ""));

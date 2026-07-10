@@ -36,6 +36,7 @@ public class AgentSseStartedListener implements GraphLifecycleListener {
     private static final Logger log = LoggerFactory.getLogger(AgentSseStartedListener.class);
 
     private static final java.util.Set<String> KNOWN_NODES = java.util.Set.of(
+            "MEMORY_RECALL",
             "EVIDENCE_RECALL", "SCHEMA_LINKING", "FEASIBILITY_ASSESSMENT", "PLANNER",
             "HITL_GATE", "HITL", "PLAN_DISPATCH",
             "SQL_GENERATION", "SQL_EXECUTION", "SQL_FIXER",

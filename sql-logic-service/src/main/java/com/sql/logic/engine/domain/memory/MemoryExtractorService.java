@@ -37,32 +37,38 @@ public class MemoryExtractorService {
 
     @Async
     public void extractAndPersistAsync(Long userId, Long workspaceId, String threadId,
-                                        String userInput, String sessionSummary) {
+                                        String userInput, String sessionSummary, Long llmConfigId) {
         try {
+            log.info("[MemoryExtractorService] Starting extraction for userId={}, threadId={}, llmConfigId={}",
+                    userId, threadId, llmConfigId);
+
             String prompt = promptManager.render(SqlAgentSpec.PromptName.MEMORY_EXTRACTION, Map.of(
                     "user_input", userInput == null ? "" : userInput,
                     "session_summary", sessionSummary == null ? "" : sessionSummary
             ));
 
-            LLMStrategy strategy = llmClientManager.resolveTraced(0L, userId, null,
-                    "MEMORY_EXTRACTION", null);
+            LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId != null ? llmConfigId : 0L,
+                    userId, null, "MEMORY_EXTRACTION", null);
             String response = strategy.generateSql(prompt, null);
 
             if (response == null || response.isBlank()) {
-                log.debug("[MemoryExtractorService] Empty LLM response");
+                log.debug("[MemoryExtractorService] Empty LLM response for threadId={}", threadId);
                 return;
             }
 
+            log.debug("[MemoryExtractorService] LLM response received, parsing XML (len={})", response.length());
             List<CandidateMemory> candidates = parseXmlMemories(response);
             if (candidates.isEmpty()) {
-                log.debug("[MemoryExtractorService] No memories extracted from response");
+                log.debug("[MemoryExtractorService] No memories extracted from response for threadId={}", threadId);
                 return;
             }
 
             int saved = memoryDomainService.saveMemories(userId, workspaceId, threadId, candidates);
-            log.info("[MemoryExtractorService] Extracted and saved {} memories for userId={}", saved, userId);
+            log.info("[MemoryExtractorService] Extracted and saved {} memories for userId={}, threadId={}",
+                    saved, userId, threadId);
         } catch (Exception e) {
-            log.warn("[MemoryExtractorService] Extraction failed: {}", e.getMessage());
+            log.warn("[MemoryExtractorService] Extraction failed for userId={}, threadId={}: {}",
+                    userId, threadId, e.getMessage(), e);
         }
     }
 
