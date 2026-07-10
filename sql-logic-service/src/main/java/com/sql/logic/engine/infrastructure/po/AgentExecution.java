@@ -21,6 +21,7 @@ public class AgentExecution {
     private String summary;
     private String status;
     private String threadId;
+    private Long conversationId;
     private Integer totalTokens;
     private Integer modelCalls;
     private Integer toolCalls;

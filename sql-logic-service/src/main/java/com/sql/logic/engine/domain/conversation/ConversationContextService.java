@@ -119,6 +119,20 @@ public class ConversationContextService {
         }
     }
 
+    /** Update the conversation title after the first turn completes (AI-summarised). */
+    public void updateTitle(Long conversationId, String title) {
+        if (conversationId == null || title == null || title.isBlank()) return;
+        try {
+            Conversation touch = new Conversation();
+            touch.setId(conversationId);
+            touch.setTitle(truncateForTitle(title));
+            touch.setUpdateTime(new Date());
+            conversationDao.updateById(touch);
+        } catch (Exception e) {
+            log.warn("[ConversationContextService] updateTitle failed: {}", e.getMessage());
+        }
+    }
+
     /**
      * Sliding window: walk recent→old, accumulate turns while under the token budget
      * and turn cap, then emit oldest→newest. Each turn is compressed (no raw result

@@ -134,6 +134,9 @@ public class SqlAgentController {
                 .doFinally(signalType -> {
                     if (signalType != SignalType.CANCEL) {
                         recordExecution(handle, request, currentUserId);
+                        // Memory extraction runs independently so a failure in
+                        // recordExecution never blocks the memory pipeline.
+                        triggerMemoryExtractionSafe(handle, currentUserId);
                     }
                 })
                 .onErrorResume(e -> {
@@ -183,6 +186,7 @@ public class SqlAgentController {
                 .doFinally(signalType -> {
                     if (signalType != SignalType.CANCEL) {
                         recordExecution(handle, null, currentUserId);
+                        triggerMemoryExtractionSafe(handle, currentUserId);
                     }
                 })
                 .onErrorResume(e -> {
@@ -282,6 +286,7 @@ public class SqlAgentController {
         exec.setSummary(summariseSessionTitle(handle, userInput));
         exec.setStatus("COMPLETED");
         exec.setThreadId(handle.getThreadId());
+        exec.setConversationId(handle.getContext().getConversationId());
         exec.setTotalDurationMs(0L);
         exec.setCreateTime(LocalDateTime.now());
 
@@ -311,14 +316,7 @@ public class SqlAgentController {
         log.info("[SqlAgentController] Recorded agent execution id={}, summary='{}'",
                 exec.getId(), exec.getSummary());
 
-        // Phase B memory extraction (auto trigger #1): after a run truly finishes
-        // (HITL-paused runs return early above), asynchronously extract long-term
-        // memories from this session. Non-blocking + best-effort — never affects the
-        // response. HITL-approved completions flow through here too (their /continue
-        // call reaches recordExecution once the graph ends), covering trigger #2.
-        triggerMemoryExtraction(handle, userId, userInput);
-
-        // Phase B (B5): persist this turn into the conversation so the next follow-up
+        // Persist this turn into the conversation so the next follow-up
         // can recall it as context (sliding window managed by ConversationContextService).
         Long conversationId = handle.getContext().getConversationId();
         if (conversationId != null) {
@@ -327,6 +325,11 @@ public class SqlAgentController {
             String execResult = readStateValue(handle, SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, "");
             conversationContextService.appendTurn(conversationId, userInput, sql,
                     report != null && !report.isBlank() ? report : execResult);
+            // Update conversation title from the AI-generated summary (first turn sets it,
+            // subsequent turns keep the original via truncateForTitle which preserves as-is).
+            if (exec.getSummary() != null && !exec.getSummary().isBlank()) {
+                conversationContextService.updateTitle(conversationId, exec.getSummary());
+            }
         }
 
         // Persist the buffered per-node steps so the history timeline can be replayed.
@@ -393,6 +396,22 @@ public class SqlAgentController {
                     userId, workspaceId, handle.getThreadId(), userInput, transcript.toString(), llmConfigId);
         } catch (Exception e) {
             log.debug("[SqlAgentController] Memory extraction trigger skipped: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Fire-and-forget wrapper called from {@code doFinally} so memory extraction
+     * runs even when {@link #recordExecution} fails part-way through.
+     * Skips extraction when the run is paused at HITL (extraction runs after resume).
+     */
+    private void triggerMemoryExtractionSafe(AgentRunHandle handle, Long userId) {
+        try {
+            if (handle.isHaltedAtHitl()) return;
+            String userInput = readStateValue(handle, SqlAgentSpec.StateKey.INPUT, "");
+            if (userInput.isBlank()) return;
+            triggerMemoryExtraction(handle, userId, userInput);
+        } catch (Exception e) {
+            log.debug("[SqlAgentController] Memory extraction safe trigger skipped: {}", e.getMessage());
         }
     }
 

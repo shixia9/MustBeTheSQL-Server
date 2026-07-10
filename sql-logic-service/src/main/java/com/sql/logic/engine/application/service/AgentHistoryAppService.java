@@ -55,19 +55,22 @@ public class AgentHistoryAppService {
      * The keyword is matched with a LIKE '%kw%' on both columns (OR-joined).
      */
     public Page<AgentExecution> listExecutions(Long userId, int page, int size, String keyword) {
-        return listExecutions(userId, page, size, keyword, null);
+        return listExecutions(userId, page, size, keyword, null, null);
     }
 
     /**
      * Same as above but with optional workspace_id scoping.
      * When {@code workspaceId} is null, falls back to user-level isolation (backward compat).
      */
-    public Page<AgentExecution> listExecutions(Long userId, int page, int size, String keyword, Long workspaceId) {
+    public Page<AgentExecution> listExecutions(Long userId, int page, int size, String keyword, Long workspaceId, Long conversationId) {
         Page<AgentExecution> p = new Page<>(page, size);
         QueryWrapper<AgentExecution> qw = new QueryWrapper<>();
         qw.eq("user_id", userId);
         if (workspaceId != null) {
             qw.eq("workspace_id", workspaceId);
+        }
+        if (conversationId != null) {
+            qw.eq("conversation_id", conversationId);
         }
         if (keyword != null && !keyword.isBlank()) {
             String kw = keyword.trim();
