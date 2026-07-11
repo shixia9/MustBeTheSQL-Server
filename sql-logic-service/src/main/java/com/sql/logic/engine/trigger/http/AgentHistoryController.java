@@ -27,14 +27,17 @@ public class AgentHistoryController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long workspaceId,
-            @RequestParam(required = false) Long conversationId) {
+            @RequestParam(required = false) Long conversationId,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
         try {
             String userIdStr = (String) StpUtil.getLoginId();
             if (userIdStr == null || !userIdStr.matches("\\d+")) {
                 return Result.error(400, "Invalid user ID in session");
             }
             Long userId = Long.valueOf(userIdStr);
-            Page<AgentExecution> result = agentHistoryAppService.listExecutions(userId, page, size, keyword, workspaceId, conversationId);
+            Page<AgentExecution> result = agentHistoryAppService.listExecutions(
+                    userId, page, size, keyword, workspaceId, conversationId, startDate, endDate);
             return Result.success(result);
         } catch (Exception e) {
             return Result.error(500, e.getMessage());

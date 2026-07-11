@@ -1,25 +1,45 @@
 package com.sql.logic.engine.application.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.sql.logic.engine.infrastructure.dao.AgentExecutionDao;
+import com.sql.logic.engine.infrastructure.dao.AgentExecutionStepDao;
 import com.sql.logic.engine.infrastructure.dao.ConversationDao;
 import com.sql.logic.engine.infrastructure.dao.ConversationDetailDao;
+import com.sql.logic.engine.infrastructure.po.AgentExecution;
+import com.sql.logic.engine.infrastructure.po.AgentExecutionStep;
 import com.sql.logic.engine.infrastructure.po.Conversation;
 import com.sql.logic.engine.infrastructure.po.ConversationDetail;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.List;
 
 @Service
 public class ConversationAppService {
 
+    private static final Logger log = LoggerFactory.getLogger(ConversationAppService.class);
+
     private final ConversationDao conversationDao;
     private final ConversationDetailDao conversationDetailDao;
+    private final AgentExecutionDao agentExecutionDao;
+    private final AgentExecutionStepDao agentExecutionStepDao;
 
-    public ConversationAppService(ConversationDao conversationDao, ConversationDetailDao conversationDetailDao) {
+    public ConversationAppService(ConversationDao conversationDao,
+                                  ConversationDetailDao conversationDetailDao,
+                                  AgentExecutionDao agentExecutionDao,
+                                  AgentExecutionStepDao agentExecutionStepDao) {
         this.conversationDao = conversationDao;
         this.conversationDetailDao = conversationDetailDao;
+        this.agentExecutionDao = agentExecutionDao;
+        this.agentExecutionStepDao = agentExecutionStepDao;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -43,7 +63,7 @@ public class ConversationAppService {
         detail.setExecuteResult(executeResult);
         detail.setCreateTime(new Date());
         conversationDetailDao.insert(detail);
-        
+
         Conversation conversation = new Conversation();
         conversation.setId(conversationId);
         conversation.setUpdateTime(new Date());
@@ -56,9 +76,81 @@ public class ConversationAppService {
         return conversationDao.selectList(query);
     }
 
+    /** Paginated conversation list with optional title search and date range filter. */
+    public Page<Conversation> listConversations(Long userId, int page, int size, String keyword,
+                                                 String startDate, String endDate) {
+        Page<Conversation> p = new Page<>(page, size);
+        QueryWrapper<Conversation> qw = new QueryWrapper<>();
+        qw.eq("user_id", userId);
+        if (keyword != null && !keyword.isBlank()) {
+            qw.like("title", keyword.trim());
+        }
+        if (startDate != null && !startDate.isBlank()) {
+            try {
+                qw.ge("create_time", parseDateStart(startDate));
+            } catch (Exception ignore) { /* skip invalid date */ }
+        }
+        if (endDate != null && !endDate.isBlank()) {
+            try {
+                qw.le("create_time", parseDateEnd(endDate));
+            } catch (Exception ignore) { /* skip invalid date */ }
+        }
+        qw.orderByDesc("update_time");
+        return conversationDao.selectPage(p, qw);
+    }
+
+    /** Parse a date string (yyyy-MM-dd or yyyy-MM-dd HH:mm:ss) as start-of-day. */
+    private static LocalDateTime parseDateStart(String s) {
+        s = s.trim();
+        if (s.length() <= 10) {
+            return LocalDate.parse(s).atStartOfDay();
+        }
+        return LocalDateTime.parse(s, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    /** Parse a date string (yyyy-MM-dd or yyyy-MM-dd HH:mm:ss) as end-of-day. */
+    private static LocalDateTime parseDateEnd(String s) {
+        s = s.trim();
+        if (s.length() <= 10) {
+            return LocalDate.parse(s).atTime(LocalTime.MAX);
+        }
+        return LocalDateTime.parse(s, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
     public List<ConversationDetail> getConversationDetails(Long conversationId) {
         QueryWrapper<ConversationDetail> query = new QueryWrapper<>();
         query.eq("conversation_id", conversationId).orderByAsc("create_time");
         return conversationDetailDao.selectList(query);
+    }
+
+    /**
+     * Cascade-delete a conversation and all related data:
+     * agent_execution_step → agent_execution → conversation_detail → conversation.
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteConversation(Long conversationId) {
+        // 1. Find all executions linked to this conversation
+        List<AgentExecution> executions = agentExecutionDao.selectList(
+                new QueryWrapper<AgentExecution>().eq("conversation_id", conversationId));
+
+        // 2. Delete steps for each execution
+        for (AgentExecution exec : executions) {
+            agentExecutionStepDao.delete(
+                    new QueryWrapper<AgentExecutionStep>().eq("execution_id", exec.getId()));
+        }
+
+        // 3. Delete executions
+        agentExecutionDao.delete(
+                new QueryWrapper<AgentExecution>().eq("conversation_id", conversationId));
+
+        // 4. Delete conversation details
+        conversationDetailDao.delete(
+                new QueryWrapper<ConversationDetail>().eq("conversation_id", conversationId));
+
+        // 5. Delete the conversation itself
+        conversationDao.deleteById(conversationId);
+
+        log.info("[ConversationAppService] Cascade-deleted conversation {} with {} executions",
+                conversationId, executions.size());
     }
 }
