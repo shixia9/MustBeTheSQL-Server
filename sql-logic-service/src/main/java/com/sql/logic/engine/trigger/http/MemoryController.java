@@ -83,7 +83,7 @@ public class MemoryController {
         candidate.setImportance(importance);
         candidate.setTags(tags);
 
-        int saved = memoryDomainService.saveMemories(userId, null, null, List.of(candidate));
+        int saved = memoryDomainService.saveMemories(userId, null, null, null, List.of(candidate));
         if (saved > 0) {
             return Result.success(null);
         }
@@ -114,7 +114,33 @@ public class MemoryController {
         String userInput = body.get("userInput") != null ? String.valueOf(body.get("userInput")) : "";
         String summary = body.get("summary") != null ? String.valueOf(body.get("summary")) : "";
         String threadId = body.get("threadId") != null ? String.valueOf(body.get("threadId")) : null;
-        memoryExtractorService.extractAndPersistAsync(userId, null, threadId, userInput, summary, null);
+        memoryExtractorService.extractAndPersistAsync(userId, null, null, threadId, userInput, summary, null);
         return Result.success(null);
+    }
+
+    @GetMapping("/counts")
+    public Result<Map<String, Long>> counts() {
+        Long userId = getCurrentUserId();
+        QueryWrapper<MemoryItem> qw = new QueryWrapper<>();
+        qw.eq("user_id", userId);
+        qw.eq("status", 1);
+        qw.select("type, count(*) as cnt");
+        qw.groupBy("type");
+        List<Map<String, Object>> rows = memoryItemDao.selectMaps(qw);
+        Map<String, Long> result = new java.util.LinkedHashMap<>();
+        result.put("all", 0L);
+        result.put("PROFILE", 0L);
+        result.put("TASK", 0L);
+        result.put("FACT", 0L);
+        result.put("EPISODIC", 0L);
+        long total = 0;
+        for (Map<String, Object> row : rows) {
+            String type = String.valueOf(row.get("type"));
+            long cnt = ((Number) row.get("cnt")).longValue();
+            result.put(type.toUpperCase(), cnt);
+            total += cnt;
+        }
+        result.put("all", total);
+        return Result.success(result);
     }
 }

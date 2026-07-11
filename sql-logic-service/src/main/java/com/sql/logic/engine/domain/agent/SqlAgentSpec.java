@@ -110,11 +110,12 @@ public final class SqlAgentSpec {
         // ---- Memory ----
         public static final String USER_MEMORY = "userMemory";
 
-        // ---- Agent Studio config (B4) ----
+        // ---- Agent Studio config ----
         public static final String AGENT_SYSTEM_PROMPT = "agentSystemPrompt";
         public static final String AGENT_MEMORY_ENABLED = "agentMemoryEnabled";
         public static final String AGENT_TOOLS = "agentTools";
         public static final String AGENT_NAME = "agentName";
+        public static final String AGENT_ID = "agentId";
     }
 
     // ======================== Prompt Template Names ========================

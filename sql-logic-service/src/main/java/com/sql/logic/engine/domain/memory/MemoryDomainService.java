@@ -43,7 +43,7 @@ public class MemoryDomainService {
         this.vectorStore = vectorStore;
     }
 
-    public int saveMemories(Long userId, Long workspaceId, String threadId,
+    public int saveMemories(Long userId, Long workspaceId, Long agentId, String threadId,
                             List<CandidateMemory> candidates) {
         if (candidates == null || candidates.isEmpty()) {
             return 0;
@@ -64,6 +64,7 @@ public class MemoryDomainService {
                     item = new MemoryItem();
                     item.setUserId(userId);
                     item.setWorkspaceId(workspaceId);
+                    item.setAgentId(agentId);
                     item.setType(candidate.getType());
                     item.setContent(candidate.getText());
                     item.setImportance(BigDecimal.valueOf(candidate.getImportance()));
@@ -104,7 +105,7 @@ public class MemoryDomainService {
         return saved;
     }
 
-    public List<Map<String, Object>> searchRelevant(Long userId, String query, int topK) {
+    public List<Map<String, Object>> searchRelevant(Long userId, Long agentId, String query, int topK) {
         if (userId == null || query == null || query.isBlank()) {
             return List.of();
         }
@@ -132,6 +133,11 @@ public class MemoryDomainService {
                     Long memoryItemId = Long.valueOf(String.valueOf(idObj));
                     MemoryItem item = memoryItemDao.selectById(memoryItemId);
                     if (item == null || item.getStatus() == null || item.getStatus() != 1) {
+                        continue;
+                    }
+                    // Agent isolation: skip memories owned by a different agent
+                    if (agentId != null && item.getAgentId() != null
+                            && !agentId.equals(item.getAgentId())) {
                         continue;
                     }
                     double score = doc.getScore() == null ? 0.0 : doc.getScore();

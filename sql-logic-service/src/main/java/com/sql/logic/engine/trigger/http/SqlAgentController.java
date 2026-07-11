@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.application.service.AgentHistoryAppService;
 import com.sql.logic.engine.application.service.UserAppService;
 import com.sql.logic.engine.common.dto.SqlGenerateRequest;
+import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner.AgentRunHandle;
@@ -287,6 +288,7 @@ public class SqlAgentController {
         exec.setStatus("COMPLETED");
         exec.setThreadId(handle.getThreadId());
         exec.setConversationId(handle.getContext().getConversationId());
+        exec.setAgentId(readLongState(handle, SqlAgentSpec.StateKey.AGENT_ID));
         exec.setTotalDurationMs(0L);
         exec.setCreateTime(LocalDateTime.now());
 
@@ -376,24 +378,20 @@ public class SqlAgentController {
 }
 
     /**
-     * Memory extraction: hand the finished session (user input + report/SQL
-     * transcript) to the async {@link MemoryExtractorService}. Best-effort and fully
-     * non-blocking — failures are logged inside the service and never propagate.
+     * Memory extraction: pass only the user's input to the async extractor
+     * (following AgentX's pattern — the extraction LLM focuses on the user's
+     * words to identify preferences/identity/goals, not the system response).
+     * Best-effort and fully non-blocking.
      */
     private void triggerMemoryExtraction(AgentRunHandle handle, Long userId, String userInput) {
         try {
-            String report = readStateValue(handle, SqlAgentSpec.StateKey.REPORT_RESULT, "");
-            String sql = readStateValue(handle, SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, "");
-            StringBuilder transcript = new StringBuilder();
-            if (report != null && !report.isBlank()) transcript.append(report.trim());
-            if (sql != null && !sql.isBlank()) {
-                if (transcript.length() > 0) transcript.append("\n\n");
-                transcript.append("生成SQL:\n").append(sql.trim());
-            }
             Long workspaceId = handle.getContext().getWorkspaceId();
             Long llmConfigId = handle.getContext().getLlmConfigId();
+            Long agentId = readLongState(handle, SqlAgentSpec.StateKey.AGENT_ID);
+            // Pass only the user message — the extraction prompt is designed to
+            // extract long-term preferences from the user's own words.
             memoryExtractorService.extractAndPersistAsync(
-                    userId, workspaceId, handle.getThreadId(), userInput, transcript.toString(), llmConfigId);
+                    userId, workspaceId, agentId, handle.getThreadId(), userInput, userInput, llmConfigId);
         } catch (Exception e) {
             log.debug("[SqlAgentController] Memory extraction trigger skipped: {}", e.getMessage());
         }
@@ -458,7 +456,7 @@ public class SqlAgentController {
             var state = snapshot == null ? null : snapshot.state();
             if (state == null) return null;
             Object v = state.value(key, null);
-            return com.sql.logic.engine.domain.agent.AgentStateUtil.toLong(v);
+            return AgentStateUtil.toLong(v);
         } catch (Exception e) {
             return null;
         }

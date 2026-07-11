@@ -36,7 +36,7 @@ public class MemoryExtractorService {
     }
 
     @Async
-    public void extractAndPersistAsync(Long userId, Long workspaceId, String threadId,
+    public void extractAndPersistAsync(Long userId, Long workspaceId, Long agentId, String threadId,
                                         String userInput, String sessionSummary, Long llmConfigId) {
         try {
             log.info("[MemoryExtractorService] Starting extraction for userId={}, threadId={}, llmConfigId={}",
@@ -63,7 +63,7 @@ public class MemoryExtractorService {
                 return;
             }
 
-            int saved = memoryDomainService.saveMemories(userId, workspaceId, threadId, candidates);
+            int saved = memoryDomainService.saveMemories(userId, workspaceId, agentId, threadId, candidates);
             log.info("[MemoryExtractorService] Extracted and saved {} memories for userId={}, threadId={}",
                     saved, userId, threadId);
         } catch (Exception e) {

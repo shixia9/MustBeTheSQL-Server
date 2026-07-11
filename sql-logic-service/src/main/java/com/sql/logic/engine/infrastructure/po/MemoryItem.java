@@ -24,6 +24,7 @@ public class MemoryItem {
     private Long id;
     private Long userId;
     private Long workspaceId;
+    private Long agentId;
     private String type;       // PROFILE | TASK | FACT | EPISODIC
     private String content;
     private BigDecimal importance;

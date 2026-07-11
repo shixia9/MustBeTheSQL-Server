@@ -173,9 +173,8 @@ public class SqlExecutionService {
                 conn.setSchema(schemaName);
             }
         } catch (SQLException e) {
-            // Some drivers/configs reject setCatalog/setSchema on a pooled connection;
-            // degrade silently rather than aborting — the unqualified SQL still runs.
-            log.debug("[SqlExecutionService] applySchemaContext(schema='{}') ignored: {}", schemaName, e.getMessage());
+            log.warn("[SqlExecutionService] Failed to set catalog/schema to '{}' (dbType={}): {}",
+                    schemaName, dbType, e.getMessage());
         }
     }
 

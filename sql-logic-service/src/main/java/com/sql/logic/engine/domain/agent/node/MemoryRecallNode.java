@@ -31,6 +31,8 @@ public class MemoryRecallNode implements NodeAction {
         String userInput = state.value(SqlAgentSpec.StateKey.INPUT, "");
         Long userId = AgentStateUtil.toLong(
                 state.value(SqlAgentSpec.StateKey.USER_ID, (Long) null));
+        Long agentId = AgentStateUtil.toLong(
+                state.value(SqlAgentSpec.StateKey.AGENT_ID, (Long) null));
 
         Map<String, Object> result = new LinkedHashMap<>();
 
@@ -45,7 +47,7 @@ public class MemoryRecallNode implements NodeAction {
 
         try {
             List<Map<String, Object>> memories = memoryDomainService.searchRelevant(
-                    userId, userInput, TOP_K);
+                    userId, agentId, userInput, TOP_K);
 
             if (memories == null || memories.isEmpty()) {
                 result.put(SqlAgentSpec.StateKey.USER_MEMORY, "");

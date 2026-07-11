@@ -16,6 +16,7 @@ public class AgentExecution {
     private Long userId;
     private Long connectionId;
     private Long workspaceId;
+    private Long agentId;
     private String schemaName;
     private String input;
     private String summary;

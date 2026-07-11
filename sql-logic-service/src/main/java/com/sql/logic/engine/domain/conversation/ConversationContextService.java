@@ -20,9 +20,9 @@ public class ConversationContextService {
     private static final Logger log = LoggerFactory.getLogger(ConversationContextService.class);
 
     /** Soft ceiling on the rendered history section, in estimated tokens. */
-    private static final int MAX_HISTORY_TOKENS = 1500;
+    private static final int MAX_HISTORY_TOKENS = 4000;
     /** Never inject more than this many recent turns, even if they'd fit the budget. */
-    private static final int MAX_TURNS = 8;
+    private static final int MAX_TURNS = 12;
     /** Coarse token estimate: ~2 chars per token for mixed CN/EN text. */
     private static final int CHARS_PER_TOKEN = 2;
 
@@ -152,12 +152,12 @@ public class ConversationContextService {
     private String formatTurn(ConversationDetail d, int n) {
         StringBuilder sb = new StringBuilder();
         sb.append("[第").append(n).append("轮]\n");
-        sb.append("用户: ").append(excerpt(d.getUserInput(), 300)).append("\n");
+        sb.append("用户: ").append(excerpt(d.getUserInput(), 800)).append("\n");
         if (d.getSqlOutput() != null && !d.getSqlOutput().isBlank()) {
-            sb.append("SQL: ").append(excerpt(d.getSqlOutput(), 400)).append("\n");
+            sb.append("SQL: ").append(excerpt(d.getSqlOutput(), 1000)).append("\n");
         }
         if (d.getExecuteResult() != null && !d.getExecuteResult().isBlank()) {
-            sb.append("结果: ").append(excerpt(d.getExecuteResult(), 500)).append("\n");
+            sb.append("结果: ").append(excerpt(d.getExecuteResult(), 2000)).append("\n");
         }
         return sb.toString().trim();
     }

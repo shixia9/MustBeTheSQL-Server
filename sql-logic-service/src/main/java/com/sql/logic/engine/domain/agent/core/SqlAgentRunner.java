@@ -125,6 +125,7 @@ public class SqlAgentRunner {
         initialState.put(SqlAgentSpec.StateKey.AGENT_TOOLS, agentCfg.enabledTools());
         initialState.put(SqlAgentSpec.StateKey.AGENT_NAME,
                 agentCfg.name() == null ? "" : agentCfg.name());
+        initialState.put(SqlAgentSpec.StateKey.AGENT_ID, agentCfg.agentId());
 
         log.info("[SqlAgentRunner] Starting graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, conversationId={}, agentId={}, input='{}'",
                 threadId, autoConfirm, connectionId, userId, conversationId, agentCfg.agentId(), userInput);
