@@ -21,7 +21,7 @@
       <tag>标签1</tag>
       <tag>标签2</tag>
     </tags>
-    <data>{}</data>
+    <data>\{\}</data>
   </memory>
 </memories>
 

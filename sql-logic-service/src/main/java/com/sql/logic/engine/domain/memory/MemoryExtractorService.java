@@ -72,8 +72,21 @@ public class MemoryExtractorService {
         }
     }
 
-    private List<CandidateMemory> parseXmlMemories(String xml) {
+    private List<CandidateMemory> parseXmlMemories(String raw) {
         List<CandidateMemory> result = new ArrayList<>();
+        if (raw == null || raw.isBlank()) return result;
+
+        // LLM responses often wrap XML in markdown or add preamble text.
+        // Extract just the <memories>...</memories> block.
+        String xml = raw;
+        int start = raw.indexOf("<memories>");
+        int end = raw.lastIndexOf("</memories>");
+        if (start >= 0 && end > start) {
+            xml = raw.substring(start, end + "</memories>".length());
+        }
+        // Strip ```xml / ``` fences if present.
+        xml = xml.replaceAll("(?i)```(?:xml)?\\s*", "").trim();
+
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);

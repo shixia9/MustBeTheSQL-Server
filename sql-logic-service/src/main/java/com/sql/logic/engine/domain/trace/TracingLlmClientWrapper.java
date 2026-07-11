@@ -86,11 +86,11 @@ public class TracingLlmClientWrapper implements LLMStrategy {
         try {
             int half = totalTokens / 2;
             int out = totalTokens - half;
-            // Global totals + per-node attribution (so agent_execution_step.input_tokens/
-            // output_tokens reflect the node that actually consumed the tokens).
-            traceContext.addTokens(half, out);
-            traceContext.addTokensToCurrentNode(half, out);
-            traceContext.incrementModelCalls();
+            if (traceContext != null) {
+                traceContext.addTokens(half, out);
+                traceContext.addTokensToCurrentNode(half, out);
+                traceContext.incrementModelCalls();
+            }
             if (reporter != null) {
                 reporter.report(configId, userId, success, latencyMs, half, out);
             }
