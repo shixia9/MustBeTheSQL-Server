@@ -2,6 +2,7 @@ package com.sql.logic.engine.domain.agent.core;
 
 import com.alibaba.cloud.ai.graph.GraphLifecycleListener;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.domain.trace.TraceContextRegistry;
 import org.slf4j.Logger;
@@ -73,7 +74,17 @@ public class AgentSseStartedListener implements GraphLifecycleListener {
 
             var sink = sinkRegistry.get(threadId);
             if (sink == null) return;
-            String json = codec.startedJson(name);
+
+            // Build extra context for looped nodes so the frontend can distinguish visits
+            java.util.Map<String, Object> extra = java.util.Map.of();
+            if (SqlAgentSpec.Node.PLAN_DISPATCH.equals(name) && state != null) {
+                Object step = state.get(SqlAgentSpec.StateKey.CURRENT_STEP);
+                if (step != null) {
+                    extra = java.util.Map.of("currentStep", step);
+                }
+            }
+
+            String json = codec.startedJson(name, extra);
             if (json != null && !json.isEmpty()) {
                 sink.tryEmitNext(json);
             }

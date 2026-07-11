@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentMap;
 
 /**
  * Collects trace data during graph execution. Used by SqlAgentController
@@ -46,10 +45,10 @@ public class TraceCollector {
      */
     public List<AgentExecutionStep> buildSteps(TraceContext ctx, Long executionId) {
         List<AgentExecutionStep> steps = new ArrayList<>();
-        ConcurrentMap<String, TraceContext.StepTrace> stepMap = ctx.getSteps();
+        List<TraceContext.StepTrace> stepList = ctx.getSteps();
         LocalDateTime now = LocalDateTime.now();
 
-        for (TraceContext.StepTrace st : stepMap.values()) {
+        for (TraceContext.StepTrace st : stepList) {
             AgentExecutionStep step = new AgentExecutionStep();
             step.setExecutionId(executionId);
             step.setNodeName(st.nodeName);

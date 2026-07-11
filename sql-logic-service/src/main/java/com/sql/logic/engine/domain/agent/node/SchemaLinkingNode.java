@@ -130,10 +130,12 @@ public class SchemaLinkingNode implements NodeAction {
         }
 
         // 6. Render mix-selector prompt and call LLM for table filtering
+        String conversationHistory = state.value(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "");
         String prompt = promptManager.render(SqlAgentSpec.PromptName.MIX_SELECTOR, Map.of(
                 "schema_info", schemaContext,
                 "question", rewriteQuery,
-                "evidence", evidence == null || evidence.isBlank() ? "无" : evidence
+                "evidence", evidence == null || evidence.isBlank() ? "无" : evidence,
+                "conversation_history", conversationHistory == null || conversationHistory.isBlank() ? "" : conversationHistory
         ));
 
         LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,

@@ -62,6 +62,7 @@
 【Reference information】
 {evidence}
 
+{conversation_history_section}
 # SEMANTIC MODEL
 
 {semantic_model}

@@ -64,8 +64,9 @@ public class FeasibilityAssessmentNode implements NodeAction {
         Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, (Long) null);
         Long userId = com.sql.logic.engine.domain.agent.AgentStateUtil.toLong(userIdObj);
 
-        // multi_turn left empty in Phase 3 (conversation history arrives in Phase 5)
-        String multiTurn = "";
+        // Inject conversation history so follow-up questions are understood in context
+        String conversationHistory = state.value(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "");
+        String multiTurn = (conversationHistory == null || conversationHistory.isBlank()) ? "" : conversationHistory;
 
         // Schema fallback: if Schema Linking produced nothing usable, show empty placeholder
         String recalledSchema = (tableRelation == null || tableRelation.isBlank()) ? "（无召回的 Schema）" : tableRelation;

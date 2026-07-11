@@ -69,7 +69,7 @@ public class PlannerNode implements NodeAction {
         // Force the LLM to emit a JSON object matching the Plan schema.
         BeanOutputConverter<Plan> converter = new BeanOutputConverter<>(Plan.class);
 
-        // Phase 4: if the user rejected the previous plan, the HITL edge pushed back their
+        // If the user rejected the previous plan, the HITL edge pushed back their
         // feedback via CONFIRMATION_FEEDBACK. Feed it into planner.st's "用户反馈处理" section
         // so the LLM must comply with the revision requirements. Empty on first run.
         String feedback = state.value(SqlAgentSpec.StateKey.CONFIRMATION_FEEDBACK, "");
@@ -77,12 +77,18 @@ public class PlannerNode implements NodeAction {
                 ? "（暂无用户反馈）"
                 : "用户反馈：" + feedback;
 
+        // Inject conversation history so multi-turn follow-ups produce context-aware plans
+        String conversationHistory = state.value(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "");
+        String conversationHistorySection = (conversationHistory == null || conversationHistory.isBlank())
+                ? "" : "## 历史对话上下文\n" + conversationHistory;
+
         String prompt = promptManager.render(SqlAgentSpec.PromptName.PLANNER, Map.of(
                 "user_question", rewriteQuery,
                 "schema", schema,
                 "evidence", evidenceText,
                 "semantic_model", "（暂无语义模型，阶段5 接入）",
                 "plan_validation_error", planValidationError,
+                "conversation_history_section", conversationHistorySection,
                 "format", converter.getFormat()
         ));
 

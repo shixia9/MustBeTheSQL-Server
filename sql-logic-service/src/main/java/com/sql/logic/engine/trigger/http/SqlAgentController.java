@@ -297,7 +297,7 @@ public class SqlAgentController {
         if (tc != null) {
             exec.setTotalTokens(tc.getTotalInputTokens() + tc.getTotalOutputTokens());
             exec.setModelCalls(tc.getModelCalls());
-            exec.setToolCalls((int) tc.getSteps().values().stream()
+            exec.setToolCalls((int) tc.getSteps().stream()
                     .filter(st -> "TOOL_RESULT".equals(st.nodeType))
                     .count());
             exec.setTotalDurationMs(System.currentTimeMillis() - tc.getStartTime());
@@ -344,25 +344,33 @@ public class SqlAgentController {
                 // Phase A3: enrich each step with trace data (latency/tokens/nodeType) where available.
                 com.sql.logic.engine.domain.trace.TraceContext stepTc = handle.getContext().getTraceContext();
                 LocalDateTime now = LocalDateTime.now();
-                for (com.sql.logic.engine.infrastructure.po.AgentExecutionStep s : steps) {
-                    s.setExecutionId(exec.getId());
-                    if (s.getCreateTime() == null) s.setCreateTime(now);
-                    if (stepTc != null) {
-                        try {
-                            // key is now nodeName (TraceContext per-step map keyed by nodeName)
-                            com.sql.logic.engine.domain.trace.TraceContext.StepTrace st =
-                                    stepTc.getSteps().get(s.getNodeName());
-                            if (st != null) {
-                                s.setInputTokens(st.inputTokens);
-                                s.setOutputTokens(st.outputTokens);
-                                s.setLatencyMs(st.latencyMs);
-                                // real per-node execution duration (begin→end).
-                                if (st.durationMs > 0) {
-                                    s.setDurationMs(st.durationMs);
-                                }
-                                if (s.getNodeType() == null) s.setNodeType(st.nodeType);
-                            }
-                        } catch (Exception ignore) { /* best-effort enrichment */ }
+                if (stepTc != null) {
+                    java.util.List<com.sql.logic.engine.domain.trace.TraceContext.StepTrace> traceSteps =
+                            stepTc.getSteps();
+                    int n = Math.min(steps.size(), traceSteps.size());
+                    for (int i = 0; i < n; i++) {
+                        com.sql.logic.engine.infrastructure.po.AgentExecutionStep s = steps.get(i);
+                        com.sql.logic.engine.domain.trace.TraceContext.StepTrace st = traceSteps.get(i);
+                        s.setExecutionId(exec.getId());
+                        if (s.getCreateTime() == null) s.setCreateTime(now);
+                        s.setInputTokens(st.inputTokens);
+                        s.setOutputTokens(st.outputTokens);
+                        s.setLatencyMs(st.latencyMs);
+                        if (st.durationMs > 0) {
+                            s.setDurationMs(st.durationMs);
+                        }
+                        if (s.getNodeType() == null) s.setNodeType(st.nodeType);
+                    }
+                    // Any remaining buffered steps beyond trace coverage still need executionId + createTime.
+                    for (int i = n; i < steps.size(); i++) {
+                        com.sql.logic.engine.infrastructure.po.AgentExecutionStep s = steps.get(i);
+                        s.setExecutionId(exec.getId());
+                        if (s.getCreateTime() == null) s.setCreateTime(now);
+                    }
+                } else {
+                    for (com.sql.logic.engine.infrastructure.po.AgentExecutionStep s : steps) {
+                        s.setExecutionId(exec.getId());
+                        if (s.getCreateTime() == null) s.setCreateTime(now);
                     }
                 }
                 agentHistoryAppService.saveSteps(steps);

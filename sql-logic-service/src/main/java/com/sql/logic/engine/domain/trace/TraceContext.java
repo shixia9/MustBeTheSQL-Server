@@ -1,7 +1,8 @@
 package com.sql.logic.engine.domain.trace;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -17,13 +18,11 @@ public class TraceContext {
     private final AtomicInteger modelCalls;
     private final AtomicInteger totalInputTokens;
     private final AtomicInteger totalOutputTokens;
-    /** key = nodeName (looped nodes may use "name:step"). */
-    private final ConcurrentMap<String, StepTrace> steps;
+    /** Ordered list of per-node-visit trace entries. Appended by beginNode, never removed. */
+    private final List<StepTrace> steps;
+    /** Index into {@link #steps} of the node currently executing (-1 when idle). */
+    private volatile int currentNodeIndex = -1;
     private volatile long lastStepTimeMs;
-
-    /** The node currently being executed (set by beginNode, cleared by endNode).
-     *  Used by addTokensToCurrentNode to attribute LLM token usage. */
-    private volatile String currentNodeKey;
 
     public TraceContext(String threadId, Long userId, Long workspaceId) {
         this.threadId = threadId;
@@ -34,30 +33,29 @@ public class TraceContext {
         this.modelCalls = new AtomicInteger(0);
         this.totalInputTokens = new AtomicInteger(0);
         this.totalOutputTokens = new AtomicInteger(0);
-        this.steps = new ConcurrentHashMap<>();
+        this.steps = Collections.synchronizedList(new ArrayList<>());
     }
 
     /** Mark a node as started — recorded by the graph lifecycle listener's before().
-     *  Must be called before the node's LLM call so reportCall can attribute tokens. */
+     *  Appends a fresh StepTrace so looped re-entries to the same node are distinct. */
     public void beginNode(String nodeName) {
-        String key = stepKey(nodeName);
-        this.currentNodeKey = key;
-        StepTrace st = steps.computeIfAbsent(key, k -> new StepTrace());
-        if (st.nodeStartMs == 0) {
-            st.nodeStartMs = System.currentTimeMillis();
-        }
+        StepTrace st = new StepTrace();
+        st.nodeName = nodeName;
+        st.nodeStartMs = System.currentTimeMillis();
+        steps.add(st);
+        currentNodeIndex = steps.size() - 1;
     }
 
-    /** Mark a node as finished and compute its real wall-clock duration. */
+    /** Mark the current node as finished and compute its real wall-clock duration. */
     public void endNode(String nodeName) {
-        String key = stepKey(nodeName);
-        StepTrace st = steps.get(key);
-        if (st != null && st.nodeStartMs > 0 && st.durationMs == 0) {
-            st.durationMs = System.currentTimeMillis() - st.nodeStartMs;
+        int idx = this.currentNodeIndex;
+        if (idx >= 0 && idx < steps.size()) {
+            StepTrace st = steps.get(idx);
+            if (st.durationMs == 0 && st.nodeStartMs > 0) {
+                st.durationMs = System.currentTimeMillis() - st.nodeStartMs;
+            }
         }
-        if (key.equals(this.currentNodeKey)) {
-            this.currentNodeKey = null;
-        }
+        this.currentNodeIndex = -1;
     }
 
     /** Add tokens to the global totals (always). */
@@ -66,12 +64,11 @@ public class TraceContext {
         totalOutputTokens.addAndGet(output);
     }
 
-    /** Attribute an LLM call's tokens to whatever node is currently executing
-     *  (set by beginNode). No-op if no node is active. */
+    /** Attribute an LLM call's tokens to whatever node is currently executing. */
     public void addTokensToCurrentNode(int input, int output) {
-        String key = this.currentNodeKey;
-        if (key == null) return;
-        StepTrace st = steps.get(key);
+        int idx = this.currentNodeIndex;
+        if (idx < 0 || idx >= steps.size()) return;
+        StepTrace st = steps.get(idx);
         if (st != null) {
             st.inputTokens += input;
             st.outputTokens += output;
@@ -80,14 +77,16 @@ public class TraceContext {
 
     public void incrementModelCalls() { modelCalls.incrementAndGet(); }
 
-    /** Record a completed step with explicit latency. <b>Does NOT touch token
-     *  fields</b> — those are owned by addTokensToCurrentNode. Also calls
+    /** Record a completed step with explicit latency. Does NOT touch token
+     *  fields — those are owned by addTokensToCurrentNode. Also calls
      *  endNode to finalize durationMs. */
     public void recordStep(int sequence, String nodeName, String status, int inputTokens, int outputTokens, long latencyMs, String nodeType) {
-        String key = stepKey(nodeName);
-        StepTrace st = steps.computeIfAbsent(key, k -> new StepTrace());
-        st.fill(sequence, nodeName, status, latencyMs, nodeType);
-        endNode(key);
+        int idx = this.currentNodeIndex;
+        if (idx >= 0 && idx < steps.size()) {
+            StepTrace st = steps.get(idx);
+            st.fill(sequence, nodeName, status, latencyMs, nodeType);
+        }
+        endNode(nodeName);
     }
 
     /** Record a step with auto-computed wall-clock latency. */
@@ -103,10 +102,6 @@ public class TraceContext {
         this.lastStepTimeMs = System.currentTimeMillis();
     }
 
-    private String stepKey(String nodeName) {
-        return nodeName == null ? "" : nodeName;
-    }
-
     // Getters
     public String getThreadId() { return threadId; }
     public Long getUserId() { return userId; }
@@ -115,10 +110,14 @@ public class TraceContext {
     public int getModelCalls() { return modelCalls.get(); }
     public int getTotalInputTokens() { return totalInputTokens.get(); }
     public int getTotalOutputTokens() { return totalOutputTokens.get(); }
-    public ConcurrentMap<String, StepTrace> getSteps() { return steps; }
+    /** Return an indexed snapshot of all step traces, ordered by node visit. */
+    public List<StepTrace> getSteps() {
+        synchronized (steps) {
+            return new ArrayList<>(steps);
+        }
+    }
 
-    /** Inner step trace record. Token fields are owned by addTokensToCurrentNode;
-     *  fill() deliberately does NOT reset them. */
+    /** Inner step trace record. */
     public static class StepTrace {
         public int sequence;
         public String nodeName;

@@ -39,13 +39,28 @@ public class ConversationContextService {
 
     /**
      * Resolve or create a conversation for the user. When {@code conversationId} is
-     * null/blank a fresh conversation is created titled with the (truncated) input.
+     * null/blank, falls back to the most recently updated conversation for this user
+     * (within a 2-hour window) before creating a new one — so follow-up questions
+     * automatically rejoin the same conversation even if the frontend omits the id.
      */
     public Conversation resolveConversation(Long conversationId, Long userId, String userInput, Long llmConfigId) {
         if (conversationId != null) {
             Conversation existing = conversationDao.selectById(conversationId);
             if (existing != null && (userId == null || userId.equals(existing.getUserId()))) {
                 return existing;
+            }
+        }
+        // Fallback: find the most recent conversation for this user within the last 2 hours
+        if (userId != null) {
+            java.util.Date twoHoursAgo = new java.util.Date(System.currentTimeMillis() - 2 * 60 * 60 * 1000);
+            var wrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Conversation>()
+                    .eq("user_id", userId)
+                    .ge("update_time", twoHoursAgo)
+                    .orderByDesc("update_time")
+                    .last("LIMIT 1");
+            java.util.List<Conversation> recent = conversationDao.selectList(wrapper);
+            if (recent != null && !recent.isEmpty()) {
+                return recent.get(0);
             }
         }
         Conversation conv = new Conversation();

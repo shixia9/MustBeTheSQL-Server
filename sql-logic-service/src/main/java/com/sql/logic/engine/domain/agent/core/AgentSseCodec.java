@@ -66,12 +66,21 @@ public class AgentSseCodec {
 
     /** Build the STARTED SSE event for a node (emitted by the lifecycle listener). */
     public String startedJson(String nodeName) {
+        return startedJson(nodeName, java.util.Map.of());
+    }
+
+    /** Build the STARTED SSE event with extra contextual data (e.g. currentStep for
+     *  looped nodes so the frontend can distinguish multiple visits). */
+    public String startedJson(String nodeName, Map<String, Object> extra) {
         try {
             Map<String, Object> event = new LinkedHashMap<>();
             event.put("nodeName", nodeName);
             event.put("outputType", "STARTED");
             event.put("messageType", messageTypeForNode(nodeName));
             event.put("sequenceNo", 0);
+            if (extra != null && !extra.isEmpty()) {
+                event.put("data", extra);
+            }
             return objectMapper.writeValueAsString(event);
         } catch (Exception e) {
             log.warn("[AgentSseCodec] Failed to encode STARTED for {}: {}", nodeName, e.getMessage());

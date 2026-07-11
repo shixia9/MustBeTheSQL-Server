@@ -74,11 +74,13 @@ public class EvidenceRecallNode implements NodeAction {
         Long connectionId = AgentStateUtil.toLong(
                 state.value(SqlAgentSpec.StateKey.CONNECTION_ID, (Long) null));
 
-        // ---- 1. Query rewrite (unchanged from Phase 1) ----
+        // ---- 1. Query rewrite ----
+        String conversationHistory = state.value(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "");
         BeanOutputConverter<EvidenceQueryRewriteDTO> converter =
                 new BeanOutputConverter<>(EvidenceQueryRewriteDTO.class);
         String prompt = promptManager.render(SqlAgentSpec.PromptName.EVIDENCE_QUERY_REWRITE, Map.of(
                 "latest_query", userInput,
+                "conversation_history", conversationHistory == null || conversationHistory.isBlank() ? "" : conversationHistory,
                 "format", converter.getFormat()
         ));
         LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,
