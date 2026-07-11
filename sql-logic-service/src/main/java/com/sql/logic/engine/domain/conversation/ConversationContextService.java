@@ -12,21 +12,7 @@ import java.util.Date;
 import java.util.List;
 
 /**
- * Phase B (B5) conversation context window management.
- * <p>
- * Loads prior turns of a conversation (from {@code conversation_detail}) and renders
- * them into a compact history section for prompt injection, so the Agent can answer
- * multi-turn follow-up questions ("上个月那个总数，按城市拆一下") instead of treating
- * every request as standalone.
- * <p>
- * Strategy: sliding window (TRUNCATE). Keeps the most recent turns whose estimated
- * token cost fits under {@link #MAX_HISTORY_TOKENS}; drops the oldest first. Token
- * estimation is a coarse chars/2 heuristic — good enough for budgeting prompt slots
- * without pulling in a tokenizer dependency.
- * <p>
- * The SUMMARIZE strategy (condense older turns into one LLM summary) is sketched via
- * {@link OverflowStrategy} but not yet wired — left as the next step once a cheap
- * summarisation model path is reused from {@code SessionSummaryService}.
+ * Conversation context window management.
  */
 @Service
 public class ConversationContextService {

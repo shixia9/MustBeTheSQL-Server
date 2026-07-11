@@ -376,7 +376,7 @@ public class SqlAgentController {
 }
 
     /**
-     * Phase B memory extraction: hand the finished session (user input + report/SQL
+     * Memory extraction: hand the finished session (user input + report/SQL
      * transcript) to the async {@link MemoryExtractorService}. Best-effort and fully
      * non-blocking — failures are logged inside the service and never propagate.
      */
