@@ -1,7 +1,6 @@
 package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.UserAppService;
-import com.sql.logic.engine.application.service.AdminUserAppService;
 import com.sql.logic.engine.common.dto.LoginRequest;
 import com.sql.logic.engine.common.dto.RegisterRequest;
 import com.sql.logic.engine.common.dto.UpdateKeysRequest;
@@ -24,11 +23,8 @@ public class UserController {
 
     private static final Integer DEFAULT_LOGIN_SESSION_TIMEOUT = 60 * 60 * 24 * 7;
 
-    private final AdminUserAppService adminUserAppService;
-
-    public UserController(UserAppService userAppService, AdminUserAppService adminUserAppService) {
+    public UserController(UserAppService userAppService) {
         this.userAppService = userAppService;
-        this.adminUserAppService = adminUserAppService;
     }
 
     @PostMapping("/login")
@@ -111,23 +107,6 @@ public class UserController {
             return Result.success(true);
         } catch (Exception e) {
             return Result.error(400, e.getMessage());
-        }
-    }
-
-    /** Check admin status for the current user (unprotected — used by frontend to show/hide admin nav). */
-    @GetMapping("/admin-check")
-    public Result<java.util.Map<String, Object>> checkAdmin() {
-        try {
-            String loginUserIdStr = (String) StpUtil.getLoginId();
-            if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
-                return Result.success(java.util.Map.of("isAdmin", false));
-            }
-            Long loginUserId = Long.valueOf(loginUserIdStr);
-            boolean isAdmin = adminUserAppService.isSystemAdmin(loginUserId);
-            String role = isAdmin ? adminUserAppService.getAdmin(loginUserId).getRole() : "USER";
-            return Result.success(java.util.Map.of("isAdmin", isAdmin, "role", role));
-        } catch (Exception e) {
-            return Result.success(java.util.Map.of("isAdmin", false));
         }
     }
 

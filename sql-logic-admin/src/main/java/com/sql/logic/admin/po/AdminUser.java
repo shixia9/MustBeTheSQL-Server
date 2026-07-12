@@ -1,4 +1,4 @@
-package com.sql.logic.engine.infrastructure.po;
+package com.sql.logic.admin.po;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;

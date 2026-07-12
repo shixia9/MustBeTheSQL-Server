@@ -1,9 +1,9 @@
-package com.sql.logic.engine.trigger.http.admin;
+package com.sql.logic.admin.controller;
 
-import com.sql.logic.engine.application.service.AdminUserAppService;
+import com.sql.logic.engine.common.dubbo.AdminDataDTOs;
+import com.sql.logic.engine.common.dubbo.AdminDataService;
 import com.sql.logic.engine.common.response.Result;
-import com.sql.logic.engine.infrastructure.dao.LlmCallMetricsDao;
-import com.sql.logic.engine.infrastructure.po.LlmCallMetrics;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -12,28 +12,25 @@ import java.util.*;
 @RequestMapping("/api/v1/admin/llm")
 public class AdminLlmController {
 
-    private final LlmCallMetricsDao llmCallMetricsDao;
+    @DubboReference
+    private AdminDataService adminDataService;
 
-    public AdminLlmController(LlmCallMetricsDao llmCallMetricsDao) {
-        this.llmCallMetricsDao = llmCallMetricsDao;
-    }
+    public AdminLlmController() {}
 
-    /** Per-config call volume, success rate, avg latency. */
     @GetMapping("/metrics")
     public Result<List<Map<String, Object>>> getMetrics() {
-        List<LlmCallMetrics> metrics = llmCallMetricsDao.selectList(null);
+        List<AdminDataDTOs.LlmMetricDTO> metrics = adminDataService.getLlmMetrics();
         List<Map<String, Object>> result = new ArrayList<>();
-        for (LlmCallMetrics m : metrics) {
+        for (AdminDataDTOs.LlmMetricDTO m : metrics) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("configId", m.getConfigId());
             row.put("userId", m.getUserId());
             row.put("windowStart", m.getWindowStart());
-            int total = m.getSuccessCount() + m.getFailureCount();
-            row.put("totalCalls", total);
+            row.put("totalCalls", m.getTotalCalls());
             row.put("successCount", m.getSuccessCount());
             row.put("failureCount", m.getFailureCount());
-            row.put("successRate", total > 0 ? (double) m.getSuccessCount() / total : 0);
-            row.put("avgLatencyMs", total > 0 ? m.getTotalLatencyMs() / total : 0);
+            row.put("successRate", m.getSuccessRate());
+            row.put("avgLatencyMs", m.getAvgLatencyMs());
             row.put("totalInputTokens", m.getTotalInputTokens());
             row.put("totalOutputTokens", m.getTotalOutputTokens());
             result.add(row);

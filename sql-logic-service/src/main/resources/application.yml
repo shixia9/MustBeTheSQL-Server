@@ -25,3 +25,19 @@ spring:
             group: DEFAULT_GROUP
             refresh: true
         enabled: ${NACOS_ENABLED:true}
+
+# Dubbo RPC — provider for admin module
+dubbo:
+  application:
+    name: sql-logic-service
+    logger: slf4j
+  protocol:
+    name: dubbo
+    port: -1
+  registry:
+    address: nacos://${NACOS_ADDR:localhost:8848}
+    parameters:
+      namespace: ${NACOS_NAMESPACE:}
+  provider:
+    retries: 0
+    timeout: 5000

@@ -1,7 +1,7 @@
-package com.sql.logic.engine.infrastructure.dao;
+package com.sql.logic.admin.dao;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.sql.logic.engine.infrastructure.po.AdminUser;
+import com.sql.logic.admin.po.AdminUser;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
 
