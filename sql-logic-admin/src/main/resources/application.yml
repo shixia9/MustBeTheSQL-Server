@@ -1,6 +1,3 @@
-server:
-  port: 8082
-
 spring:
   application:
     name: sql-logic-admin
@@ -20,38 +17,3 @@ spring:
             group: DEFAULT_GROUP
             refresh: true
         enabled: ${NACOS_ENABLED:true}
-  datasource:
-    url: ${ADMIN_DB_URL:jdbc:mysql://localhost:3306/sql_logic_engine}
-    username: ${ADMIN_DB_USERNAME:root}
-    password: ${ADMIN_DB_PASSWORD:root}
-    driver-class-name: com.mysql.cj.jdbc.Driver
-
-mybatis-plus:
-  mapper-locations: classpath*:/mapper/**/*.xml
-  global-config:
-    db-config:
-      id-type: auto
-  configuration:
-    map-underscore-to-camel-case: true
-
-dubbo:
-  application:
-    name: sql-logic-admin
-    logger: slf4j
-  registry:
-    address: nacos://${NACOS_ADDR:localhost:8848}
-    parameters:
-      namespace: ${NACOS_NAMESPACE:}
-  consumer:
-    check: false
-    retries: 0
-    timeout: 5000
-
-sa-token:
-  token-name: satoken
-  timeout: 604800
-  active-timeout: -1
-  is-concurrent: true
-  is-share: true
-  token-style: uuid
-  is-log: false
