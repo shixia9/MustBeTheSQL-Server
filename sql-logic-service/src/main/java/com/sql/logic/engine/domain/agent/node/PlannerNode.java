@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.AgentStateUtil;
+import com.sql.logic.engine.domain.agent.AgentToolGate;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.dto.Plan;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
@@ -82,6 +83,10 @@ public class PlannerNode implements NodeAction {
         String conversationHistorySection = (conversationHistory == null || conversationHistory.isBlank())
                 ? "" : "## 历史对话上下文\n" + conversationHistory;
 
+        // Tool gate: when python is disabled, tell the planner not to use PYTHON_GENERATE_NODE
+        boolean pythonEnabled = AgentToolGate.isToolEnabled(state, AgentToolGate.TOOL_PYTHON);
+        String pythonConstraint = pythonEnabled ? "" : "注意：当前不支持 Python 分析能力，请勿在计划中使用 PYTHON_GENERATE_NODE。所有分析步骤请使用 SQL_GENERATE_NODE。";
+
         String prompt = promptManager.render(SqlAgentSpec.PromptName.PLANNER, Map.of(
                 "user_question", rewriteQuery,
                 "schema", schema,
@@ -89,6 +94,7 @@ public class PlannerNode implements NodeAction {
                 "semantic_model", "（暂无语义模型，阶段5 接入）",
                 "plan_validation_error", planValidationError,
                 "conversation_history_section", conversationHistorySection,
+                "python_constraint", pythonConstraint,
                 "format", converter.getFormat()
         ));
 

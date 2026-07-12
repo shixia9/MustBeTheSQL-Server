@@ -20,12 +20,14 @@ public record AgentRuntimeConfig(
         int ragTopK,
         double ragScoreThreshold,
         boolean ragEnabled,
-        boolean memoryEnabled
+        boolean memoryEnabled,
+        /** Context overflow strategy: TRUNCATE (default) or SUMMARIZE. */
+        String contextStrategy
 ) {
     /** Sentinel used when no Agent config could be resolved — everything at defaults. */
     public static AgentRuntimeConfig defaults() {
         return new AgentRuntimeConfig(null, null, null, null,
-                List.of("sql", "schema", "python", "sample"), 5, 0.6, true, true);
+                List.of("sql", "schema", "python", "sample"), 5, 0.6, true, true, "TRUNCATE");
     }
 
     public boolean isToolEnabled(String toolKey) {

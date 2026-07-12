@@ -63,6 +63,7 @@
 {evidence}
 
 {conversation_history_section}
+{python_constraint}
 # SEMANTIC MODEL
 
 {semantic_model}

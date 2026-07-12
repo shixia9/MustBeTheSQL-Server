@@ -55,8 +55,9 @@ public class AgentRuntimeConfigService {
             List<String> tools = parseTools(e.getToolsConfig());
             RagParams rag = parseRag(e.getRagConfig());
             boolean memoryEnabled = e.getMemoryEnabled() == null || e.getMemoryEnabled() == 1;
+            String contextStrategy = rag.contextStrategy != null ? rag.contextStrategy : "TRUNCATE";
             return new AgentRuntimeConfig(e.getId(), e.getName(), e.getSystemPrompt(),
-                    e.getWelcomeMessage(), tools, rag.topK, rag.scoreThreshold, rag.enabled, memoryEnabled);
+                    e.getWelcomeMessage(), tools, rag.topK, rag.scoreThreshold, rag.enabled, memoryEnabled, contextStrategy);
         } catch (Exception ex) {
             log.warn("[AgentRuntimeConfigService] load failed for userId={}: {}", userId, ex.getMessage());
             return AgentRuntimeConfig.defaults();
@@ -77,14 +78,15 @@ public class AgentRuntimeConfigService {
     }
 
     private RagParams parseRag(String json) {
-        if (json == null || json.isBlank()) return new RagParams(5, 0.6, true);
+        if (json == null || json.isBlank()) return new RagParams(5, 0.6, true, null);
         try {
             Map<?, ?> m = objectMapper.readValue(json, Map.class);
             int topK = asInt(m.get("topK"), 5);
             double threshold = asDouble(m.get("scoreThreshold"), 0.6);
             boolean enabled = m.get("enabled") == null || Boolean.TRUE.equals(m.get("enabled"));
-            return new RagParams(topK, threshold, enabled);
-        } catch (Exception ignored) { return new RagParams(5, 0.6, true); }
+            String ctxStrategy = m.get("contextStrategy") instanceof String s ? s : null;
+            return new RagParams(topK, threshold, enabled, ctxStrategy);
+        } catch (Exception ignored) { return new RagParams(5, 0.6, true, null); }
     }
 
     private int asInt(Object o, int dflt) {
@@ -97,5 +99,5 @@ public class AgentRuntimeConfigService {
         try { return o == null ? dflt : Double.parseDouble(String.valueOf(o)); } catch (Exception e) { return dflt; }
     }
 
-    private record RagParams(int topK, double scoreThreshold, boolean enabled) {}
+    private record RagParams(int topK, double scoreThreshold, boolean enabled, String contextStrategy) {}
 }

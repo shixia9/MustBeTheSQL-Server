@@ -8,15 +8,16 @@ import lombok.Data;
 import java.util.Date;
 
 @Data
-@TableName("conversation")
-public class Conversation {
+@TableName("admin_user")
+public class AdminUser {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long userId;
-    private String title;
-    private Long llmStrategyId;
+    private String role;
+    private Integer status;
+    private Long createdBy;
     private Date createTime;
-    private Date updateTime;
-    /** Cached summary of overflow turns for SUMMARIZE strategy. */
-    private String summaryCache;
+
+    public boolean isActive() { return status != null && status == 1; }
+    public boolean isSuperAdmin() { return "SUPER_ADMIN".equals(role); }
 }

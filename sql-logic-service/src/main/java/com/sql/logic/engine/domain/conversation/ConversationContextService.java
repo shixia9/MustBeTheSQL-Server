@@ -1,5 +1,8 @@
 package com.sql.logic.engine.domain.conversation;
 
+import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.prompt.PromptManager;
+import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.infrastructure.dao.ConversationDao;
 import com.sql.logic.engine.infrastructure.dao.ConversationDetailDao;
 import com.sql.logic.engine.infrastructure.po.Conversation;
@@ -8,11 +11,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 
 /**
  * Conversation context window management.
+ * <p>
+ * Phase C extends the original TRUNCATE-only sliding window with a SUMMARIZE
+ * strategy: when history overflows the token budget, the oldest turns are
+ * LLM-summarised and cached on {@code conversation.summary_cache} so the key
+ * context from early in the conversation is preserved.
  */
 @Service
 public class ConversationContextService {
@@ -30,11 +37,17 @@ public class ConversationContextService {
 
     private final ConversationDao conversationDao;
     private final ConversationDetailDao conversationDetailDao;
+    private final LlmClientManager llmClientManager;
+    private final PromptManager promptManager;
 
     public ConversationContextService(ConversationDao conversationDao,
-                                      ConversationDetailDao conversationDetailDao) {
+                                      ConversationDetailDao conversationDetailDao,
+                                      LlmClientManager llmClientManager,
+                                      PromptManager promptManager) {
         this.conversationDao = conversationDao;
         this.conversationDetailDao = conversationDetailDao;
+        this.llmClientManager = llmClientManager;
+        this.promptManager = promptManager;
     }
 
     /**
@@ -50,15 +63,14 @@ public class ConversationContextService {
                 return existing;
             }
         }
-        // Fallback: find the most recent conversation for this user within the last 2 hours
         if (userId != null) {
-            java.util.Date twoHoursAgo = new java.util.Date(System.currentTimeMillis() - 2 * 60 * 60 * 1000);
+            Date twoHoursAgo = new Date(System.currentTimeMillis() - 2 * 60 * 60 * 1000);
             var wrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Conversation>()
                     .eq("user_id", userId)
                     .ge("update_time", twoHoursAgo)
                     .orderByDesc("update_time")
                     .last("LIMIT 1");
-            java.util.List<Conversation> recent = conversationDao.selectList(wrapper);
+            List<Conversation> recent = conversationDao.selectList(wrapper);
             if (recent != null && !recent.isEmpty()) {
                 return recent.get(0);
             }
@@ -73,24 +85,40 @@ public class ConversationContextService {
         return conv;
     }
 
-    /**
-     * Render prior turns into a prompt-ready history section. Returns an empty string
-     * when there is no conversation or no prior turns — callers should omit the slot.
-     */
+    /** Load history with default TRUNCATE strategy (backward-compatible). */
     public String loadHistorySection(Long conversationId) {
-        if (conversationId == null) {
-            return "";
-        }
+        return loadHistorySection(conversationId, OverflowStrategy.TRUNCATE, null, null);
+    }
+
+    /**
+     * Render prior turns into a prompt-ready history section.
+     * When strategy is SUMMARIZE and a cached summary exists, it is prepended
+     * before the recent turns. Otherwise behaves like TRUNCATE.
+     */
+    public String loadHistorySection(Long conversationId, OverflowStrategy strategy,
+                                     Long llmConfigId, Long userId) {
+        if (conversationId == null) return "";
         try {
             List<ConversationDetail> details = conversationDetailDao.selectList(
                     new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<ConversationDetail>()
                             .eq("conversation_id", conversationId)
                             .orderByDesc("create_time"));
-            if (details == null || details.isEmpty()) {
-                return "";
+            if (details == null || details.isEmpty()) return "";
+
+            // Check for cached summary when SUMMARIZE is active
+            String cachedSummary = null;
+            if (strategy == OverflowStrategy.SUMMARIZE) {
+                Conversation conv = conversationDao.selectById(conversationId);
+                if (conv != null && conv.getSummaryCache() != null && !conv.getSummaryCache().isBlank()) {
+                    cachedSummary = conv.getSummaryCache();
+                }
             }
-            // Most recent first from the query; render oldest→newest within the window.
-            return renderSlidingWindow(details);
+
+            String recentTurns = renderSlidingWindow(details);
+            if (cachedSummary != null) {
+                return "【早期对话摘要】\n" + cachedSummary + "\n\n" + recentTurns;
+            }
+            return recentTurns;
         } catch (Exception e) {
             log.warn("[ConversationContextService] loadHistorySection failed: {}", e.getMessage());
             return "";
@@ -99,9 +127,7 @@ public class ConversationContextService {
 
     /** Persist one completed turn so the next request can recall it. */
     public void appendTurn(Long conversationId, String userInput, String sqlOutput, String executeResult) {
-        if (conversationId == null) {
-            return;
-        }
+        if (conversationId == null) return;
         try {
             ConversationDetail d = new ConversationDetail();
             d.setConversationId(conversationId);
@@ -135,16 +161,73 @@ public class ConversationContextService {
     }
 
     /**
+     * Generate and cache a summary of all conversation detail turns for this
+     * conversation. Called after each turn completes when the SUMMARIZE strategy
+     * is active. The summary replaces any previously cached summary.
+     * <p>
+     * Best-effort: failures are logged but never thrown — history recording must
+     * never be blocked by summarisation.
+     */
+    public void generateAndCacheSummary(Long conversationId, Long llmConfigId, Long userId) {
+        if (conversationId == null) return;
+        try {
+            List<ConversationDetail> details = conversationDetailDao.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<ConversationDetail>()
+                            .eq("conversation_id", conversationId)
+                            .orderByAsc("create_time"));
+            if (details == null || details.size() < 2) return; // not enough to summarise
+
+            // Build a compact transcript of all turns
+            StringBuilder turns = new StringBuilder();
+            int n = 1;
+            for (ConversationDetail d : details) {
+                turns.append("[第").append(n++).append("轮]\n");
+                if (d.getUserInput() != null && !d.getUserInput().isBlank()) {
+                    turns.append("用户: ").append(excerpt(d.getUserInput(), 300)).append("\n");
+                }
+                if (d.getSqlOutput() != null && !d.getSqlOutput().isBlank()) {
+                    turns.append("SQL: ").append(excerpt(d.getSqlOutput(), 400)).append("\n");
+                }
+                if (d.getExecuteResult() != null && !d.getExecuteResult().isBlank()) {
+                    turns.append("结果: ").append(excerpt(d.getExecuteResult(), 500)).append("\n");
+                }
+                turns.append("\n");
+            }
+
+            LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
+            if (strategy == null) return;
+
+            String prompt = promptManager.render("conversation-summary", Map.of(
+                    "turns", turns.toString()
+            ));
+
+            String raw = strategy.generateSql(prompt, null);
+            String summary = normaliseSummary(raw);
+            if (summary.isEmpty()) return;
+
+            Conversation touch = new Conversation();
+            touch.setId(conversationId);
+            touch.setSummaryCache(summary);
+            touch.setUpdateTime(new Date());
+            conversationDao.updateById(touch);
+
+            log.info("[ConversationContextService] Cached summary for conversation {} ({} chars)", conversationId, summary.length());
+        } catch (Exception e) {
+            log.warn("[ConversationContextService] generateAndCacheSummary failed: {}", e.getMessage());
+        }
+    }
+
+    // ---- private helpers ----
+
+    /**
      * Sliding window: walk recent→old, accumulate turns while under the token budget
-     * and turn cap, then emit oldest→newest. Each turn is compressed (no raw result
-     * dump — just a short excerpt) to keep the slot cheap.
+     * and turn cap, then emit oldest→newest.
      */
     private String renderSlidingWindow(List<ConversationDetail> recentFirst) {
         int turns = 0;
         int used = 0;
-        int idx = recentFirst.size(); // for numbering oldest→newest in output
-        // We collect accepted turns (recent ones) then reverse for output order.
-        java.util.List<ConversationDetail> accepted = new java.util.ArrayList<>();
+        int idx = recentFirst.size();
+        List<ConversationDetail> accepted = new ArrayList<>();
         for (ConversationDetail d : recentFirst) {
             if (turns >= MAX_TURNS) break;
             String block = formatTurn(d, idx--);
@@ -155,7 +238,7 @@ public class ConversationContextService {
             accepted.add(d);
         }
         if (accepted.isEmpty()) return "";
-        java.util.Collections.reverse(accepted);
+        Collections.reverse(accepted);
         StringBuilder out = new StringBuilder();
         int n = 1;
         for (ConversationDetail d : accepted) {
@@ -175,6 +258,11 @@ public class ConversationContextService {
             sb.append("结果: ").append(excerpt(d.getExecuteResult(), 2000)).append("\n");
         }
         return sb.toString().trim();
+    }
+
+    private String normaliseSummary(String raw) {
+        if (raw == null) return "";
+        return raw.trim().replaceAll("^```[^\\n]*\\n", "").replaceAll("\\n```$", "").trim();
     }
 
     private int estimateTokens(String s) {

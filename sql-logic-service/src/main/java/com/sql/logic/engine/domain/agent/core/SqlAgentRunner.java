@@ -127,8 +127,8 @@ public class SqlAgentRunner {
                 agentCfg.name() == null ? "" : agentCfg.name());
         initialState.put(SqlAgentSpec.StateKey.AGENT_ID, agentCfg.agentId());
 
-        log.info("[SqlAgentRunner] Starting graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, conversationId={}, agentId={}, input='{}'",
-                threadId, autoConfirm, connectionId, userId, conversationId, agentCfg.agentId(), userInput);
+        log.info("[SqlAgentRunner] Starting graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, conversationId={}, agentId={}, tools={}, input='{}'",
+                threadId, autoConfirm, connectionId, userId, conversationId, agentCfg.agentId(), agentCfg.enabledTools(), userInput);
 
         TraceContext traceContext = new TraceContext(threadId, userId, workspaceId);
         traceContextRegistry.register(threadId, traceContext);

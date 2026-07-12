@@ -8,6 +8,7 @@ import com.sql.logic.engine.application.service.ColumnSampleService;
 import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.application.service.SchemaRelationService;
 import com.sql.logic.engine.domain.agent.AgentStateUtil;
+import com.sql.logic.engine.domain.agent.AgentToolGate;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.dto.ForeignKeyRelation;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
@@ -98,6 +99,14 @@ public class SchemaLinkingNode implements NodeAction {
             return Map.of(SqlAgentSpec.StateKey.TABLE_RELATION, "");
         }
 
+        // Tool gate: when schema tool is disabled, skip FK extraction + data sampling;
+        // pass through only what was recalled by RAG (evidence).
+        if (!AgentToolGate.isToolEnabled(state, AgentToolGate.TOOL_SCHEMA)) {
+            log.info("[SchemaLinkingNode] Schema tool disabled — using RAG-recalled evidence only");
+            String ragEvidence = (evidence != null && !evidence.isBlank()) ? evidence : "";
+            return Map.of(SqlAgentSpec.StateKey.TABLE_RELATION, ragEvidence);
+        }
+
         // 2. Collect initial table names (from state or all tables)
         List<String> tableNames = getInitialTableNames(state, connectionId, schemaName);
         if (tableNames.isEmpty()) {
@@ -120,13 +129,14 @@ public class SchemaLinkingNode implements NodeAction {
 
         // 5. Build schema context for LLM filtering
         boolean isLargeSchema = expandedTableList.size() > LARGE_SCHEMA_THRESHOLD;
+        boolean includeSamples = AgentToolGate.isToolEnabled(state, AgentToolGate.TOOL_SAMPLE);
         String schemaContext;
         if (isLargeSchema) {
             // Condensed format: table names + column names only, no full DDL or samples
             schemaContext = buildCondensedSchemaContext(connectionId, schemaName, expandedTableList, relevantRelations);
         } else {
-            // Full format: DDL + FK expressions + data samples
-            schemaContext = buildFullSchemaContext(connectionId, schemaName, expandedTableList, relevantRelations);
+            // Full format: DDL + FK expressions + data samples (if enabled)
+            schemaContext = buildFullSchemaContext(connectionId, schemaName, expandedTableList, relevantRelations, includeSamples);
         }
 
         // 6. Render mix-selector prompt and call LLM for table filtering
@@ -174,7 +184,7 @@ public class SchemaLinkingNode implements NodeAction {
                 allRelations, finalTableSet);
 
         // 9. Build final filtered schema context (always full format for the filtered set)
-        String filteredSchema = buildFullSchemaContext(connectionId, schemaName, new ArrayList<>(finalTableSet), finalRelations);
+        String filteredSchema = buildFullSchemaContext(connectionId, schemaName, new ArrayList<>(finalTableSet), finalRelations, includeSamples);
 
         // 10. Build FK expressions string
         String fkExpressions = columnSampleService.buildForeignKeyExpressions(finalRelations);
@@ -219,7 +229,7 @@ public class SchemaLinkingNode implements NodeAction {
      * Build full schema context with DDL + FK expressions + data samples.
      */
     private String buildFullSchemaContext(Long connectionId, String schemaName, List<String> tableNames,
-                                           List<ForeignKeyRelation> relations) {
+                                           List<ForeignKeyRelation> relations, boolean includeSamples) {
         StringBuilder sb = new StringBuilder();
 
         // DDL for each table
@@ -236,10 +246,12 @@ public class SchemaLinkingNode implements NodeAction {
             sb.append("\n【Foreign keys】\n").append(fkExpressions).append("\n");
         }
 
-        // Data samples
-        String samples = columnSampleService.getColumnSamples(connectionId, tableNames, schemaName);
-        if (!samples.isBlank()) {
-            sb.append("\n").append(samples);
+        // Data samples (only when sample tool is enabled)
+        if (includeSamples) {
+            String samples = columnSampleService.getColumnSamples(connectionId, tableNames, schemaName);
+            if (!samples.isBlank()) {
+                sb.append("\n").append(samples);
+            }
         }
 
         return sb.toString();

@@ -2,6 +2,7 @@ package com.sql.logic.engine.application.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.sql.logic.engine.common.dto.ConversationSummaryDTO;
 import com.sql.logic.engine.infrastructure.dao.AgentExecutionDao;
 import com.sql.logic.engine.infrastructure.dao.AgentExecutionStepDao;
 import com.sql.logic.engine.infrastructure.dao.ConversationDao;
@@ -19,8 +20,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class ConversationAppService {
@@ -121,6 +122,60 @@ public class ConversationAppService {
         QueryWrapper<ConversationDetail> query = new QueryWrapper<>();
         query.eq("conversation_id", conversationId).orderByAsc("create_time");
         return conversationDetailDao.selectList(query);
+    }
+
+    /**
+     * Paginated conversation list enriched with turn-count and last-message preview.
+     */
+    public Page<ConversationSummaryDTO> listConversationSummaries(Long userId, int page, int size,
+                                                                   String keyword, String startDate, String endDate) {
+        Page<Conversation> p = listConversations(userId, page, size, keyword, startDate, endDate);
+        List<Conversation> conversations = p.getRecords();
+
+        Page<ConversationSummaryDTO> result = new Page<>(p.getCurrent(), p.getSize(), p.getTotal());
+        if (conversations.isEmpty()) {
+            result.setRecords(List.of());
+            return result;
+        }
+
+        List<Long> ids = conversations.stream().map(Conversation::getId).collect(Collectors.toList());
+
+        // Batch-fetch turn counts
+        Map<Long, Integer> countMap = new HashMap<>();
+        List<Map<String, Object>> counts = conversationDetailDao.countByConversationIds(ids);
+        for (Map<String, Object> row : counts) {
+            Long cid = ((Number) row.get("conversation_id")).longValue();
+            int cnt = ((Number) row.get("cnt")).intValue();
+            countMap.put(cid, cnt);
+        }
+
+        // Batch-fetch last messages
+        Map<Long, String> lastMsgMap = new HashMap<>();
+        List<Map<String, Object>> lastMsgs = conversationDetailDao.selectLastMessages(ids);
+        for (Map<String, Object> row : lastMsgs) {
+            Long cid = ((Number) row.get("conversation_id")).longValue();
+            String msg = (String) row.get("user_input");
+            lastMsgMap.put(cid, msg != null ? msg : "");
+        }
+
+        List<ConversationSummaryDTO> summaries = conversations.stream().map(c -> {
+            ConversationSummaryDTO dto = new ConversationSummaryDTO();
+            dto.setId(c.getId());
+            dto.setUserId(c.getUserId());
+            dto.setTitle(c.getTitle());
+            dto.setTurnCount(countMap.getOrDefault(c.getId(), 0));
+            String lastMsg = lastMsgMap.getOrDefault(c.getId(), "");
+            if (lastMsg.length() > 100) {
+                lastMsg = lastMsg.substring(0, 100) + "...";
+            }
+            dto.setLastMessage(lastMsg);
+            dto.setLastActiveTime(c.getUpdateTime());
+            dto.setCreateTime(c.getCreateTime());
+            return dto;
+        }).collect(Collectors.toList());
+
+        result.setRecords(summaries);
+        return result;
     }
 
     /**

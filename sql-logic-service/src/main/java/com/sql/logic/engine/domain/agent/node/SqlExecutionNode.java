@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.AgentStateUtil;
+import com.sql.logic.engine.domain.agent.AgentToolGate;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.model.SqlExecutionResult;
 import com.sql.logic.engine.domain.agent.service.SqlExecutionService;
@@ -54,6 +55,19 @@ public class SqlExecutionNode implements NodeAction {
         int fixAttemptCount = readInt(state, SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT, 0);
 
         Map<String, Object> out = new LinkedHashMap<>();
+
+        // Tool gate: when sql tool is disabled, skip execution entirely.
+        if (!AgentToolGate.isToolEnabled(state, AgentToolGate.TOOL_SQL)) {
+            log.info("[SqlExecutionNode] SQL tool disabled — skipping execution at step {}", currentStep);
+            String disabledJson = objectMapper.writeValueAsString(Map.of(
+                    "skipped", true,
+                    "message", "SQL 执行已被禁用（Agent Studio 工具开关关闭了 sql 工具）"
+            ));
+            out.put(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, disabledJson);
+            out.put(SqlAgentSpec.StateKey.SQL_ERROR, "");
+            out.put(SqlAgentSpec.StateKey.CURRENT_STEP, currentStep + 1);
+            return out;
+        }
 
         if (sql == null || sql.isBlank()) {
             log.warn("[SqlExecutionNode] No SQL to execute at step {}.", currentStep);

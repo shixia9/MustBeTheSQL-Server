@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.AgentStateUtil;
+import com.sql.logic.engine.domain.agent.AgentToolGate;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.dto.Plan;
 import com.sql.logic.engine.domain.agent.dto.PlanStep;
@@ -64,7 +65,7 @@ public class PlanDispatchNode implements NodeAction {
         }
 
         PlanStep step = steps.get(currentStep - 1);
-        String nextNode = mapToolToNode(step.toolToUse());
+        String nextNode = mapToolToNode(step.toolToUse(), state);
         log.info("[PlanDispatch] step {}/{} tool={} → {}", currentStep, steps.size(), step.toolToUse(), nextNode);
         out.put(SqlAgentSpec.StateKey.NEXT_NODE, nextNode);
         return out;
@@ -74,7 +75,7 @@ public class PlanDispatchNode implements NodeAction {
      * Map the plan's tool name (reference-project vocabulary) onto the actual
      * graph node id. Unknown tools degrade to END.
      */
-    private String mapToolToNode(String toolToUse) {
+    private String mapToolToNode(String toolToUse, OverAllState state) {
         if (toolToUse == null) {
             return SqlAgentSpec.Node.REPORT;
         }
@@ -84,6 +85,11 @@ public class PlanDispatchNode implements NodeAction {
             case "REPORT_GENERATOR_NODE":
                 return SqlAgentSpec.Node.REPORT;
             case "PYTHON_GENERATE_NODE":
+                // Safety net: if python tool is disabled, degrade to REPORT
+                if (!AgentToolGate.isToolEnabled(state, AgentToolGate.TOOL_PYTHON)) {
+                    log.warn("[PlanDispatch] PYTHON_GENERATE_NODE requested but python tool is disabled — routing to REPORT instead");
+                    return SqlAgentSpec.Node.REPORT;
+                }
                 return SqlAgentSpec.Node.PYTHON_GENERATION;
             default:
                 log.warn("[PlanDispatch] Unknown tool_to_use '{}' — routing to REPORT.", toolToUse);
