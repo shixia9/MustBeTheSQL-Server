@@ -29,7 +29,7 @@ spring:
 # Dubbo RPC — provider for admin module
 dubbo:
   application:
-    name: sql-logic-service
+    name: sql-logic-service-dubbo
     logger: slf4j
   protocol:
     name: dubbo
