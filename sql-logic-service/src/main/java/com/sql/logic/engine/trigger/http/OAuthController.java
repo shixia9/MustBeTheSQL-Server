@@ -1,12 +1,16 @@
 package com.sql.logic.engine.trigger.http;
 
+import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.domain.oauth.OAuthService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -20,13 +24,16 @@ public class OAuthController {
 
     private final OAuthService oauthService;
 
+    @Value("${oauth.frontend-url:http://localhost:5173}")
+    private String frontendUrl;
+
     public OAuthController(OAuthService oauthService) {
         this.oauthService = oauthService;
     }
 
     @GetMapping("/github/status")
-    public Map<String, Boolean> status() {
-        return Map.of("configured", oauthService.isConfigured());
+    public Result<Map<String, Boolean>> status() {
+        return Result.success(Map.of("configured", oauthService.isConfigured()));
     }
 
     @GetMapping("/github/authorize")
@@ -50,7 +57,7 @@ public class OAuthController {
             response.sendRedirect(redirectPath);
         } catch (Exception e) {
             log.error("[OAuthController] GitHub callback failed: {}", e.getMessage());
-            response.sendRedirect("/?error=" + java.net.URLEncoder.encode(e.getMessage(), "UTF-8"));
+            response.sendRedirect(frontendUrl + "/?error=" + URLEncoder.encode(e.getMessage(), StandardCharsets.UTF_8));
         }
     }
 }

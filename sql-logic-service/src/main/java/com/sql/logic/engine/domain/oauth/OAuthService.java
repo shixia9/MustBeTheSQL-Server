@@ -49,6 +49,9 @@ public class OAuthService {
     @Value("${oauth.github.redirect-uri:http://localhost:8080/api/v1/oauth/github/callback}")
     private String redirectUri;
 
+    @Value("${oauth.frontend-url:http://localhost:5173}")
+    private String frontendUrl;
+
     private final UserAppService userAppService;
     private final ObjectMapper objectMapper;
 
@@ -93,8 +96,8 @@ public class OAuthService {
                 .setTimeout(DEFAULT_LOGIN_SESSION_TIMEOUT));
         StpUtil.getSession().set(user.getId().toString(), user);
         log.info("[OAuthService] GitHub OAuth login success: userId={}, githubLogin={}", user.getId(), githubUser.login);
-        // 5. Redirect to frontend
-        return "/dashboard";
+        // 5. Redirect to frontend (Vite dev server / production build)
+        return frontendUrl + "/dashboard";
     }
 
     private String exchangeCodeForToken(String code) {
@@ -183,17 +186,20 @@ public class OAuthService {
         // Try to find by email first
         if (githubUser.email != null) {
             try {
-                UserInfo existing = userAppService.login(githubUser.email, null);
-                // login with null password won't work; use lookup instead
                 return userAppService.getUserByEmail(githubUser.email);
             } catch (Exception e) {
-                // Not found, fall through to create
+                // Not found by email, fall through to create
             }
+        }
+        // Try by GitHub login as username
+        if (githubUser.login != null) {
+            try {
+                return userAppService.getUserByEmail(githubUser.login);
+            } catch (Exception ignored) {}
         }
         // Create a new user with a random password (they'll use OAuth going forward)
         try {
-            String username = githubUser.login != null ? githubUser.login : "github_user_" + UUID.randomUUID().toString().substring(0, 6);
-            // Ensure username is unique
+            String username = githubUser.login != null ? githubUser.login : "gh_" + UUID.randomUUID().toString().substring(0, 6);
             try {
                 return userAppService.register(username, UUID.randomUUID().toString(), githubUser.email);
             } catch (Exception e) {
