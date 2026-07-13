@@ -108,6 +108,16 @@ public class UserAppService {
         return user;
     }
 
+    public UserInfo getUserByEmail(String email) {
+        QueryWrapper<UserInfo> qw = new QueryWrapper<>();
+        qw.eq("email", email);
+        UserInfo user = userInfoDao.selectOne(qw);
+        if (user == null) {
+            throw new IllegalArgumentException("User not found with email: " + email);
+        }
+        return user;
+    }
+
     public void deductTokens(Long userId, int tokens) {
         if (tokens <= 0) return;
 

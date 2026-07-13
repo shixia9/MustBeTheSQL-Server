@@ -25,6 +25,8 @@ public class AgentEntityRequest {
     private Integer topK;
     private Double scoreThreshold;
     private Boolean ragEnabled;
+    /** Context overflow strategy: TRUNCATE or SUMMARIZE. */
+    private String contextStrategy;
     private Boolean memoryEnabled;
     private Boolean isDefault;
 }

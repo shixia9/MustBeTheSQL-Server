@@ -21,13 +21,16 @@ public class AdminDataProvider implements AdminDataService {
     private final UserInfoDao userInfoDao;
     private final LlmCallMetricsDao llmCallMetricsDao;
     private final AgentExecutionDao agentExecutionDao;
+    private final UserLlmConfigDao userLlmConfigDao;
 
     public AdminDataProvider(UserInfoDao userInfoDao,
                              LlmCallMetricsDao llmCallMetricsDao,
-                             AgentExecutionDao agentExecutionDao) {
+                             AgentExecutionDao agentExecutionDao,
+                             UserLlmConfigDao userLlmConfigDao) {
         this.userInfoDao = userInfoDao;
         this.llmCallMetricsDao = llmCallMetricsDao;
         this.agentExecutionDao = agentExecutionDao;
+        this.userLlmConfigDao = userLlmConfigDao;
     }
 
     @Override
@@ -60,9 +63,18 @@ public class AdminDataProvider implements AdminDataService {
     @Override
     public List<AdminDataDTOs.LlmMetricDTO> getLlmMetrics() {
         List<LlmCallMetrics> metrics = llmCallMetricsDao.selectList(null);
+        // Batch-load config names for readability in the admin dashboard
+        Map<Long, String> configNames = new HashMap<>();
+        for (LlmCallMetrics m : metrics) {
+            if (m.getConfigId() != null && !configNames.containsKey(m.getConfigId())) {
+                UserLlmConfig cfg = userLlmConfigDao.selectById(m.getConfigId());
+                configNames.put(m.getConfigId(), cfg != null ? cfg.getConfigName() : null);
+            }
+        }
         return metrics.stream().map(m -> {
             AdminDataDTOs.LlmMetricDTO dto = new AdminDataDTOs.LlmMetricDTO();
             dto.setConfigId(m.getConfigId());
+            dto.setConfigName(configNames.getOrDefault(m.getConfigId(), "Config #" + m.getConfigId()));
             dto.setUserId(m.getUserId());
             dto.setWindowStart(m.getWindowStart());
             int total = m.getSuccessCount() + m.getFailureCount();

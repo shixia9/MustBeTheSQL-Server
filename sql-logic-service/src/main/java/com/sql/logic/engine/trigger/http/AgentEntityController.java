@@ -2,6 +2,7 @@ package com.sql.logic.engine.trigger.http;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.sql.logic.engine.application.service.AgentEntityAppService;
+import com.sql.logic.engine.application.service.AgentVersionAppService;
 import com.sql.logic.engine.common.dto.AgentEntityRequest;
 import com.sql.logic.engine.common.dto.AgentEntityResponse;
 import com.sql.logic.engine.common.response.Result;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Phase B (B4) Agent Studio REST API.
@@ -32,11 +34,14 @@ public class AgentEntityController {
     private static final Logger log = LoggerFactory.getLogger(AgentEntityController.class);
 
     private final AgentEntityAppService agentEntityAppService;
+    private final AgentVersionAppService agentVersionAppService;
     private final AgentRuntimeConfigService agentRuntimeConfigService;
 
     public AgentEntityController(AgentEntityAppService agentEntityAppService,
+                                AgentVersionAppService agentVersionAppService,
                                 AgentRuntimeConfigService agentRuntimeConfigService) {
         this.agentEntityAppService = agentEntityAppService;
+        this.agentVersionAppService = agentVersionAppService;
         this.agentRuntimeConfigService = agentRuntimeConfigService;
     }
 
@@ -100,5 +105,51 @@ public class AgentEntityController {
         }
         agentRuntimeConfigService.invalidate(userId);
         return Result.success(null);
+    }
+
+    // ---- Phase D3: Agent version management ----
+
+    @PostMapping("/{id}/publish")
+    public Result<Map<String, Object>> publishVersion(@PathVariable Long id) {
+        Long userId = getCurrentUserId();
+        try {
+            var v = agentVersionAppService.publish(id, userId);
+            return Result.success(Map.of(
+                    "id", v.getId(),
+                    "versionNumber", v.getVersionNumber(),
+                    "publishTime", v.getPublishTime().toString()
+            ));
+        } catch (IllegalArgumentException e) {
+            return Result.error(404, e.getMessage());
+        }
+    }
+
+    @GetMapping("/{id}/versions")
+    public Result<List<Map<String, Object>>> listVersions(@PathVariable Long id) {
+        Long userId = getCurrentUserId();
+        try {
+            return Result.success(agentVersionAppService.listVersions(id, userId));
+        } catch (IllegalArgumentException e) {
+            return Result.error(404, e.getMessage());
+        }
+    }
+
+    @GetMapping("/{id}/versions/{versionId}")
+    public Result<String> getVersionSnapshot(@PathVariable Long id, @PathVariable Long versionId) {
+        Long userId = getCurrentUserId();
+        String snapshot = agentVersionAppService.getSnapshot(versionId, id, userId);
+        return snapshot == null ? Result.error(404, "Version not found") : Result.success(snapshot);
+    }
+
+    @PostMapping("/{id}/versions/{versionId}/revert")
+    public Result<Void> revertToVersion(@PathVariable Long id, @PathVariable Long versionId) {
+        Long userId = getCurrentUserId();
+        try {
+            agentVersionAppService.revert(versionId, id, userId);
+            agentRuntimeConfigService.invalidate(userId);
+            return Result.success(null);
+        } catch (IllegalArgumentException e) {
+            return Result.error(404, e.getMessage());
+        }
     }
 }

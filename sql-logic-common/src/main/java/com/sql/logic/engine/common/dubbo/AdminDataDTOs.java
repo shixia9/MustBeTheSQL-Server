@@ -43,6 +43,7 @@ public class AdminDataDTOs {
     public static class LlmMetricDTO implements Serializable {
         private static final long serialVersionUID = 1L;
         private Long configId;
+        private String configName;
         private Long userId;
         private java.time.LocalDateTime windowStart;
         private int totalCalls;
@@ -55,6 +56,8 @@ public class AdminDataDTOs {
 
         public Long getConfigId() { return configId; }
         public void setConfigId(Long configId) { this.configId = configId; }
+        public String getConfigName() { return configName; }
+        public void setConfigName(String configName) { this.configName = configName; }
         public Long getUserId() { return userId; }
         public void setUserId(Long userId) { this.userId = userId; }
         public java.time.LocalDateTime getWindowStart() { return windowStart; }

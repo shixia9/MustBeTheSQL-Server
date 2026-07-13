@@ -24,6 +24,7 @@ public class AdminLlmController {
         for (AdminDataDTOs.LlmMetricDTO m : metrics) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("configId", m.getConfigId());
+            row.put("configName", m.getConfigName());
             row.put("userId", m.getUserId());
             row.put("windowStart", m.getWindowStart());
             row.put("totalCalls", m.getTotalCalls());

@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.common.dto.AgentEntityRequest;
 import com.sql.logic.engine.common.dto.AgentEntityResponse;
 import com.sql.logic.engine.infrastructure.dao.AgentEntityDao;
+import com.sql.logic.engine.infrastructure.dao.WorkspaceMemberDao;
 import com.sql.logic.engine.infrastructure.po.AgentEntity;
+import com.sql.logic.engine.infrastructure.po.WorkspaceMember;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -20,7 +22,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Phase B (B4) Agent Studio application service.
+ * Agent Studio application service.
  * <p>
  * CRUD over {@code agent_entity} plus default-Agent election (only one default per user).
  * JSON config columns ({@code tools_config}, {@code rag_config}) are serialised from the
@@ -33,13 +35,39 @@ public class AgentEntityAppService {
     private static final List<String> ALL_TOOLS = List.of("sql", "schema", "python", "sample");
 
     private final AgentEntityDao agentEntityDao;
+    private final WorkspaceMemberDao workspaceMemberDao;
     private final ObjectMapper objectMapper;
 
-    public AgentEntityAppService(AgentEntityDao agentEntityDao, ObjectMapper objectMapper) {
+    public AgentEntityAppService(AgentEntityDao agentEntityDao,
+                                 WorkspaceMemberDao workspaceMemberDao,
+                                 ObjectMapper objectMapper) {
         this.agentEntityDao = agentEntityDao;
+        this.workspaceMemberDao = workspaceMemberDao;
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * List agents accessible to the user: own agents + agents shared within
+     * workspaces the user is a member of (Phase D3 workspace sharing).
+     */
+    public List<AgentEntityResponse> listAccessibleAgents(Long userId) {
+        // 1. User's own agents
+        QueryWrapper<AgentEntity> qw = new QueryWrapper<>();
+        qw.eq("user_id", userId).eq("status", 1);
+
+        // 2. Agents shared in workspaces the user belongs to
+        List<Long> workspaceIds = workspaceMemberDao.selectList(
+                new QueryWrapper<WorkspaceMember>().eq("user_id", userId))
+                .stream().map(WorkspaceMember::getWorkspaceId).toList();
+        if (!workspaceIds.isEmpty()) {
+            qw.or(w -> w.in("workspace_id", workspaceIds).ne("user_id", userId));
+        }
+
+        qw.orderByDesc("is_default").orderByDesc("update_time");
+        return agentEntityDao.selectList(qw).stream().map(this::toResponse).toList();
+    }
+
+    /** Original user-only listing, kept for backward compatibility. */
     public List<AgentEntityResponse> listByUser(Long userId, Long workspaceId) {
         QueryWrapper<AgentEntity> qw = new QueryWrapper<>();
         qw.eq("user_id", userId);
@@ -53,6 +81,11 @@ public class AgentEntityAppService {
     public AgentEntityResponse getById(Long id, Long userId) {
         AgentEntity e = owned(id, userId);
         return e == null ? null : toResponse(e);
+    }
+
+    /** Phase D3: Return the raw entity for snapshot creation. */
+    public AgentEntity getRawEntity(Long id, Long userId) {
+        return owned(id, userId);
     }
 
     /** Return the user's default Agent, or the first one, or null if none exist. */
@@ -143,7 +176,7 @@ public class AgentEntityAppService {
         if (req.getSystemPrompt() != null) e.setSystemPrompt(req.getSystemPrompt());
         if (req.getWelcomeMessage() != null) e.setWelcomeMessage(req.getWelcomeMessage());
         e.setToolsConfig(buildToolsJson(req.getEnabledTools()));
-        e.setRagConfig(buildRagJson(req.getTopK(), req.getScoreThreshold(), req.getRagEnabled()));
+        e.setRagConfig(buildRagJson(req.getTopK(), req.getScoreThreshold(), req.getRagEnabled(), req.getContextStrategy()));
     }
 
     private String buildToolsJson(List<String> enabledTools) {
@@ -154,12 +187,32 @@ public class AgentEntityAppService {
         return writeJson(map);
     }
 
-    private String buildRagJson(Integer topK, Double scoreThreshold, Boolean enabled) {
+    private String buildRagJson(Integer topK, Double scoreThreshold, Boolean enabled, String contextStrategy) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("topK", topK == null ? 5 : topK);
         map.put("scoreThreshold", scoreThreshold == null ? 0.6 : scoreThreshold);
         map.put("enabled", enabled == null || enabled);
+        map.put("contextStrategy", contextStrategy == null || contextStrategy.isBlank() ? "TRUNCATE" : contextStrategy);
         return writeJson(map);
+    }
+
+    /**
+     * Phase D3: Revert entity fields from a published version snapshot.
+     */
+    public void revertToSnapshot(Long id, Long userId, Map<String, Object> snap) {
+        AgentEntity e = owned(id, userId);
+        if (e == null) return;
+        if (snap.get("name") != null) e.setName((String) snap.get("name"));
+        if (snap.get("description") != null) e.setDescription((String) snap.get("description"));
+        if (snap.get("avatar") != null) e.setAvatar((String) snap.get("avatar"));
+        if (snap.get("systemPrompt") != null) e.setSystemPrompt((String) snap.get("systemPrompt"));
+        if (snap.get("welcomeMessage") != null) e.setWelcomeMessage((String) snap.get("welcomeMessage"));
+        if (snap.get("toolsConfig") != null) e.setToolsConfig((String) snap.get("toolsConfig"));
+        if (snap.get("ragConfig") != null) e.setRagConfig((String) snap.get("ragConfig"));
+        if (snap.get("memoryEnabled") != null) e.setMemoryEnabled((Integer) snap.get("memoryEnabled"));
+        if (snap.get("isDefault") != null) e.setIsDefault((Integer) snap.get("isDefault"));
+        e.setUpdateTime(new Date());
+        agentEntityDao.updateById(e);
     }
 
     private String writeJson(Object o) {

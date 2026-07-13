@@ -7,10 +7,14 @@ import com.sql.logic.engine.common.dto.UpdateKeysRequest;
 import com.sql.logic.engine.common.dto.UpdatePasswordRequest;
 import com.sql.logic.engine.common.dto.UpdateProfileRequest;
 import com.sql.logic.engine.common.response.Result;
+import com.sql.logic.engine.infrastructure.dao.AdminUserDao;
+import com.sql.logic.engine.infrastructure.po.AdminUser;
 import com.sql.logic.engine.infrastructure.po.UserInfo;
 
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
+
+import java.util.Map;
 
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -20,11 +24,13 @@ import org.springframework.web.multipart.MultipartFile;
 public class UserController {
 
     private final UserAppService userAppService;
+    private final AdminUserDao adminUserDao;
 
     private static final Integer DEFAULT_LOGIN_SESSION_TIMEOUT = 60 * 60 * 24 * 7;
 
-    public UserController(UserAppService userAppService) {
+    public UserController(UserAppService userAppService, AdminUserDao adminUserDao) {
         this.userAppService = userAppService;
+        this.adminUserDao = adminUserDao;
     }
 
     @PostMapping("/login")
@@ -140,6 +146,25 @@ public class UserController {
             return Result.success(true);
         } catch (Exception e) {
             return Result.error(400, e.getMessage());
+        }
+    }
+
+    @GetMapping("/admin-check")
+    public Result<Map<String, Object>> adminCheck() {
+        try {
+            String loginUserIdStr = (String) StpUtil.getLoginId();
+            if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
+                return Result.success(Map.of("isAdmin", false, "role", "USER"));
+            }
+            Long loginUserId = Long.valueOf(loginUserIdStr);
+            AdminUser admin = adminUserDao.findByUserId(loginUserId);
+            boolean isAdmin = admin != null;
+            return Result.success(Map.of(
+                    "isAdmin", isAdmin,
+                    "role", isAdmin ? admin.getRole() : "USER"
+            ));
+        } catch (Exception e) {
+            return Result.success(Map.of("isAdmin", false, "role", "USER"));
         }
     }
 
