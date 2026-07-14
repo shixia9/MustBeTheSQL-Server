@@ -160,6 +160,40 @@ public class McpServerManager {
         return t != null && t.isConnected();
     }
 
+    /**
+     * Call a tool registered by any connected MCP server.
+     * Finds the server that owns the tool, sends a tools/call request,
+     * and returns the serialised result content.
+     */
+    public String callTool(String toolName, Map<String, Object> arguments) {
+        for (Map.Entry<Long, McpTransport> entry : activeTransports.entrySet()) {
+            McpTransport transport = entry.getValue();
+            if (transport.isConnected()) {
+                try {
+                    String result = transport.sendRequest("tools/call", Map.of(
+                            "name", toolName,
+                            "arguments", arguments
+                    ));
+                    if (result != null) {
+                        // Extract content from MCP response
+                        JsonNode node = objectMapper.readTree(result);
+                        if (node.has("content") && node.get("content").isArray()) {
+                            StringBuilder sb = new StringBuilder();
+                            for (JsonNode c : node.get("content")) {
+                                if (c.has("text")) sb.append(c.get("text").asText());
+                            }
+                            return sb.toString();
+                        }
+                        return result;
+                    }
+                } catch (Exception e) {
+                    log.warn("[McpServerManager] Tool call '{}' failed on server {}: {}", toolName, entry.getKey(), e.getMessage());
+                }
+            }
+        }
+        throw new McpException("No connected MCP server can handle tool: " + toolName);
+    }
+
     private McpTransport buildTransport(McpServerConfig cfg) {
         if ("SSE".equalsIgnoreCase(cfg.getTransportType())) {
             return new McpSseTransport(cfg.getEndpoint(), objectMapper);

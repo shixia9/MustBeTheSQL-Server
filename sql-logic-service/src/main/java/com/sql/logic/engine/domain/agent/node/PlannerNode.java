@@ -11,6 +11,8 @@ import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.agent.tool.ToolDefinition;
+import com.sql.logic.engine.domain.agent.tool.ToolRegistry;
 import com.sql.logic.engine.domain.trace.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Planner Node (Phase 3) — produces a multi-step execution plan as JSON.
+ * Planner Node — produces a multi-step execution plan as JSON.
  * <p>
  * Renders {@code planner.st} with the recalled schema + evidence + a forced JSON
  * schema (via {@link BeanOutputConverter}), then parses the LLM output into a
@@ -41,15 +43,18 @@ public class PlannerNode implements NodeAction {
     private final PromptManager promptManager;
     private final ObjectMapper objectMapper;
     private final LlmCallReporter llmCallReporter;
+    private final ToolRegistry toolRegistry;
 
     public PlannerNode(LlmClientManager llmClientManager,
                         PromptManager promptManager,
                         ObjectMapper objectMapper,
-                        LlmCallReporter llmCallReporter) {
+                        LlmCallReporter llmCallReporter,
+                        ToolRegistry toolRegistry) {
         this.llmClientManager = llmClientManager;
         this.promptManager = promptManager;
         this.objectMapper = objectMapper;
         this.llmCallReporter = llmCallReporter;
+        this.toolRegistry = toolRegistry;
     }
 
     @Override
@@ -87,6 +92,9 @@ public class PlannerNode implements NodeAction {
         boolean pythonEnabled = AgentToolGate.isToolEnabled(state, AgentToolGate.TOOL_PYTHON);
         String pythonConstraint = pythonEnabled ? "" : "注意：当前不支持 Python 分析能力，请勿在计划中使用 PYTHON_GENERATE_NODE。所有分析步骤请使用 SQL_GENERATE_NODE。";
 
+        // Build MCP tools section for the planner prompt
+        String mcpToolsSection = buildMcpToolsSection();
+
         String prompt = promptManager.render(SqlAgentSpec.PromptName.PLANNER, Map.of(
                 "user_question", rewriteQuery,
                 "schema", schema,
@@ -95,6 +103,7 @@ public class PlannerNode implements NodeAction {
                 "plan_validation_error", planValidationError,
                 "conversation_history_section", conversationHistorySection,
                 "python_constraint", pythonConstraint,
+                "mcp_tools_section", mcpToolsSection,
                 "format", converter.getFormat()
         ));
 
@@ -126,5 +135,30 @@ public class PlannerNode implements NodeAction {
         out.put(SqlAgentSpec.StateKey.CONFIRMATION_FEEDBACK, "");
 
         return out;
+    }
+
+    /** Build a prompt section describing available MCP tools for the planner. */
+    private String buildMcpToolsSection() {
+        List<ToolDefinition> mcpTools = toolRegistry.listTools().stream()
+                .filter(t -> t.type().name().startsWith("MCP_"))
+                .toList();
+        if (mcpTools.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 4. 外部 MCP 工具 (Available MCP Tools)\n\n");
+        sb.append("你可以使用以下外部工具来获取外部数据。在步骤中使用工具名称（原始名称，例如 `search_tickets`）作为 `tool_to_use`，instruction 填写 JSON 格式的调用参数。\n\n");
+        for (ToolDefinition tool : mcpTools) {
+            sb.append("### ").append(tool.displayName()).append(" (`").append(tool.name()).append("`)\n");
+            sb.append("- **描述**: ").append(tool.description()).append("\n");
+            if (tool.parametersSchema() != null) {
+                sb.append("- **参数格式**: ").append(tool.parametersSchema()).append("\n");
+            }
+            sb.append("\n");
+        }
+        sb.append("**使用 MCP 工具的步骤格式示例**:\n");
+        sb.append("```json\n{\n  \"step\": 1,\n  \"tool_to_use\": \"search_tickets\",\n");
+        sb.append("  \"tool_parameters\": {\"instruction\": \"{\\\"from\\\":\\\"北京\\\",\\\"to\\\":\\\"上海\\\",\\\"date\\\":\\\"2026-07-20\\\"}\"}\n}\n```\n");
+        return sb.toString();
     }
 }

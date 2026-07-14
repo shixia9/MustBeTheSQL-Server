@@ -35,6 +35,7 @@ public final class SqlAgentSpec {
         public static final String TASK_SPLIT = "TASK_SPLIT";
         public static final String TASK_DISPATCH = "TASK_DISPATCH";
         public static final String SUMMARIZE = "SUMMARIZE";
+        public static final String MCP_TOOL_EXECUTOR = "MCP_TOOL_EXECUTOR";
     }
 
     // ======================== State Keys ========================
@@ -116,6 +117,10 @@ public final class SqlAgentSpec {
         public static final String AGENT_TOOLS = "agentTools";
         public static final String AGENT_NAME = "agentName";
         public static final String AGENT_ID = "agentId";
+        // ---- MCP Tool ----
+        public static final String MCP_TOOL_NAME = "mcpToolName";
+        public static final String MCP_TOOL_PARAMS = "mcpToolParams";
+        public static final String MCP_TOOL_RESULT = "mcpToolResult";
     }
 
     // ======================== Prompt Template Names ========================

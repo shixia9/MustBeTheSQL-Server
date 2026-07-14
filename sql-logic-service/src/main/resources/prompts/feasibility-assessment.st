@@ -97,4 +97,6 @@
 【多轮输入】
 {multi_turn}
 
+{mcp_tools}
+
 【输出】

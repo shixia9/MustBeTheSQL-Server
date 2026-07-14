@@ -9,6 +9,8 @@ import com.sql.logic.engine.infrastructure.dao.AgentEntityDao;
 import com.sql.logic.engine.infrastructure.dao.WorkspaceMemberDao;
 import com.sql.logic.engine.infrastructure.po.AgentEntity;
 import com.sql.logic.engine.infrastructure.po.WorkspaceMember;
+import com.sql.logic.engine.domain.agent.tool.ToolRegistry;
+import com.sql.logic.engine.domain.agent.tool.ToolDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,17 +34,19 @@ import java.util.Map;
 public class AgentEntityAppService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentEntityAppService.class);
-    private static final List<String> ALL_TOOLS = List.of("sql", "schema", "python", "sample");
 
     private final AgentEntityDao agentEntityDao;
     private final WorkspaceMemberDao workspaceMemberDao;
+    private final ToolRegistry toolRegistry;
     private final ObjectMapper objectMapper;
 
     public AgentEntityAppService(AgentEntityDao agentEntityDao,
                                  WorkspaceMemberDao workspaceMemberDao,
+                                 ToolRegistry toolRegistry,
                                  ObjectMapper objectMapper) {
         this.agentEntityDao = agentEntityDao;
         this.workspaceMemberDao = workspaceMemberDao;
+        this.toolRegistry = toolRegistry;
         this.objectMapper = objectMapper;
     }
 
@@ -192,8 +196,8 @@ public class AgentEntityAppService {
 
     private String buildToolsJson(List<String> enabledTools) {
         Map<String, Boolean> map = new LinkedHashMap<>();
-        for (String t : ALL_TOOLS) {
-            map.put(t, enabledTools != null && enabledTools.contains(t));
+        for (ToolDefinition tool : toolRegistry.listTools()) {
+            map.put(tool.name(), enabledTools != null && enabledTools.contains(tool.name()));
         }
         return writeJson(map);
     }
@@ -262,9 +266,9 @@ public class AgentEntityAppService {
         try {
             Map<String, Object> map = objectMapper.readValue(toolsJson, Map.class);
             List<String> enabled = new ArrayList<>();
-            for (String t : ALL_TOOLS) {
-                Object v = map.get(t);
-                if (Boolean.TRUE.equals(v)) enabled.add(t);
+            for (ToolDefinition tool : toolRegistry.listTools()) {
+                Object v = map.get(tool.name());
+                if (Boolean.TRUE.equals(v)) enabled.add(tool.name());
             }
             return enabled;
         } catch (Exception ex) {

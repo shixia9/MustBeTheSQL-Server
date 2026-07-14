@@ -35,6 +35,7 @@ import com.sql.logic.engine.domain.agent.node.SqlGenerationNode;
 import com.sql.logic.engine.domain.agent.node.SummarizeNode;
 import com.sql.logic.engine.domain.agent.node.TaskDispatchNode;
 import com.sql.logic.engine.domain.agent.node.TaskSplitNode;
+import com.sql.logic.engine.domain.agent.node.McpToolExecutorNode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -128,11 +129,14 @@ public class SqlAgentGraphConfiguration {
             strategies.put(SqlAgentSpec.StateKey.SUBTASK_RESULTS, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.USER_MEMORY, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.TRACE_CONTEXT, new ReplaceStrategy());
-            // ---- Agent Studio config (B4) ----
+            // ---- Agent Studio config ----
             strategies.put(SqlAgentSpec.StateKey.AGENT_SYSTEM_PROMPT, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.AGENT_MEMORY_ENABLED, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.AGENT_TOOLS, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.AGENT_NAME, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_NAME, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_PARAMS, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_RESULT, new ReplaceStrategy());
 
             return strategies;
         };
@@ -140,8 +144,6 @@ public class SqlAgentGraphConfiguration {
 
     /**
      * Define the SQL Agent StateGraph bean.
-     * <p>
-     * Phase 4 topology (built on the Phase 3 feasibility/planner/dispatch core):
      * <pre>
      * START → EVIDENCE_RECALL → SCHEMA_LINKING → FEASIBILITY_ASSESSMENT
      *                                                 │ (conditional)
@@ -185,6 +187,7 @@ public class SqlAgentGraphConfiguration {
                                      TaskSplitNode taskSplitNode,
                                      TaskDispatchNode taskDispatchNode,
                                      SummarizeNode summarizeNode,
+                                     McpToolExecutorNode mcpToolExecutorNode,
                                      FeasibilityAssessmentEdge feasibilityEdge,
                                      HitlGateEdge hitlGateEdge,
                                      HitlEdge hitlEdge,
@@ -213,6 +216,7 @@ public class SqlAgentGraphConfiguration {
         Map<String, String> planDispatchRouting = new LinkedHashMap<>();
         planDispatchRouting.put(SqlAgentSpec.Node.SQL_GENERATION, SqlAgentSpec.Node.SQL_GENERATION);
         planDispatchRouting.put(SqlAgentSpec.Node.PYTHON_GENERATION, SqlAgentSpec.Node.PYTHON_GENERATION);
+        planDispatchRouting.put(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR, SqlAgentSpec.Node.MCP_TOOL_EXECUTOR);
         planDispatchRouting.put(SqlAgentSpec.Node.REPORT, SqlAgentSpec.Node.REPORT);
         planDispatchRouting.put(StateGraph.END, StateGraph.END);
 
@@ -246,6 +250,7 @@ public class SqlAgentGraphConfiguration {
                 .addNode(SqlAgentSpec.Node.PYTHON_EXECUTION, AsyncNodeAction.node_async(pythonExecuteNode))
                 .addNode(SqlAgentSpec.Node.PYTHON_ANALYSIS, AsyncNodeAction.node_async(pythonAnalyzeNode))
                 .addNode(SqlAgentSpec.Node.REPORT, AsyncNodeAction.node_async(reportNode))
+                .addNode(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR, AsyncNodeAction.node_async(mcpToolExecutorNode))
 
                 // ---- Edges ----
                 // Memory recall first (injects USER_MEMORY before evidence rewriting),
@@ -293,6 +298,7 @@ public class SqlAgentGraphConfiguration {
                 .addEdge(SqlAgentSpec.Node.PYTHON_GENERATION, SqlAgentSpec.Node.PYTHON_EXECUTION)
                 .addEdge(SqlAgentSpec.Node.PYTHON_EXECUTION, SqlAgentSpec.Node.PYTHON_ANALYSIS)
                 .addEdge(SqlAgentSpec.Node.PYTHON_ANALYSIS, SqlAgentSpec.Node.PLAN_DISPATCH)
+                .addEdge(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR, SqlAgentSpec.Node.PLAN_DISPATCH)
 
                 // Report terminates the graph
                 .addEdge(SqlAgentSpec.Node.REPORT, StateGraph.END);
