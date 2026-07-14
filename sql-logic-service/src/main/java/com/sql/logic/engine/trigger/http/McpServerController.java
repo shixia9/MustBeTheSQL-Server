@@ -11,11 +11,6 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Phase D2: MCP server management REST API.
- * <p>
- * Allows users to add/remove/list external MCP servers and connect/disconnect them.
- */
 @RestController
 @RequestMapping("/api/v1/mcp-servers")
 public class McpServerController {
@@ -52,6 +47,26 @@ public class McpServerController {
         } catch (Exception e) {
             log.warn("[McpServerController] Failed to add MCP server: {}", e.getMessage());
             return Result.error(500, "Failed to add MCP server: " + e.getMessage());
+        }
+    }
+
+    @PutMapping("/{id}")
+    public Result<Map<String, Object>> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        String name = (String) body.get("name");
+        String transportType = (String) body.get("transportType");
+        String endpoint = (String) body.get("endpoint");
+        @SuppressWarnings("unchecked")
+        Map<String, String> env = (Map<String, String>) body.get("env");
+        if (name == null || transportType == null || endpoint == null) {
+            return Result.error(400, "name, transportType, and endpoint are required");
+        }
+        try {
+            McpServerConfig cfg = mcpServerManager.updateServer(id, name, transportType.toUpperCase(), endpoint, env);
+            return Result.success(Map.of("id", cfg.getId(), "connected",
+                    mcpServerManager.isConnected(cfg.getId())));
+        } catch (Exception e) {
+            log.warn("[McpServerController] Failed to update MCP server: {}", e.getMessage());
+            return Result.error(500, "Failed to update MCP server: " + e.getMessage());
         }
     }
 

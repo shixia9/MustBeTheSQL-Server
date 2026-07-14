@@ -75,6 +75,33 @@ public class McpServerManager {
         log.info("[McpServerManager] Removed MCP server config id={}", configId);
     }
 
+    /** Update an existing server config, disconnect and reconnect if transport changed. */
+    public McpServerConfig updateServer(Long configId, String name, String transportType,
+                                         String endpoint, Map<String, String> env) {
+        McpServerConfig cfg = configDao.selectById(configId);
+        if (cfg == null) throw new McpException("MCP server config not found: " + configId);
+        boolean transportChanged = !cfg.getTransportType().equalsIgnoreCase(transportType)
+                || !cfg.getEndpoint().equals(endpoint);
+        cfg.setName(name);
+        cfg.setTransportType(transportType.toUpperCase());
+        cfg.setEndpoint(endpoint);
+        if (env != null && !env.isEmpty()) {
+            try { cfg.setEnvVars(objectMapper.writeValueAsString(env)); } catch (Exception ignored) {}
+        } else {
+            cfg.setEnvVars(null);
+        }
+        cfg.setUpdateTime(new Date());
+        configDao.updateById(cfg);
+        if (transportChanged) {
+            disconnect(configId);
+            try { connectAndRegister(cfg); } catch (Exception e) {
+                log.warn("[McpServerManager] Server '{}' updated but reconnect failed: {}", name, e.getMessage());
+            }
+        }
+        log.info("[McpServerManager] Updated MCP server id={}, name='{}'", configId, name);
+        return cfg;
+    }
+
     /** List all persisted MCP server configs for a user. */
     public List<McpServerConfig> listServers(Long userId) {
         return configDao.selectList(new QueryWrapper<McpServerConfig>()

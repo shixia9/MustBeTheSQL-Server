@@ -47,7 +47,12 @@ public class McpStdioTransport implements McpTransport {
         try {
             String[] parts = command.split("\\s+", 2);
             ProcessBuilder pb;
-            if (parts.length == 2) {
+            boolean isWin = System.getProperty("os.name").toLowerCase().contains("win");
+            if (isWin && parts.length == 2) {
+                pb = new ProcessBuilder("cmd.exe", "/c", "\"" + parts[0] + "\" " + parts[1]);
+            } else if (isWin) {
+                pb = new ProcessBuilder("cmd.exe", "/c", "\"" + parts[0] + "\"");
+            } else if (parts.length == 2) {
                 pb = new ProcessBuilder(parts[0], parts[1]);
             } else {
                 pb = new ProcessBuilder(parts[0]);
@@ -56,10 +61,21 @@ public class McpStdioTransport implements McpTransport {
             process = pb.start();
             stdout = new Scanner(process.getInputStream(), StandardCharsets.UTF_8);
             stdin = process.getOutputStream();
+            // Capture stderr in a background thread for diagnostics
+            Thread stderrReader = new Thread(() -> {
+                try (Scanner err = new Scanner(process.getErrorStream(), StandardCharsets.UTF_8)) {
+                    while (err.hasNextLine()) {
+                        log.debug("[McpStdioTransport stderr] {}", err.nextLine());
+                    }
+                }
+            }, "mcp-stderr-" + command.substring(0, Math.min(20, command.length())));
+            stderrReader.setDaemon(true);
+            stderrReader.start();
 
             // Send initialize request and read response
             String initResp = sendRequest("initialize", Map.of(
                     "protocolVersion", "0.1.0",
+                    "capabilities", Map.of(),
                     "clientInfo", Map.of("name", "SQL-Logic-Engine", "version", "2.0")
             ));
             connected.set(true);
@@ -79,7 +95,7 @@ public class McpStdioTransport implements McpTransport {
 
     @Override
     public String sendRequest(String method, Map<String, Object> params) throws McpException {
-        if (!isConnected()) {
+        if (process == null || !process.isAlive()) {
             throw new McpException("MCP stdio transport is not connected");
         }
         try {
