@@ -142,23 +142,21 @@ public class PlannerNode implements NodeAction {
         List<ToolDefinition> mcpTools = toolRegistry.listTools().stream()
                 .filter(t -> t.type().name().startsWith("MCP_"))
                 .toList();
-        if (mcpTools.isEmpty()) {
-            return "";
-        }
+        if (mcpTools.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
         sb.append("## 4. 外部 MCP 工具 (Available MCP Tools)\n\n");
-        sb.append("你可以使用以下外部工具来获取外部数据。在步骤中使用工具名称（原始名称，例如 `search_tickets`）作为 `tool_to_use`，instruction 填写 JSON 格式的调用参数。\n\n");
+        sb.append("以下外部工具可直接调用以获取实时数据。在 `tool_to_use` 中使用工具的精确名称。\n");
+        sb.append("**重要**: `tool_parameters.instruction` 字段必须是一个 **合法的 JSON 字符串**（单行，双引号），而不是自然语言描述。\n\n");
         for (ToolDefinition tool : mcpTools) {
-            sb.append("### ").append(tool.displayName()).append(" (`").append(tool.name()).append("`)\n");
-            sb.append("- **描述**: ").append(tool.description()).append("\n");
+            sb.append("- **`").append(tool.name()).append("`**: ").append(tool.description()).append("\n");
             if (tool.parametersSchema() != null) {
-                sb.append("- **参数格式**: ").append(tool.parametersSchema()).append("\n");
+                sb.append("  参数Schema: ").append(tool.parametersSchema()).append("\n");
             }
             sb.append("\n");
         }
-        sb.append("**使用 MCP 工具的步骤格式示例**:\n");
-        sb.append("```json\n{\n  \"step\": 1,\n  \"tool_to_use\": \"search_tickets\",\n");
-        sb.append("  \"tool_parameters\": {\"instruction\": \"{\\\"from\\\":\\\"北京\\\",\\\"to\\\":\\\"上海\\\",\\\"date\\\":\\\"2026-07-20\\\"}\"}\n}\n```\n");
+        sb.append("**步骤格式** (instruction 必须是JSON字符串):\n```json\n");
+        sb.append("{\n  \"step\": 1,\n  \"tool_to_use\": \"search_tickets\",\n");
+        sb.append("  \"tool_parameters\": {\n    \"instruction\": \"{\\\"from\\\":\\\"广州\\\",\\\"to\\\":\\\"南昌\\\",\\\"date\\\":\\\"2026-07-15\\\"}\"\n  }\n}\n```\n");
         return sb.toString();
     }
 }

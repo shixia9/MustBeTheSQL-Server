@@ -216,6 +216,11 @@ public class AgentSseCodec {
             case SqlAgentSpec.Node.REPORT:
                 data.put("report", state.value(SqlAgentSpec.StateKey.REPORT_RESULT, ""));
                 break;
+            case SqlAgentSpec.Node.MCP_TOOL_EXECUTOR:
+                data.put("toolName", state.value(SqlAgentSpec.StateKey.MCP_TOOL_NAME, ""));
+                data.put("toolResult", state.value(SqlAgentSpec.StateKey.MCP_TOOL_RESULT, ""));
+                data.put("step", currentStep);
+                break;
             default:
                 for (String key : state.data().keySet()) {
                     if (!SENSITIVE_KEYS.contains(key)) {
