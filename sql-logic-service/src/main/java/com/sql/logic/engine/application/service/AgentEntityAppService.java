@@ -163,10 +163,21 @@ public class AgentEntityAppService {
 
     private AgentEntity owned(Long id, Long userId) {
         AgentEntity e = agentEntityDao.selectById(id);
-        if (e == null || (userId != null && !userId.equals(e.getUserId()))) {
+        if (e == null || userId == null) {
             return null;
         }
-        return e;
+        if (userId.equals(e.getUserId())) {
+            return e;
+        }
+        // Also allow workspace members to access shared agents
+        if (e.getWorkspaceId() != null) {
+            QueryWrapper<WorkspaceMember> qw = new QueryWrapper<>();
+            qw.eq("workspace_id", e.getWorkspaceId()).eq("user_id", userId);
+            if (workspaceMemberDao.selectCount(qw) > 0) {
+                return e;
+            }
+        }
+        return null;
     }
 
     private void applyRequest(AgentEntity e, AgentEntityRequest req) {

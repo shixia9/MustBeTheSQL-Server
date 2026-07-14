@@ -19,4 +19,7 @@ public interface AgentVersionDao extends BaseMapper<AgentVersion> {
 
     @Delete("DELETE FROM agent_version WHERE agent_id = #{agentId} AND publish_time < #{cutoff}")
     int deleteOlderThan(Long agentId, java.util.Date cutoff);
+
+    @Delete("DELETE FROM agent_version WHERE id = #{versionId} AND agent_id = #{agentId}")
+    int deleteByIdAndAgent(Long versionId, Long agentId);
 }

@@ -53,6 +53,7 @@ public class AdminDataDTOs {
         private long avgLatencyMs;
         private long totalInputTokens;
         private long totalOutputTokens;
+        private String lastIp;
 
         public Long getConfigId() { return configId; }
         public void setConfigId(Long configId) { this.configId = configId; }
@@ -76,6 +77,105 @@ public class AdminDataDTOs {
         public void setTotalInputTokens(long totalInputTokens) { this.totalInputTokens = totalInputTokens; }
         public long getTotalOutputTokens() { return totalOutputTokens; }
         public void setTotalOutputTokens(long totalOutputTokens) { this.totalOutputTokens = totalOutputTokens; }
+        public String getLastIp() { return lastIp; }
+        public void setLastIp(String lastIp) { this.lastIp = lastIp; }
+    }
+
+    public static class SystemLlmMetricDTO implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private Long configId;
+        private String configName;
+        private Long userId;
+        private String username;
+        private String userEmail;
+        private int userStatus;
+        private String lastIp;
+        private int totalCalls;
+        private int successCount;
+        private int failureCount;
+        private double successRate;
+        private long avgLatencyMs;
+        private long totalTokens;
+
+        public Long getConfigId() { return configId; }
+        public void setConfigId(Long configId) { this.configId = configId; }
+        public String getConfigName() { return configName; }
+        public void setConfigName(String configName) { this.configName = configName; }
+        public Long getUserId() { return userId; }
+        public void setUserId(Long userId) { this.userId = userId; }
+        public String getUsername() { return username; }
+        public void setUsername(String username) { this.username = username; }
+        public String getUserEmail() { return userEmail; }
+        public void setUserEmail(String userEmail) { this.userEmail = userEmail; }
+        public int getUserStatus() { return userStatus; }
+        public void setUserStatus(int userStatus) { this.userStatus = userStatus; }
+        public String getLastIp() { return lastIp; }
+        public void setLastIp(String lastIp) { this.lastIp = lastIp; }
+        public int getTotalCalls() { return totalCalls; }
+        public void setTotalCalls(int totalCalls) { this.totalCalls = totalCalls; }
+        public int getSuccessCount() { return successCount; }
+        public void setSuccessCount(int successCount) { this.successCount = successCount; }
+        public int getFailureCount() { return failureCount; }
+        public void setFailureCount(int failureCount) { this.failureCount = failureCount; }
+        public double getSuccessRate() { return successRate; }
+        public void setSuccessRate(double successRate) { this.successRate = successRate; }
+        public long getAvgLatencyMs() { return avgLatencyMs; }
+        public void setAvgLatencyMs(long avgLatencyMs) { this.avgLatencyMs = avgLatencyMs; }
+        public long getTotalTokens() { return totalTokens; }
+        public void setTotalTokens(long totalTokens) { this.totalTokens = totalTokens; }
+    }
+
+    public static class UserLlmMetricDTO implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private Long configId;
+        private String configName;
+        private Long userId;
+        private String username;
+        private String userEmail;
+        private String apiKeyMasked;
+        private String providerType;
+        private String modelName;
+        private String baseUrl;
+        private int configStatus;
+        private int totalCalls;
+        private int successCount;
+        private int failureCount;
+        private double successRate;
+        private long avgLatencyMs;
+        private long totalTokens;
+
+        public Long getConfigId() { return configId; }
+        public void setConfigId(Long configId) { this.configId = configId; }
+        public String getConfigName() { return configName; }
+        public void setConfigName(String configName) { this.configName = configName; }
+        public Long getUserId() { return userId; }
+        public void setUserId(Long userId) { this.userId = userId; }
+        public String getUsername() { return username; }
+        public void setUsername(String username) { this.username = username; }
+        public String getUserEmail() { return userEmail; }
+        public void setUserEmail(String userEmail) { this.userEmail = userEmail; }
+        public String getApiKeyMasked() { return apiKeyMasked; }
+        public void setApiKeyMasked(String apiKeyMasked) { this.apiKeyMasked = apiKeyMasked; }
+        public String getProviderType() { return providerType; }
+        public void setProviderType(String providerType) { this.providerType = providerType; }
+        public String getModelName() { return modelName; }
+        public void setModelName(String modelName) { this.modelName = modelName; }
+        public String getBaseUrl() { return baseUrl; }
+        public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+        public int getConfigStatus() { return configStatus; }
+        public void setConfigStatus(int configStatus) { this.configStatus = configStatus; }
+        public int getTotalCalls() { return totalCalls; }
+        public void setTotalCalls(int totalCalls) { this.totalCalls = totalCalls; }
+        public int getSuccessCount() { return successCount; }
+        public void setSuccessCount(int successCount) { this.successCount = successCount; }
+        public int getFailureCount() { return failureCount; }
+        public void setFailureCount(int failureCount) { this.failureCount = failureCount; }
+        public double getSuccessRate() { return successRate; }
+        public void setSuccessRate(double successRate) { this.successRate = successRate; }
+        public long getAvgLatencyMs() { return avgLatencyMs; }
+        public void setAvgLatencyMs(long avgLatencyMs) { this.avgLatencyMs = avgLatencyMs; }
+        public long getTotalTokens() { return totalTokens; }
+        public void setTotalTokens(long totalTokens) { this.totalTokens = totalTokens; }
     }
 
     public static class PageResult<T> implements Serializable {

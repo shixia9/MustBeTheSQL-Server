@@ -56,7 +56,7 @@ public class AgentEntityController {
     @GetMapping("/list")
     public Result<List<AgentEntityResponse>> list() {
         Long userId = getCurrentUserId();
-        return Result.success(agentEntityAppService.listByUser(userId, null));
+        return Result.success(agentEntityAppService.listAccessibleAgents(userId));
     }
 
     @GetMapping("/{id}")
@@ -147,6 +147,17 @@ public class AgentEntityController {
         try {
             agentVersionAppService.revert(versionId, id, userId);
             agentRuntimeConfigService.invalidate(userId);
+            return Result.success(null);
+        } catch (IllegalArgumentException e) {
+            return Result.error(404, e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{id}/versions/{versionId}")
+    public Result<Void> deleteVersion(@PathVariable Long id, @PathVariable Long versionId) {
+        Long userId = getCurrentUserId();
+        try {
+            agentVersionAppService.deleteVersion(versionId, id, userId);
             return Result.success(null);
         } catch (IllegalArgumentException e) {
             return Result.error(404, e.getMessage());

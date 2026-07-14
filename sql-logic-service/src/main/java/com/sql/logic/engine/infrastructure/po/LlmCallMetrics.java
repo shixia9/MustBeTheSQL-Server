@@ -26,5 +26,6 @@ public class LlmCallMetrics {
     private Long totalLatencyMs;
     private Integer totalInputTokens;
     private Integer totalOutputTokens;
+    private String lastIp;
     private LocalDateTime lastReportedAt;
 }

@@ -42,8 +42,7 @@ public class AgentVersionAppService {
      */
     @Transactional(rollbackFor = Exception.class)
     public AgentVersion publish(Long agentId, Long userId) {
-        AgentEntity entity = agentEntityAppService.getById(agentId, userId) != null
-                ? agentEntityAppService.getRawEntity(agentId, userId) : null;
+        AgentEntity entity = agentEntityAppService.getRawEntity(agentId, userId);
         if (entity == null) {
             throw new IllegalArgumentException("Agent not found or access denied");
         }
@@ -125,6 +124,17 @@ public class AgentVersionAppService {
             log.info("[AgentVersionAppService] Reverted agent id={} to version id={}", agentId, versionId);
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Failed to parse version snapshot", e);
+        }
+    }
+
+    /** Delete a specific version. Requires agent ownership or workspace membership. */
+    public void deleteVersion(Long versionId, Long agentId, Long userId) {
+        if (agentEntityAppService.getRawEntity(agentId, userId) == null) {
+            throw new IllegalArgumentException("Agent not found or access denied");
+        }
+        int deleted = agentVersionDao.deleteByIdAndAgent(versionId, agentId);
+        if (deleted > 0) {
+            log.info("[AgentVersionAppService] Deleted version id={} from agent id={}", versionId, agentId);
         }
     }
 

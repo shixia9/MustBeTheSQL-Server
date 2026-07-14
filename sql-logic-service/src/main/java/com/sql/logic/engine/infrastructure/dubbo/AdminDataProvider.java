@@ -68,7 +68,9 @@ public class AdminDataProvider implements AdminDataService {
         for (LlmCallMetrics m : metrics) {
             if (m.getConfigId() != null && !configNames.containsKey(m.getConfigId())) {
                 UserLlmConfig cfg = userLlmConfigDao.selectById(m.getConfigId());
-                configNames.put(m.getConfigId(), cfg != null ? cfg.getConfigName() : null);
+                if (cfg != null && cfg.getConfigName() != null) {
+                    configNames.put(m.getConfigId(), cfg.getConfigName());
+                }
             }
         }
         return metrics.stream().map(m -> {
@@ -85,6 +87,7 @@ public class AdminDataProvider implements AdminDataService {
             dto.setAvgLatencyMs(total > 0 ? m.getTotalLatencyMs() / total : 0);
             dto.setTotalInputTokens(m.getTotalInputTokens());
             dto.setTotalOutputTokens(m.getTotalOutputTokens());
+            dto.setLastIp(m.getLastIp());
             return dto;
         }).collect(Collectors.toList());
     }
@@ -120,5 +123,135 @@ public class AdminDataProvider implements AdminDataService {
         u.setTokenQuota((int) quota);
         userInfoDao.updateById(u);
         log.info("[AdminDataProvider] User {} quota -> {}", userId, quota);
+    }
+
+    @Override
+    public AdminDataDTOs.PageResult<AdminDataDTOs.LlmMetricDTO> getLlmMetrics(int page, int size, String keyword) {
+        Page<LlmCallMetrics> p = new Page<>(page, size);
+        QueryWrapper<LlmCallMetrics> qw = new QueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            qw.like("config_id", keyword); // keyword matches configId for now
+        }
+        qw.orderByDesc("window_start");
+        Page<LlmCallMetrics> result = llmCallMetricsDao.selectPage(p, qw);
+
+        Map<Long, String> configNames = new HashMap<>();
+        for (LlmCallMetrics m : result.getRecords()) {
+            if (m.getConfigId() != null && !configNames.containsKey(m.getConfigId())) {
+                UserLlmConfig cfg = userLlmConfigDao.selectById(m.getConfigId());
+                if (cfg != null && cfg.getConfigName() != null) {
+                    configNames.put(m.getConfigId(), cfg.getConfigName());
+                }
+            }
+        }
+        List<AdminDataDTOs.LlmMetricDTO> dtos = result.getRecords().stream().map(m -> {
+            AdminDataDTOs.LlmMetricDTO dto = new AdminDataDTOs.LlmMetricDTO();
+            dto.setConfigId(m.getConfigId());
+            dto.setConfigName(configNames.getOrDefault(m.getConfigId(), "Config #" + m.getConfigId()));
+            dto.setUserId(m.getUserId());
+            dto.setSuccessRate(m.getSuccessCount() + m.getFailureCount() > 0
+                    ? (double) m.getSuccessCount() / (m.getSuccessCount() + m.getFailureCount()) : 0);
+            dto.setAvgLatencyMs(m.getSuccessCount() + m.getFailureCount() > 0
+                    ? m.getTotalLatencyMs() / (m.getSuccessCount() + m.getFailureCount()) : 0);
+            dto.setTotalCalls(m.getSuccessCount() + m.getFailureCount());
+            dto.setSuccessCount(m.getSuccessCount());
+            dto.setFailureCount(m.getFailureCount());
+            dto.setTotalInputTokens(m.getTotalInputTokens());
+            dto.setTotalOutputTokens(m.getTotalOutputTokens());
+            dto.setLastIp(m.getLastIp());
+            return dto;
+        }).collect(Collectors.toList());
+        return new AdminDataDTOs.PageResult<>(dtos, result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    @Override
+    public AdminDataDTOs.PageResult<AdminDataDTOs.SystemLlmMetricDTO> getSystemLlmMetrics(int page, int size, String keyword) {
+        Page<LlmCallMetrics> p = new Page<>(page, size);
+        QueryWrapper<LlmCallMetrics> qw = new QueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            qw.and(w -> w.eq("config_id", safeParseLong(keyword)));
+        }
+        qw.orderByDesc("window_start");
+        Page<LlmCallMetrics> result = llmCallMetricsDao.selectPage(p, qw);
+
+        Map<Long, UserInfo> userCache = new HashMap<>();
+        Map<Long, String> configNames = new HashMap<>();
+        List<AdminDataDTOs.SystemLlmMetricDTO> dtos = new ArrayList<>();
+        for (LlmCallMetrics m : result.getRecords()) {
+            UserInfo u = userCache.computeIfAbsent(m.getUserId(), uid -> userInfoDao.selectById(uid));
+            if (!configNames.containsKey(m.getConfigId())) {
+                UserLlmConfig cfg = userLlmConfigDao.selectById(m.getConfigId());
+                if (cfg != null && cfg.getConfigName() != null) {
+                    configNames.put(m.getConfigId(), cfg.getConfigName());
+                }
+            }
+            AdminDataDTOs.SystemLlmMetricDTO dto = new AdminDataDTOs.SystemLlmMetricDTO();
+            dto.setConfigId(m.getConfigId());
+            dto.setConfigName(configNames.getOrDefault(m.getConfigId(), "Config #" + m.getConfigId()));
+            dto.setUserId(m.getUserId());
+            dto.setUsername(u != null ? u.getUsername() : null);
+            dto.setUserEmail(u != null ? u.getEmail() : null);
+            dto.setUserStatus(u != null && u.getStatus() != null ? u.getStatus() : 1);
+            dto.setLastIp(m.getLastIp());
+            dto.setTotalCalls(m.getSuccessCount() + m.getFailureCount());
+            dto.setSuccessCount(m.getSuccessCount());
+            dto.setFailureCount(m.getFailureCount());
+            dto.setSuccessRate(m.getSuccessCount() + m.getFailureCount() > 0
+                    ? (double) m.getSuccessCount() / (m.getSuccessCount() + m.getFailureCount()) : 0);
+            dto.setAvgLatencyMs(m.getSuccessCount() + m.getFailureCount() > 0
+                    ? m.getTotalLatencyMs() / (m.getSuccessCount() + m.getFailureCount()) : 0);
+            dto.setTotalTokens((m.getTotalInputTokens() != null ? m.getTotalInputTokens() : 0L)
+                    + (m.getTotalOutputTokens() != null ? m.getTotalOutputTokens() : 0L));
+            dtos.add(dto);
+        }
+        return new AdminDataDTOs.PageResult<>(dtos, result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    @Override
+    public AdminDataDTOs.PageResult<AdminDataDTOs.UserLlmMetricDTO> getUserLlmMetrics(int page, int size, String keyword) {
+        Page<LlmCallMetrics> p = new Page<>(page, size);
+        QueryWrapper<LlmCallMetrics> qw = new QueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            qw.and(w -> w.eq("config_id", safeParseLong(keyword)));
+        }
+        qw.orderByDesc("window_start");
+        Page<LlmCallMetrics> result = llmCallMetricsDao.selectPage(p, qw);
+
+        Map<Long, UserInfo> userCache = new HashMap<>();
+        Map<Long, UserLlmConfig> configCache = new HashMap<>();
+        List<AdminDataDTOs.UserLlmMetricDTO> dtos = new ArrayList<>();
+        for (LlmCallMetrics m : result.getRecords()) {
+            UserInfo u = userCache.computeIfAbsent(m.getUserId(), uid -> userInfoDao.selectById(uid));
+            UserLlmConfig cfg = configCache.computeIfAbsent(m.getConfigId(), cid -> userLlmConfigDao.selectById(cid));
+            AdminDataDTOs.UserLlmMetricDTO dto = new AdminDataDTOs.UserLlmMetricDTO();
+            dto.setConfigId(m.getConfigId());
+            dto.setConfigName(cfg != null ? cfg.getConfigName() : "Config #" + m.getConfigId());
+            dto.setUserId(m.getUserId());
+            dto.setUsername(u != null ? u.getUsername() : null);
+            dto.setUserEmail(u != null ? u.getEmail() : null);
+            if (cfg != null && cfg.getApiKey() != null) {
+                String key = cfg.getApiKey();
+                dto.setApiKeyMasked(key.length() > 8 ? key.substring(0, 3) + "..." + key.substring(key.length() - 4) : "***");
+            }
+            dto.setProviderType(cfg != null ? cfg.getProviderType() : null);
+            dto.setModelName(cfg != null ? cfg.getModelName() : null);
+            dto.setBaseUrl(cfg != null ? cfg.getBaseUrl() : null);
+            dto.setConfigStatus(cfg != null && cfg.getStatus() != null ? cfg.getStatus() : 0);
+            dto.setTotalCalls(m.getSuccessCount() + m.getFailureCount());
+            dto.setSuccessCount(m.getSuccessCount());
+            dto.setFailureCount(m.getFailureCount());
+            dto.setSuccessRate(m.getSuccessCount() + m.getFailureCount() > 0
+                    ? (double) m.getSuccessCount() / (m.getSuccessCount() + m.getFailureCount()) : 0);
+            dto.setAvgLatencyMs(m.getSuccessCount() + m.getFailureCount() > 0
+                    ? m.getTotalLatencyMs() / (m.getSuccessCount() + m.getFailureCount()) : 0);
+            dto.setTotalTokens((m.getTotalInputTokens() != null ? m.getTotalInputTokens() : 0L)
+                    + (m.getTotalOutputTokens() != null ? m.getTotalOutputTokens() : 0L));
+            dtos.add(dto);
+        }
+        return new AdminDataDTOs.PageResult<>(dtos, result.getTotal(), result.getCurrent(), result.getSize());
+    }
+
+    private Long safeParseLong(String s) {
+        try { return Long.parseLong(s.trim()); } catch (Exception e) { return null; }
     }
 }
