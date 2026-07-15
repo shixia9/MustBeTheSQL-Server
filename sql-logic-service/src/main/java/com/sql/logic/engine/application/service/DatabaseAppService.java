@@ -123,4 +123,14 @@ public class DatabaseAppService {
         DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
         return conf != null ? conf.getDbType() : null;
     }
+
+    /**
+     * Retrieve the full connection config (password excluded) for a connection.
+     * Used by agent execution services to resolve default database name.
+     */
+    public DbConnectionConf getConnectionConfig(Long connectionId) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf != null) conf.setPassword(null);
+        return conf;
+    }
 }

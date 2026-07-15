@@ -2,9 +2,6 @@
 # Gateway 应用配置
 # =============================================================
 
-server:
-  port: 8080
-
 spring:
   application:
     name: sql-logic-gateway

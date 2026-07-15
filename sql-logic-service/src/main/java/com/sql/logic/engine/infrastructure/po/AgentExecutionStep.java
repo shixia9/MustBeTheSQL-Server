@@ -18,6 +18,12 @@ public class AgentExecutionStep {
     private Integer sequenceNo;
     private String status;
     private Long durationMs;
+    private Integer inputTokens;
+    private Integer outputTokens;
+    private Long latencyMs;
+    private String nodeType;
+    private String inputData;
     private String outputData;
+    private String outputDataJson;
     private LocalDateTime createTime;
 }

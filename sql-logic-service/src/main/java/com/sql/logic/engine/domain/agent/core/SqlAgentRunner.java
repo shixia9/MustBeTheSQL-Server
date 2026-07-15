@@ -9,10 +9,15 @@ import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.agent.config.AgentRuntimeConfig;
+import com.sql.logic.engine.domain.agent.config.AgentRuntimeConfigService;
+import com.sql.logic.engine.domain.trace.TraceContext;
+import com.sql.logic.engine.domain.trace.TraceContextRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.LinkedHashMap;
@@ -29,9 +34,12 @@ import java.util.UUID;
  * {@link #resume(String, boolean, String, Long)} continues execution from that
  * checkpoint after the human decision is injected via {@code CompiledGraph.updateState}.
  * <p>
- * The controller inspects {@link AgentRunHandle#isHaltedAtHitl()} after the stream
- * completes to decide whether to emit an {@code AWAITING_CONFIRMATION} SSE event
- * (paused) or the normal {@code COMPLETED} event.
+ * <b>Phase B fix</b>: the per-run {@link Flux} returned to the controller now
+ * interleaves (a) FINISHED events mapped from the graph's {@code NodeOutput}s
+ * with (b) STARTED events pushed by {@link AgentSseStartedListener} (via the
+ * framework's {@code GraphLifecycleListener.before()} hook) onto a per-run
+ * {@link Sinks.Many}. {@link AgentRunHandle#unifiedSseFlux()} exposes it so the
+ * controller no longer maps {@code NodeOutput} itself.
  */
 @Service
 public class SqlAgentRunner {
@@ -40,16 +48,30 @@ public class SqlAgentRunner {
 
     private final CompiledGraph compiledGraph;
     private final HitlSessionRegistry hitlSessionRegistry;
+    private final TraceContextRegistry traceContextRegistry;
+    private final NodeStartedSinkRegistry sinkRegistry;
+    private final AgentSseCodec codec;
+    private final AgentRuntimeConfigService agentRuntimeConfigService;
 
     public SqlAgentRunner(StateGraph sqlAgentGraph, MemorySaver sqlAgentMemorySaver,
-                          HitlSessionRegistry hitlSessionRegistry) {
+                          HitlSessionRegistry hitlSessionRegistry,
+                          TraceContextRegistry traceContextRegistry,
+                          AgentSseStartedListener sseStartedListener,
+                          NodeStartedSinkRegistry sinkRegistry,
+                          AgentSseCodec codec,
+                          AgentRuntimeConfigService agentRuntimeConfigService) {
         this.hitlSessionRegistry = hitlSessionRegistry;
+        this.traceContextRegistry = traceContextRegistry;
+        this.sinkRegistry = sinkRegistry;
+        this.codec = codec;
+        this.agentRuntimeConfigService = agentRuntimeConfigService;
         try {
             this.compiledGraph = sqlAgentGraph.compile(CompileConfig.builder()
                     .saverConfig(SaverConfig.builder().register(sqlAgentMemorySaver).build())
                     .interruptBefore(SqlAgentSpec.Node.HITL)
+                    .withLifecycleListener(sseStartedListener)
                     .build());
-            log.info("[SqlAgentRunner] Graph compiled with MemorySaver + interruptBefore(HITL). "
+            log.info("[SqlAgentRunner] Graph compiled with MemorySaver + interruptBefore(HITL) + STARTED lifecycle listener. "
                     + "Phase 4 chain: START → EVIDENCE_RECALL → SCHEMA_LINKING → FEASIBILITY → PLANNER → "
                     + "HITL_GATE → [HITL interrupt] → PLAN_DISPATCH ⇄ {SQL_GENERATION→SQL_EXECUTION↔SQL_FIXER | "
                     + "PYTHON_GENERATION→PYTHON_EXECUTION→PYTHON_ANALYSIS} → REPORT → END");
@@ -64,7 +86,18 @@ public class SqlAgentRunner {
      * {@link #resume(String, boolean, String, Long)} continues from.
      */
     public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
-                                  Long llmConfigId, List<String> tableNames, String schemaName, boolean autoConfirm) {
+                                  Long llmConfigId, Long workspaceId, List<String> tableNames, String schemaName, boolean autoConfirm) {
+        return execute(connectionId, userInput, userId, llmConfigId, workspaceId, tableNames, schemaName, autoConfirm, null, "");
+    }
+
+    /**
+     * Phase B (B5) overload: carries the multi-turn {@code conversationId} and the
+     * rendered {@code conversationHistory} section (prior turns, already windowed by
+     * {@code ConversationContextService}) so nodes can inject them into prompts.
+     */
+    public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
+                                  Long llmConfigId, Long workspaceId, List<String> tableNames, String schemaName,
+                                  boolean autoConfirm, Long conversationId, String conversationHistory) {
         String threadId = UUID.randomUUID().toString();
         RunnableConfig rc = RunnableConfig.builder().threadId(threadId).build();
 
@@ -77,25 +110,48 @@ public class SqlAgentRunner {
         initialState.put(SqlAgentSpec.StateKey.TABLE_NAMES, tableNames != null ? tableNames : List.of());
         initialState.put(SqlAgentSpec.StateKey.SCHEMA_NAME, schemaName != null ? schemaName : "");
         initialState.put(SqlAgentSpec.StateKey.AUTO_CONFIRM, autoConfirm);
+        initialState.put(SqlAgentSpec.StateKey.WORKSPACE_ID, workspaceId);
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
+        initialState.put(SqlAgentSpec.StateKey.CONVERSATION_ID, conversationId);
+        initialState.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY,
+                conversationHistory == null ? "" : conversationHistory);
 
-        log.info("[SqlAgentRunner] Starting graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, input='{}'",
-                threadId, autoConfirm, connectionId, userId, userInput);
+        // Phase B (B4): resolve the user's default Agent config and carry it in state so
+        // nodes can honour the system prompt, tool toggles, and memory switch.
+        AgentRuntimeConfig agentCfg = agentRuntimeConfigService.resolve(userId);
+        initialState.put(SqlAgentSpec.StateKey.AGENT_SYSTEM_PROMPT,
+                agentCfg.hasSystemPrompt() ? agentCfg.systemPrompt() : "");
+        initialState.put(SqlAgentSpec.StateKey.AGENT_MEMORY_ENABLED, agentCfg.memoryEnabled());
+        initialState.put(SqlAgentSpec.StateKey.AGENT_TOOLS, agentCfg.enabledTools());
+        initialState.put(SqlAgentSpec.StateKey.AGENT_NAME,
+                agentCfg.name() == null ? "" : agentCfg.name());
+        initialState.put(SqlAgentSpec.StateKey.AGENT_ID, agentCfg.agentId());
 
-        Flux<NodeOutput> flux = compiledGraph.stream(initialState, rc)
+        log.info("[SqlAgentRunner] Starting graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, conversationId={}, agentId={}, tools={}, input='{}'",
+                threadId, autoConfirm, connectionId, userId, conversationId, agentCfg.agentId(), agentCfg.enabledTools(), userInput);
+
+        TraceContext traceContext = new TraceContext(threadId, userId, workspaceId);
+        traceContextRegistry.register(threadId, traceContext);
+        initialState.put(SqlAgentSpec.StateKey.TRACE_CONTEXT, traceContext);
+
+        Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
+        Flux<NodeOutput> graphFlux = compiledGraph.stream(initialState, rc)
                 .subscribeOn(Schedulers.boundedElastic())
                 .doOnNext(output -> log.info("[SqlAgentRunner] Node completed: {}", output.node()))
-                .doOnComplete(() -> log.info("[SqlAgentRunner] Graph execution (threadId={}) stream complete", threadId))
                 .doOnError(e -> log.error("[SqlAgentRunner] Graph execution (threadId={}) error", threadId, e));
 
-        AgentRunContext context = new AgentRunContext(threadId, userId, connectionId, llmConfigId, tableNames, schemaName, autoConfirm, rc);
-        return new AgentRunHandle(threadId, context, rc, flux);
+        AgentRunContext context = new AgentRunContext(threadId, userId, connectionId, llmConfigId, workspaceId, tableNames, schemaName, autoConfirm, rc);
+        context.setTraceContext(traceContext);
+        context.setConversationId(conversationId);
+
+        Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, threadId, context);
+        return new AgentRunHandle(threadId, context, rc, graphFlux, unified);
     }
 
     /** Convenience overload (autoConfirm defaults to true — Phase 3 behaviour preserved). */
     public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
                                   Long llmConfigId, List<String> tableNames) {
-        return execute(connectionId, userInput, userId, llmConfigId, tableNames, null, true);
+        return execute(connectionId, userInput, userId, llmConfigId, null, tableNames, null, true);
     }
 
     /**
@@ -124,7 +180,8 @@ public class SqlAgentRunner {
         try {
             RunnableConfig resumed = compiledGraph.updateState(rc, update);
             log.info("[SqlAgentRunner] Resuming threadId={} approved={}", threadId, approved);
-            Flux<NodeOutput> flux = compiledGraph.stream(null, resumed)
+            Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
+            Flux<NodeOutput> graphFlux = compiledGraph.stream(null, resumed)
                     .subscribeOn(Schedulers.boundedElastic())
                     .doOnNext(output -> log.info("[SqlAgentRunner] Resumed node completed (threadId={}): {}", threadId, output.node()))
                     .doOnComplete(() -> {
@@ -132,11 +189,24 @@ public class SqlAgentRunner {
                         hitlSessionRegistry.remove(threadId);
                     })
                     .doOnError(e -> log.error("[SqlAgentRunner] Resume stream error (threadId={})", threadId, e));
-            return new AgentRunHandle(threadId, context, resumed, flux);
+
+            Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, threadId, context);
+            return new AgentRunHandle(threadId, context, resumed, graphFlux, unified);
         } catch (Exception e) {
             log.error("[SqlAgentRunner] Failed to resume threadId={}", threadId, e);
             return null;
         }
+    }
+
+    /** Merge the FINISHED (mapped NodeOutput) stream with the STARTED sink stream,
+     *  and ensure cleanup of the sink + trace registry on any terminal signal. */
+    private Flux<String> buildUnifiedSse(Flux<NodeOutput> graphFlux, Sinks.Many<String> startedSink,
+                                         String threadId, AgentRunContext runContext) {
+        Flux<String> finished = graphFlux.map(o -> codec.nodeOutputToJson(o, runContext))
+                .filter(s -> !s.isEmpty())
+                .doFinally(sig -> startedSink.tryEmitComplete());
+        return Flux.merge(finished, startedSink.asFlux())
+                .doFinally(sig -> sinkRegistry.remove(threadId));
     }
 
     public CompiledGraph getCompiledGraph() {
@@ -158,18 +228,27 @@ public class SqlAgentRunner {
         private final AgentRunContext context;
         private final RunnableConfig runnableConfig;
         private final Flux<NodeOutput> flux;
+        private final Flux<String> unifiedSseFlux;
 
-        AgentRunHandle(String threadId, AgentRunContext context, RunnableConfig runnableConfig, Flux<NodeOutput> flux) {
+        AgentRunHandle(String threadId, AgentRunContext context, RunnableConfig runnableConfig,
+                       Flux<NodeOutput> flux, Flux<String> unifiedSseFlux) {
             this.threadId = threadId;
             this.context = context;
             this.runnableConfig = runnableConfig;
             this.flux = flux;
+            this.unifiedSseFlux = unifiedSseFlux;
         }
 
         public String getThreadId() { return threadId; }
         public AgentRunContext getContext() { return context; }
         public RunnableConfig getRunnableConfig() { return runnableConfig; }
         public Flux<NodeOutput> getFlux() { return flux; }
+        /** Unified SSE stream: STARTED events (from the lifecycle listener) interleaved
+         *  with FINISHED events (mapped from NodeOutput, including per-node step buffering
+         *  + trace recording). */
+        public Flux<String> getUnifiedSseFlux() {
+            return unifiedSseFlux;
+        }
 
         /**
          * After the stream completes, returns true if the graph is paused right before

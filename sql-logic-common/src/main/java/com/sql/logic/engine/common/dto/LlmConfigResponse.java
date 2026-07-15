@@ -12,6 +12,9 @@ public class LlmConfigResponse {
     private String modelName;
     private Boolean isDefault;
     private Integer status;
+    private String strategyType;
+    private String fallbackChain;
+    private String circuitState;
     private String createTime;
     private String updateTime;
 }

@@ -9,15 +9,19 @@ import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.agent.edge.AnalyzerEdge;
 import com.sql.logic.engine.domain.agent.edge.FeasibilityAssessmentEdge;
 import com.sql.logic.engine.domain.agent.edge.HitlEdge;
 import com.sql.logic.engine.domain.agent.edge.HitlGateEdge;
 import com.sql.logic.engine.domain.agent.edge.PlanDispatchEdge;
 import com.sql.logic.engine.domain.agent.edge.SqlExecutionEdge;
+import com.sql.logic.engine.domain.agent.edge.TaskDispatchEdge;
+import com.sql.logic.engine.domain.agent.node.AnalyzerNode;
 import com.sql.logic.engine.domain.agent.node.EvidenceRecallNode;
 import com.sql.logic.engine.domain.agent.node.FeasibilityAssessmentNode;
 import com.sql.logic.engine.domain.agent.node.HitlGateNode;
 import com.sql.logic.engine.domain.agent.node.HitlNode;
+import com.sql.logic.engine.domain.agent.node.MemoryRecallNode;
 import com.sql.logic.engine.domain.agent.node.PlanDispatchNode;
 import com.sql.logic.engine.domain.agent.node.PlannerNode;
 import com.sql.logic.engine.domain.agent.node.PythonAnalyzeNode;
@@ -28,6 +32,13 @@ import com.sql.logic.engine.domain.agent.node.SchemaLinkingNode;
 import com.sql.logic.engine.domain.agent.node.SqlExecutionNode;
 import com.sql.logic.engine.domain.agent.node.SqlFixerNode;
 import com.sql.logic.engine.domain.agent.node.SqlGenerationNode;
+import com.sql.logic.engine.domain.agent.node.SummarizeNode;
+import com.sql.logic.engine.domain.agent.node.TaskDispatchNode;
+import com.sql.logic.engine.domain.agent.node.TaskSplitNode;
+import com.sql.logic.engine.domain.agent.edge.McpToolFixerEdge;
+import com.sql.logic.engine.domain.agent.node.McpToolExecutorNode;
+import com.sql.logic.engine.domain.agent.node.McpToolFixerNode;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -37,7 +48,7 @@ import java.util.Map;
 /**
  * Spring Configuration that wires the SQL Agent StateGraph.
  * <p>
- * Phase 4 topology — adds a human-in-the-loop gate (HITL_GATE → HITL) after the
+ * Adds a human-in-the-loop gate (HITL_GATE → HITL) after the
  * planner and the Python sandbox analysis chain (PYTHON_GENERATION → PYTHON_EXECUTION
  * → PYTHON_ANALYSIS) to the plan dispatcher. See {@link #sqlAgentGraph} javadoc.
  * <p>
@@ -47,6 +58,9 @@ import java.util.Map;
  */
 @Configuration
 public class SqlAgentGraphConfiguration {
+
+    @Value("${phase-b.task-split.enabled:false}")
+    private boolean taskSplitEnabled;
 
     /**
      * Define the KeyStrategyFactory — all state keys use ReplaceStrategy
@@ -62,6 +76,11 @@ public class SqlAgentGraphConfiguration {
             strategies.put(SqlAgentSpec.StateKey.USER_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.CONNECTION_ID, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.LLM_CONFIG_ID, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.WORKSPACE_ID, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.THREAD_ID, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.SESSION_ID, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.CONVERSATION_ID, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.DB_TYPE, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.SCHEMA_NAME, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.TABLE_NAMES, new ReplaceStrategy());
@@ -105,14 +124,31 @@ public class SqlAgentGraphConfiguration {
             // Report key
             strategies.put(SqlAgentSpec.StateKey.REPORT_RESULT, new ReplaceStrategy());
 
+            // Task Split keys
+            strategies.put(SqlAgentSpec.StateKey.COMPLEXITY, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.SUBTASKS, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.CURRENT_SUBTASK, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.SUBTASK_RESULTS, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.USER_MEMORY, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.TRACE_CONTEXT, new ReplaceStrategy());
+            // ---- Agent Studio config ----
+            strategies.put(SqlAgentSpec.StateKey.AGENT_SYSTEM_PROMPT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.AGENT_MEMORY_ENABLED, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.AGENT_TOOLS, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.AGENT_NAME, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_NAME, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_PARAMS, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_RESULT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_CALL_FAILED, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_FIX_ATTEMPT_COUNT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_STEP_RESULTS, new ReplaceStrategy());
+
             return strategies;
         };
     }
 
     /**
      * Define the SQL Agent StateGraph bean.
-     * <p>
-     * Phase 4 topology (built on the Phase 3 feasibility/planner/dispatch core):
      * <pre>
      * START → EVIDENCE_RECALL → SCHEMA_LINKING → FEASIBILITY_ASSESSMENT
      *                                                 │ (conditional)
@@ -151,11 +187,21 @@ public class SqlAgentGraphConfiguration {
                                      PythonExecuteNode pythonExecuteNode,
                                      PythonAnalyzeNode pythonAnalyzeNode,
                                      ReportNode reportNode,
+                                     MemoryRecallNode memoryRecallNode,
+                                     AnalyzerNode analyzerNode,
+                                     TaskSplitNode taskSplitNode,
+                                     TaskDispatchNode taskDispatchNode,
+                                     SummarizeNode summarizeNode,
+                                     McpToolExecutorNode mcpToolExecutorNode,
+                                     McpToolFixerNode mcpToolFixerNode,
                                      FeasibilityAssessmentEdge feasibilityEdge,
                                      HitlGateEdge hitlGateEdge,
                                      HitlEdge hitlEdge,
                                      PlanDispatchEdge planDispatchEdge,
                                      SqlExecutionEdge sqlExecutionEdge,
+                                     McpToolFixerEdge mcpToolFixerEdge,
+                                     AnalyzerEdge analyzerEdge,
+                                     TaskDispatchEdge taskDispatchEdge,
                                      KeyStrategyFactory sqlAgentKeyStrategyFactory) throws GraphStateException {
 
         // Conditional-edge mappings: the KEY is what the edge returns, the VALUE is
@@ -177,6 +223,7 @@ public class SqlAgentGraphConfiguration {
         Map<String, String> planDispatchRouting = new LinkedHashMap<>();
         planDispatchRouting.put(SqlAgentSpec.Node.SQL_GENERATION, SqlAgentSpec.Node.SQL_GENERATION);
         planDispatchRouting.put(SqlAgentSpec.Node.PYTHON_GENERATION, SqlAgentSpec.Node.PYTHON_GENERATION);
+        planDispatchRouting.put(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR, SqlAgentSpec.Node.MCP_TOOL_EXECUTOR);
         planDispatchRouting.put(SqlAgentSpec.Node.REPORT, SqlAgentSpec.Node.REPORT);
         planDispatchRouting.put(StateGraph.END, StateGraph.END);
 
@@ -184,8 +231,22 @@ public class SqlAgentGraphConfiguration {
         sqlExecutionRouting.put(SqlAgentSpec.Node.SQL_FIXER, SqlAgentSpec.Node.SQL_FIXER);
         sqlExecutionRouting.put(SqlAgentSpec.Node.PLAN_DISPATCH, SqlAgentSpec.Node.PLAN_DISPATCH);
 
-        return new StateGraph(SqlAgentSpec.GRAPH_NAME, sqlAgentKeyStrategyFactory)
+        Map<String, String> mcpToolFixerRouting = new LinkedHashMap<>();
+        mcpToolFixerRouting.put(SqlAgentSpec.Node.MCP_TOOL_FIXER, SqlAgentSpec.Node.MCP_TOOL_FIXER);
+        mcpToolFixerRouting.put(SqlAgentSpec.Node.PLAN_DISPATCH, SqlAgentSpec.Node.PLAN_DISPATCH);
+
+        Map<String, String> analyzerRouting = new LinkedHashMap<>();
+        analyzerRouting.put(SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT, SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT);
+        analyzerRouting.put(SqlAgentSpec.Node.TASK_SPLIT, SqlAgentSpec.Node.TASK_SPLIT);
+        analyzerRouting.put(SqlAgentSpec.Node.REPORT, SqlAgentSpec.Node.REPORT);
+
+        Map<String, String> taskDispatchRouting = new LinkedHashMap<>();
+        taskDispatchRouting.put(SqlAgentSpec.Node.SQL_GENERATION, SqlAgentSpec.Node.SQL_GENERATION);
+        taskDispatchRouting.put(SqlAgentSpec.Node.SUMMARIZE, SqlAgentSpec.Node.SUMMARIZE);
+
+        StateGraph graph = new StateGraph(SqlAgentSpec.GRAPH_NAME, sqlAgentKeyStrategyFactory)
                 // ---- Register nodes ----
+                .addNode(SqlAgentSpec.Node.MEMORY_RECALL, AsyncNodeAction.node_async(memoryRecallNode))
                 .addNode(SqlAgentSpec.Node.EVIDENCE_RECALL, AsyncNodeAction.node_async(evidenceRecallNode))
                 .addNode(SqlAgentSpec.Node.SCHEMA_LINKING, AsyncNodeAction.node_async(schemaLinkingNode))
                 .addNode(SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT, AsyncNodeAction.node_async(feasibilityAssessmentNode))
@@ -200,11 +261,23 @@ public class SqlAgentGraphConfiguration {
                 .addNode(SqlAgentSpec.Node.PYTHON_EXECUTION, AsyncNodeAction.node_async(pythonExecuteNode))
                 .addNode(SqlAgentSpec.Node.PYTHON_ANALYSIS, AsyncNodeAction.node_async(pythonAnalyzeNode))
                 .addNode(SqlAgentSpec.Node.REPORT, AsyncNodeAction.node_async(reportNode))
+                .addNode(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR, AsyncNodeAction.node_async(mcpToolExecutorNode))
+                .addNode(SqlAgentSpec.Node.MCP_TOOL_FIXER, AsyncNodeAction.node_async(mcpToolFixerNode))
 
                 // ---- Edges ----
-                .addEdge(StateGraph.START, SqlAgentSpec.Node.EVIDENCE_RECALL)
-                .addEdge(SqlAgentSpec.Node.EVIDENCE_RECALL, SqlAgentSpec.Node.SCHEMA_LINKING)
-                .addEdge(SqlAgentSpec.Node.SCHEMA_LINKING, SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT)
+                // Memory recall first (injects USER_MEMORY before evidence rewriting),
+                // then the normal Phase 4 chain. No memory → state stays empty string, no-op.
+                .addEdge(StateGraph.START, SqlAgentSpec.Node.MEMORY_RECALL)
+                .addEdge(SqlAgentSpec.Node.MEMORY_RECALL, SqlAgentSpec.Node.EVIDENCE_RECALL)
+                .addEdge(SqlAgentSpec.Node.EVIDENCE_RECALL, SqlAgentSpec.Node.SCHEMA_LINKING);
+
+        if (taskSplitEnabled) {
+            graph.addEdge(SqlAgentSpec.Node.SCHEMA_LINKING, SqlAgentSpec.Node.ANALYZER);
+        } else {
+            graph.addEdge(SqlAgentSpec.Node.SCHEMA_LINKING, SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT);
+        }
+
+        graph
 
                 // Feasibility gate → PLANNER (analysis) or REPORT (clarify/chat)
                 .addConditionalEdges(SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT,
@@ -237,9 +310,29 @@ public class SqlAgentGraphConfiguration {
                 .addEdge(SqlAgentSpec.Node.PYTHON_GENERATION, SqlAgentSpec.Node.PYTHON_EXECUTION)
                 .addEdge(SqlAgentSpec.Node.PYTHON_EXECUTION, SqlAgentSpec.Node.PYTHON_ANALYSIS)
                 .addEdge(SqlAgentSpec.Node.PYTHON_ANALYSIS, SqlAgentSpec.Node.PLAN_DISPATCH)
+                .addConditionalEdges(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR,
+                        AsyncEdgeAction.edge_async(mcpToolFixerEdge), mcpToolFixerRouting)
+                .addEdge(SqlAgentSpec.Node.MCP_TOOL_FIXER, SqlAgentSpec.Node.MCP_TOOL_EXECUTOR)
 
                 // Report terminates the graph
                 .addEdge(SqlAgentSpec.Node.REPORT, StateGraph.END);
+
+        // ---- Task split workflow ----
+        if (taskSplitEnabled) {
+            graph.addNode(SqlAgentSpec.Node.ANALYZER, AsyncNodeAction.node_async(analyzerNode))
+                 .addNode(SqlAgentSpec.Node.TASK_SPLIT, AsyncNodeAction.node_async(taskSplitNode))
+                 .addNode(SqlAgentSpec.Node.TASK_DISPATCH, AsyncNodeAction.node_async(taskDispatchNode))
+                 .addNode(SqlAgentSpec.Node.SUMMARIZE, AsyncNodeAction.node_async(summarizeNode));
+
+            graph.addConditionalEdges(SqlAgentSpec.Node.ANALYZER,
+                     AsyncEdgeAction.edge_async(analyzerEdge), analyzerRouting)
+                 .addEdge(SqlAgentSpec.Node.TASK_SPLIT, SqlAgentSpec.Node.TASK_DISPATCH)
+                 .addConditionalEdges(SqlAgentSpec.Node.TASK_DISPATCH,
+                         AsyncEdgeAction.edge_async(taskDispatchEdge), taskDispatchRouting)
+                 .addEdge(SqlAgentSpec.Node.SUMMARIZE, SqlAgentSpec.Node.REPORT);
+        }
+
+        return graph;
     }
 
     /**

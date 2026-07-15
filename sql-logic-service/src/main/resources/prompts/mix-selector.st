@@ -127,6 +127,9 @@ display the full name (first and last name ) of employee with ID and name of the
 【问题】
 {question}
 
+【对话历史】
+{conversation_history}
+
 【参考信息】
 {evidence}
 

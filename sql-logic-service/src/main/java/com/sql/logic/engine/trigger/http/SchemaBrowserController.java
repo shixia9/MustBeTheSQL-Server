@@ -1,6 +1,6 @@
 package com.sql.logic.engine.trigger.http;
 
-import com.sql.logic.engine.application.service.WorkspaceAppService;
+import com.sql.logic.engine.application.service.SchemaBrowserAppService;
 import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.infrastructure.dialect.model.ColumnDTO;
 import com.sql.logic.engine.infrastructure.dialect.model.IndexDTO;
@@ -14,13 +14,13 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/workspace")
-public class WorkspaceController {
+@RequestMapping("/api/v1/schema")
+public class SchemaBrowserController {
 
-    private final WorkspaceAppService workspaceAppService;
+    private final SchemaBrowserAppService schemaBrowserAppService;
 
-    public WorkspaceController(WorkspaceAppService workspaceAppService) {
-        this.workspaceAppService = workspaceAppService;
+    public SchemaBrowserController(SchemaBrowserAppService schemaBrowserAppService) {
+        this.schemaBrowserAppService = schemaBrowserAppService;
     }
 
     @GetMapping("/schemas")
@@ -30,7 +30,7 @@ public class WorkspaceController {
             return Result.error(400, "Invalid user ID in session");
         }
         Long userId = Long.valueOf(userIdStr);
-        return Result.success(workspaceAppService.getSchemas(userId, connectionId));
+        return Result.success(schemaBrowserAppService.getSchemas(userId, connectionId));
     }
 
     @GetMapping("/tables")
@@ -41,7 +41,7 @@ public class WorkspaceController {
             return Result.error(400, "Invalid user ID in session");
         }
         Long userId = Long.valueOf(userIdStr);
-        return Result.success(workspaceAppService.getTables(userId, connectionId, schemaName));
+        return Result.success(schemaBrowserAppService.getTables(userId, connectionId, schemaName));
     }
 
     @GetMapping("/columns")
@@ -53,7 +53,7 @@ public class WorkspaceController {
             return Result.error(400, "Invalid user ID in session");
         }
         Long userId = Long.valueOf(userIdStr);
-        return Result.success(workspaceAppService.getColumns(userId, connectionId, schemaName, tableName));
+        return Result.success(schemaBrowserAppService.getColumns(userId, connectionId, schemaName, tableName));
     }
 
     @GetMapping("/indexes")
@@ -65,7 +65,7 @@ public class WorkspaceController {
             return Result.error(400, "Invalid user ID in session");
         }
         Long userId = Long.valueOf(userIdStr);
-        return Result.success(workspaceAppService.getIndexes(userId, connectionId, schemaName, tableName));
+        return Result.success(schemaBrowserAppService.getIndexes(userId, connectionId, schemaName, tableName));
     }
 
     @GetMapping("/ddl")
@@ -77,6 +77,6 @@ public class WorkspaceController {
             return Result.error(400, "Invalid user ID in session");
         }
         Long userId = Long.valueOf(userIdStr);
-        return Result.success(workspaceAppService.getTableDDL(userId, connectionId, schemaName, tableName));
+        return Result.success(schemaBrowserAppService.getTableDDL(userId, connectionId, schemaName, tableName));
     }
 }

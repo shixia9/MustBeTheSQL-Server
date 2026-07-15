@@ -1,5 +1,7 @@
 package com.sql.logic.engine.domain.agent.dto;
 
+import java.util.Map;
+
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -21,11 +23,13 @@ public record PlanStep(
      * <ul>
      *   <li>{@code instruction} — used by SQL_GENERATE_NODE / PYTHON_GENERATE_NODE</li>
      *   <li>{@code summaryAndRecommendations} — used by REPORT_GENERATOR_NODE</li>
+     *   <li>{@code mcpParams} — used by MCP tool steps (natural JSON object, no double-encoding)</li>
      * </ul>
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ToolParameters(
             @JsonProperty("instruction") String instruction,
-            @JsonProperty("summary_and_recommendations") String summaryAndRecommendations
+            @JsonProperty("summary_and_recommendations") String summaryAndRecommendations,
+            @JsonProperty("mcp_params") Map<String, Object> mcpParams
     ) {}
 }

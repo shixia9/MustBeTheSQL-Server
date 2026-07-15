@@ -46,6 +46,25 @@ public class SqlExecutionService {
     }
 
     /**
+     * Resolve the schema/database name to use for execution.
+     * Falls back to the connection config's database name when {@code schemaName}
+     * is blank, so MySQL always has a default database selected.
+     */
+    private String resolveSchemaName(Long connectionId, String schemaName) {
+        if (schemaName != null && !schemaName.isBlank()) return schemaName;
+        try {
+            com.sql.logic.engine.infrastructure.po.DbConnectionConf conf =
+                    databaseAppService.getConnectionConfig(connectionId);
+            if (conf != null && conf.getDbName() != null && !conf.getDbName().isBlank()) {
+                return conf.getDbName();
+            }
+        } catch (Exception e) {
+            log.debug("[SqlExecutionService] Could not resolve db_name from config: {}", e.getMessage());
+        }
+        return null; // explicitly null so callers can distinguish "not provided" from ""
+    }
+
+    /**
      * Execute a SQL statement on the user's selected database connection.
      * Prepends schema context (USE/SET search_path) when a schemaName is provided.
      *
@@ -76,13 +95,28 @@ public class SqlExecutionService {
             log.warn("[SqlExecutionService] Failed to resolve DB type: {}", e.getMessage());
         }
 
+        // When no schema/database is selected, fall back to the
+        // connection config's db_name so MySQL never sees "No database selected".
+        // If still null after fallback, try the JDBC connection's own catalog (the
+        // database baked into the JDBC URL), which HikariCP inherits from the pool config.
+        String effectiveSchema = resolveSchemaName(connectionId, schemaName);
+
         try (Connection conn = databaseAppService.getConnectionForUser(userId, connectionId);
              Statement stmt = conn.createStatement()) {
+
+            if (effectiveSchema == null) {
+                try {
+                    String catalog = conn.getCatalog();
+                    if (catalog != null && !catalog.isBlank()) {
+                        effectiveSchema = catalog;
+                    }
+                } catch (SQLException ignored) { /* leave null */ }
+            }
 
             // Scope the connection to the chosen schema. setCatalog/setSchema take effect
             // on the live connection for the statements issued on it — a single statement
             // per execute(), so JDBC multi-statement semantics never come into play.
-            applySchemaContext(conn, dbType, schemaName);
+            applySchemaContext(conn, dbType, effectiveSchema);
 
             stmt.setQueryTimeout(QUERY_TIMEOUT_SECONDS);
             stmt.setMaxRows(MAX_ROWS);
@@ -139,9 +173,8 @@ public class SqlExecutionService {
                 conn.setSchema(schemaName);
             }
         } catch (SQLException e) {
-            // Some drivers/configs reject setCatalog/setSchema on a pooled connection;
-            // degrade silently rather than aborting — the unqualified SQL still runs.
-            log.debug("[SqlExecutionService] applySchemaContext(schema='{}') ignored: {}", schemaName, e.getMessage());
+            log.warn("[SqlExecutionService] Failed to set catalog/schema to '{}' (dbType={}): {}",
+                    schemaName, dbType, e.getMessage());
         }
     }
 

@@ -2,7 +2,9 @@ package com.sql.logic.engine.trigger.http;
 
 import com.sql.logic.engine.application.service.LlmConfigAppService;
 import com.sql.logic.engine.common.dto.LlmConfigCreateRequest;
+import com.sql.logic.engine.common.dto.LlmConfigMetricsResponse;
 import com.sql.logic.engine.common.dto.LlmConfigResponse;
+import com.sql.logic.engine.common.dto.LlmConfigStrategyUpdateRequest;
 import com.sql.logic.engine.common.dto.LlmConfigUpdateRequest;
 import com.sql.logic.engine.common.response.Result;
 import cn.dev33.satoken.stp.StpUtil;
@@ -49,9 +51,34 @@ public class LlmConfigController {
         return Result.success(null);
     }
 
+    /**
+     * test connectivity to an LLM provider config. Sends a minimal
+     * ping and returns success/latency for the frontend health-status indicator.
+     */
+    @PostMapping("/{configId}/test")
+    public Result<java.util.Map<String, Object>> testConnection(@PathVariable Long configId) {
+        try {
+            return Result.success(llmConfigAppService.testConnection(getCurrentUserId(), configId));
+        } catch (Exception e) {
+            return Result.error(500, e.getMessage());
+        }
+    }
+
     @PostMapping("/{configId}/setDefault")
     public Result<Void> setDefaultConfig(@PathVariable Long configId) {
         llmConfigAppService.setDefaultConfig(getCurrentUserId(), configId);
         return Result.success(null);
+    }
+
+    @PutMapping("/{configId}/strategy")
+    public Result<Void> updateStrategy(@PathVariable Long configId,
+                                        @RequestBody LlmConfigStrategyUpdateRequest request) {
+        llmConfigAppService.updateStrategy(getCurrentUserId(), configId, request);
+        return Result.success(null);
+    }
+
+    @GetMapping("/{configId}/metrics")
+    public Result<LlmConfigMetricsResponse> getMetrics(@PathVariable Long configId) {
+        return Result.success(llmConfigAppService.getMetrics(getCurrentUserId(), configId));
     }
 }

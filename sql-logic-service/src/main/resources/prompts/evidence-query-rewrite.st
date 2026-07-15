@@ -46,6 +46,8 @@
 
 # 正式任务
 
+<多轮>对话历史: {conversation_history}
+
 <最新>用户输入: {latest_query}
 
 # 输出

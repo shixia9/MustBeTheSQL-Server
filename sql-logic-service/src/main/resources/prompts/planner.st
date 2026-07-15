@@ -62,6 +62,9 @@
 【Reference information】
 {evidence}
 
+{conversation_history_section}
+{python_constraint}
+{mcp_tools_section}
 # SEMANTIC MODEL
 
 {semantic_model}

@@ -1,6 +1,8 @@
 package com.sql.logic.engine.trigger.http;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sql.logic.engine.application.service.ConversationAppService;
+import com.sql.logic.engine.common.dto.ConversationSummaryDTO;
 import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.infrastructure.po.Conversation;
 import com.sql.logic.engine.infrastructure.po.ConversationDetail;
@@ -22,13 +24,17 @@ public class ConversationController {
         this.conversationAppService = conversationAppService;
     }
 
+    private Long getCurrentUserId() {
+        String idStr = (String) StpUtil.getLoginId();
+        if (idStr == null || !idStr.matches("\\d+")) {
+            throw new IllegalArgumentException("Invalid user ID in session");
+        }
+        return Long.valueOf(idStr);
+    }
+
     @PostMapping
     public Result<Conversation> createConversation(@RequestBody Map<String, Object> req) {
-        String userIdStr = (String) StpUtil.getLoginId();
-        if (userIdStr == null || !userIdStr.matches("\\d+")) {
-                return Result.error(400, "Invalid user ID in session");
-        }
-        Long userId = Long.valueOf(userIdStr);
+        Long userId = getCurrentUserId();
         String title = (String) req.getOrDefault("title", "New Conversation");
         Long strategyId = Long.valueOf(req.getOrDefault("llmStrategyId", 1).toString());
 
@@ -36,17 +42,46 @@ public class ConversationController {
     }
 
     @GetMapping("/user/{userId}")
-    public Result<List<Conversation>> listConversations(@PathVariable Long userId) {
-        // Verify the requesting user matches the path userId
-        String loginUserIdStr = (String) StpUtil.getLoginId();
-        if (loginUserIdStr == null || !loginUserIdStr.matches("\\d+")) {
-            return Result.error(400, "Invalid user ID in session");
-        }
-        Long loginUserId = Long.valueOf(loginUserIdStr);
+    public Result<Page<Conversation>> listConversations(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+        Long loginUserId = getCurrentUserId();
         if (!loginUserId.equals(userId)) {
             return Result.error(403, "Access denied");
         }
-        return Result.success(conversationAppService.listConversations(userId));
+        return Result.success(conversationAppService.listConversations(userId, page, size, keyword, startDate, endDate));
+    }
+
+    @GetMapping("/user/{userId}/summaries")
+    public Result<Page<ConversationSummaryDTO>> listConversationSummaries(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+        Long loginUserId = getCurrentUserId();
+        if (!loginUserId.equals(userId)) {
+            return Result.error(403, "Access denied");
+        }
+        return Result.success(conversationAppService.listConversationSummaries(userId, page, size, keyword, startDate, endDate));
+    }
+
+    @DeleteMapping("/{id}")
+    public Result<Void> deleteConversation(@PathVariable Long id) {
+        Long loginUserId = getCurrentUserId();
+        // Verify ownership — only the conversation owner can delete
+        Conversation conv = conversationAppService.listConversations(loginUserId).stream()
+                .filter(c -> c.getId().equals(id)).findFirst().orElse(null);
+        if (conv == null || !loginUserId.equals(conv.getUserId())) {
+            return Result.error(403, "Access denied or conversation not found");
+        }
+        conversationAppService.deleteConversation(id);
+        return Result.success(null);
     }
 
     @PostMapping("/{conversationId}/details")

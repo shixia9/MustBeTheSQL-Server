@@ -21,6 +21,7 @@
         <module>sql-logic-common</module>
         <module>sql-logic-service</module>
         <module>sql-logic-gateway</module>
+        <module>sql-logic-admin</module>
     </modules>
 
     <properties>

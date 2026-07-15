@@ -79,14 +79,19 @@ public class ConnectionManager {
         config.setJdbcUrl(buildJdbcUrl(conf));
         config.setUsername(conf.getUsername());
         config.setPassword(conf.getPassword());
-        
+
         // Pool configuration
         config.setMaximumPoolSize(5);
         config.setMinimumIdle(1);
         config.setIdleTimeout(600000); // 10 minutes
         config.setConnectionTimeout(10000); // 10 seconds
         config.setPoolName("HikariPool-UserConn-" + conf.getId());
-        
+
+        String dbName = conf.getDbName();
+        if (dbName != null && !dbName.isBlank()) {
+            config.setCatalog(dbName);
+        }
+
         return new HikariDataSource(config);
     }
 

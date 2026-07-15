@@ -9,7 +9,9 @@ import com.sql.logic.engine.domain.agent.dto.Plan;
 import com.sql.logic.engine.domain.agent.dto.PlanStep;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.infrastructure.dao.DbConnectionConfDao;
 import com.sql.logic.engine.infrastructure.po.DbConnectionConf;
 import com.sql.logic.engine.infrastructure.util.MarkdownParserUtil;
@@ -23,7 +25,7 @@ import java.util.Map;
 /**
  * SQL Generation Node — generates SQL for the current plan step.
  * <p>
- * Phase 3: gateless (feasibility is now a dedicated upstream node), and the
+ * Gateless (feasibility is now a dedicated upstream node), and the
  * {@code execution_description} comes from the current {@code PlanStep.instruction}
  * (decoded from {@code PLAN} + {@code CURRENT_STEP}) rather than the raw rewrite
  * query. The schema context is the recalled {@code TABLE_RELATION} from Schema Linking.
@@ -40,15 +42,18 @@ public class SqlGenerationNode implements NodeAction {
     private final PromptManager promptManager;
     private final DbConnectionConfDao dbConnectionConfDao;
     private final ObjectMapper objectMapper;
+    private final LlmCallReporter llmCallReporter;
 
     public SqlGenerationNode(LlmClientManager llmClientManager,
-                             PromptManager promptManager,
-                             DbConnectionConfDao dbConnectionConfDao,
-                             ObjectMapper objectMapper) {
+                              PromptManager promptManager,
+                              DbConnectionConfDao dbConnectionConfDao,
+                              ObjectMapper objectMapper,
+                              LlmCallReporter llmCallReporter) {
         this.llmClientManager = llmClientManager;
         this.promptManager = promptManager;
         this.dbConnectionConfDao = dbConnectionConfDao;
         this.objectMapper = objectMapper;
+        this.llmCallReporter = llmCallReporter;
     }
 
     @Override
@@ -85,16 +90,40 @@ public class SqlGenerationNode implements NodeAction {
                 ? tableRelation
                 : "（无可用 Schema，请仅基于问题描述谨慎生成 SQL）";
 
+        // Memory injection: turn the recalled USER_MEMORY into a prompt section,
+        // empty when no memory was recalled (keeps the template slot satisfied & backward-compatible).
+        String userMemory = state.value(SqlAgentSpec.StateKey.USER_MEMORY, "");
+        String userMemorySection = (userMemory == null || userMemory.isBlank())
+                ? ""
+                : "## 4. 用户偏好记忆 (尽量遵循)\n" + userMemory;
+
+        // Multi-turn context: inject prior turns so follow-up questions
+        String conversationHistory = state.value(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "");
+        String conversationHistorySection = (conversationHistory == null || conversationHistory.isBlank())
+                ? ""
+                : "## 3.1 历史对话上下文 (当前问题可能延续此前的分析，可复用其表/字段/口径)\n" + conversationHistory;
+
+        // Inject the Agent Studio system prompt as an extra role directive.
+        String systemPrompt = state.value(SqlAgentSpec.StateKey.AGENT_SYSTEM_PROMPT, "");
+        String systemPromptSection = (systemPrompt == null || systemPrompt.isBlank())
+                ? ""
+                : "# 附加角色要求 (来自 Agent 配置)\n" + systemPrompt;
+
         String prompt = promptManager.render(SqlAgentSpec.PromptName.NEW_SQL_GENERATE, Map.of(
                 "dialect", dialect,
                 "question", rewriteQuery,
                 "schema_info", schemaInfo,
                 "evidence", evidence == null || evidence.isBlank() ? "无" : evidence,
                 "execution_description", executionDescription,
+                "system_prompt_section", systemPromptSection,
+                "conversation_history_section", conversationHistorySection,
+                "user_memory_section", userMemorySection,
                 "execution_description_section", ""  // Description is the primary driver when no planner is wired
         ));
 
-        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
+        LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,
+                (TraceContext) state.value(SqlAgentSpec.StateKey.TRACE_CONTEXT).orElse(null),
+                SqlAgentSpec.Node.SQL_GENERATION, llmCallReporter);
         String sql = strategy.generateSql(prompt, null);
         sql = MarkdownParserUtil.extractRawText(sql);
 

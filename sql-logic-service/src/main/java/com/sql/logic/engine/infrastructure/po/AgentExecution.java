@@ -15,12 +15,17 @@ public class AgentExecution {
     private Long id;
     private Long userId;
     private Long connectionId;
+    private Long workspaceId;
+    private Long agentId;
     private String schemaName;
     private String input;
     private String summary;
     private String status;
     private String threadId;
+    private Long conversationId;
     private Integer totalTokens;
+    private Integer modelCalls;
+    private Integer toolCalls;
     private Long totalDurationMs;
     private LocalDateTime createTime;
 }

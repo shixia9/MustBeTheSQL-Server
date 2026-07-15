@@ -1,16 +1,17 @@
 package com.sql.logic.engine.trigger.http;
 
-import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.application.service.AgentHistoryAppService;
 import com.sql.logic.engine.application.service.UserAppService;
 import com.sql.logic.engine.common.dto.SqlGenerateRequest;
+import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner;
 import com.sql.logic.engine.domain.agent.core.SqlAgentRunner.AgentRunHandle;
-import com.sql.logic.engine.domain.agent.core.AgentRunContext;
 import com.sql.logic.engine.domain.agent.service.SessionSummaryService;
+import com.sql.logic.engine.domain.conversation.ConversationContextService;
+import com.sql.logic.engine.domain.memory.MemoryExtractorService;
 import com.sql.logic.engine.infrastructure.po.AgentExecution;
 
 import cn.dev33.satoken.stp.StpUtil;
@@ -24,11 +25,7 @@ import reactor.core.publisher.SignalType;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 /**
  * REST controller for the SQL Agent streaming + HITL endpoints (Phase 4).
@@ -43,12 +40,18 @@ import java.util.stream.Collectors;
  * <p>
  * Event format (each SSE data line is a JSON object):
  * <pre>
+ * {"nodeName":"EVIDENCE_RECALL","outputType":"STARTED","messageType":"THINKING","sequenceNo":0}
  * {"nodeName":"EVIDENCE_RECALL","outputType":"FINISHED","data":{"rewriteQuery":"...","evidence":""}}
  * {"nodeName":"SQL_GENERATION","outputType":"FINISHED","data":{"sql":"..."}}
  * {"type":"AWAITING_CONFIRMATION","threadId":"...","plan":"...","repairCount":1}
  * {"type":"COMPLETED"}
  * {"type":"ERROR","message":"..."}
  * </pre>
+ *
+ * <p>node-output → SSE encoding (FINISHED) and the synthetic
+ * STARTED events are owned by {@code AgentSseCodec} / {@code AgentSseStartedListener}
+ * and surfaced by {@link AgentRunHandle#getUnifiedSseFlux()}. This controller only
+ * attaches the terminal event, persists the execution history, and maps errors.
  */
 @RestController
 @RequestMapping("/api/v1/agent/sql")
@@ -61,17 +64,23 @@ public class SqlAgentController {
     private final ObjectMapper objectMapper;
     private final AgentHistoryAppService agentHistoryAppService;
     private final SessionSummaryService sessionSummaryService;
+    private final MemoryExtractorService memoryExtractorService;
+    private final ConversationContextService conversationContextService;
 
     public SqlAgentController(SqlAgentRunner sqlAgentRunner,
                             UserAppService userAppService,
                             ObjectMapper objectMapper,
                             AgentHistoryAppService agentHistoryAppService,
-                            SessionSummaryService sessionSummaryService) {
+                            SessionSummaryService sessionSummaryService,
+                            MemoryExtractorService memoryExtractorService,
+                            ConversationContextService conversationContextService) {
         this.sqlAgentRunner = sqlAgentRunner;
         this.userAppService = userAppService;
         this.objectMapper = objectMapper;
         this.agentHistoryAppService = agentHistoryAppService;
         this.sessionSummaryService = sessionSummaryService;
+        this.memoryExtractorService = memoryExtractorService;
+        this.conversationContextService = conversationContextService;
     }
 
     /**
@@ -100,24 +109,35 @@ public class SqlAgentController {
         log.info("[SqlAgentController] Starting agent stream for userId={}, connectionId={}, autoConfirm={}, input='{}'",
                 currentUserId, request.getConnectionId(), autoConfirm, request.getUserInput());
 
+        // Phase B (B5): resolve the multi-turn conversation (create on first turn) and
+        // load the windowed prior-turn history so the Agent can answer follow-ups.
+        com.sql.logic.engine.infrastructure.po.Conversation conversation = conversationContextService.resolveConversation(
+                request.getConversationId(), currentUserId, request.getUserInput(), request.getLlmConfigId());
+        Long conversationId = conversation.getId();
+        String historySection = conversationContextService.loadHistorySection(conversationId);
+
         AgentRunHandle handle = sqlAgentRunner.execute(
                 request.getConnectionId(),
                 request.getUserInput(),
                 currentUserId,
                 request.getLlmConfigId(),
+                request.getWorkspaceId(),
                 request.getTableNames(),
                 request.getSchemaContext(),
-                autoConfirm
+                autoConfirm,
+                conversationId,
+                historySection
         );
 
         String threadId = handle.getThreadId();
-        return handle.getFlux()
-                .map(o -> nodeOutputToJson(o, handle.getContext()))
-                .filter(json -> !json.isEmpty())  // Skip empty (START/END pseudo-nodes)
-                .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId)))
+        return handle.getUnifiedSseFlux()
+                .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId, conversationId)))
                 .doFinally(signalType -> {
                     if (signalType != SignalType.CANCEL) {
                         recordExecution(handle, request, currentUserId);
+                        // Memory extraction runs independently so a failure in
+                        // recordExecution never blocks the memory pipeline.
+                        triggerMemoryExtractionSafe(handle, currentUserId);
                     }
                 })
                 .onErrorResume(e -> {
@@ -161,13 +181,13 @@ public class SqlAgentController {
         }
 
         String threadId = handle.getThreadId();
-        return handle.getFlux()
-                .map(o -> nodeOutputToJson(o, handle.getContext()))
-                .filter(json -> !json.isEmpty())
-                .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId)))
+        Long conversationId = handle.getContext().getConversationId();
+        return handle.getUnifiedSseFlux()
+                .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, currentUserId, conversationId)))
                 .doFinally(signalType -> {
                     if (signalType != SignalType.CANCEL) {
                         recordExecution(handle, null, currentUserId);
+                        triggerMemoryExtractionSafe(handle, currentUserId);
                     }
                 })
                 .onErrorResume(e -> {
@@ -178,14 +198,15 @@ public class SqlAgentController {
 
     /**
      * Pick the terminal SSE event after the upstream completes: AWAITING_CONFIRMATION
-     * if the run paused at HITL, else COMPLETED.
+     * if the run paused at HITL, else COMPLETED (carrying the conversationId so the
+     * frontend can echo it on follow-up turns).
      */
-    private Mono<String> terminalEvent(AgentRunHandle handle, String threadId, Long userId) {
+    private Mono<String> terminalEvent(AgentRunHandle handle, String threadId, Long userId, Long conversationId) {
         return Mono.fromCallable(() -> {
             if (handle.isHaltedAtHitl()) {
                 return awaitingConfirmationJson(handle, threadId);
             }
-            return completedJson();
+            return completedJson(conversationId);
         });
     }
 
@@ -227,185 +248,17 @@ public class SqlAgentController {
         }
     }
 
-    private String completedJson() {
+    private String completedJson(Long conversationId) {
         try {
-            return objectMapper.writeValueAsString(Map.of("type", "COMPLETED"));
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("type", "COMPLETED");
+            if (conversationId != null) {
+                body.put("conversationId", conversationId);
+            }
+            return objectMapper.writeValueAsString(body);
         } catch (Exception e) {
             return "{\"type\":\"COMPLETED\"}";
         }
-    }
-
-    /**
-     * Convert a NodeOutput to an SSE JSON string. Skips START/END pseudo-nodes, extracts
-     * the node-relevant (non-sensitive) state into {@code data}.
-     */
-    private String nodeOutputToJson(NodeOutput output, AgentRunContext runContext) {
-        try {
-            String nodeName = output.node();
-
-            if ("__start__".equalsIgnoreCase(nodeName) || "__end__".equalsIgnoreCase(nodeName)) {
-                return "";
-            }
-
-            Map<String, Object> event = new LinkedHashMap<>();
-            event.put("nodeName", nodeName);
-            event.put("outputType", "FINISHED");
-
-            String outputDataJson = null;
-            OverAllState state = output.state();
-            if (state != null) {
-                Map<String, Object> data = extractNodeData(nodeName, state);
-                event.put("data", data);
-                try {
-                    outputDataJson = objectMapper.writeValueAsString(data);
-                } catch (Exception ignore) { /* best-effort */ }
-            }
-
-            // Buffer the per-node step for later persistence (history timeline replay).
-            // A non-fatal failure here must NOT break the SSE stream.
-            if (runContext != null) {
-                try {
-                    runContext.appendStep(nodeName, "SUCCESS", null, outputDataJson);
-                } catch (Exception ignore) { /* sequencing only */ }
-            }
-
-            return objectMapper.writeValueAsString(event);
-        } catch (Exception e) {
-            log.error("[SqlAgentController] Failed to serialize NodeOutput", e);
-            return "{\"nodeName\":\"ERROR\",\"outputType\":\"ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}";
-        }
-    }
-
-    private static final Set<String> SENSITIVE_KEYS = Set.of(
-            "connectionId", "llmConfigId", "userId"
-    );
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> extractNodeData(String nodeName, OverAllState state) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        Integer currentStep = readInt(state, SqlAgentSpec.StateKey.CURRENT_STEP);
-
-        switch (nodeName) {
-            case SqlAgentSpec.Node.EVIDENCE_RECALL:
-                data.put("rewriteQuery", state.value(SqlAgentSpec.StateKey.REWRITE_QUERY, ""));
-                data.put("evidence", state.value(SqlAgentSpec.StateKey.EVIDENCE, ""));
-                // Phase 5 structured arrays for the frontend card
-                Object egl = state.value(SqlAgentSpec.StateKey.EVIDENCE_GLOSSARY, List.of());
-                data.put("evidenceGlossary", egl != null ? egl : List.of());
-                Object efaq = state.value(SqlAgentSpec.StateKey.EVIDENCE_FAQ, List.of());
-                data.put("evidenceFaq", efaq != null ? efaq : List.of());
-                break;
-            case SqlAgentSpec.Node.SCHEMA_LINKING:
-                data.put("tableRelation", state.value(SqlAgentSpec.StateKey.TABLE_RELATION, ""));
-                data.put("filteredTables", extractFilteredTableNames(state));
-                break;
-            case SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT:
-                data.put("feasibilityResult", state.value(SqlAgentSpec.StateKey.FEASIBILITY_RESULT, ""));
-                break;
-            case SqlAgentSpec.Node.PLANNER:
-                data.put("plan", state.value(SqlAgentSpec.StateKey.PLAN, ""));
-                break;
-            case SqlAgentSpec.Node.HITL_GATE: {
-                Object v = state.value(SqlAgentSpec.StateKey.NEEDS_HUMAN_REVIEW, Boolean.FALSE);
-                boolean needsReview = v instanceof Boolean ? (Boolean) v
-                        : (v != null && Boolean.parseBoolean(String.valueOf(v)));
-                data.put("needsReview", needsReview);
-                data.put("reason", state.value("hitlGateReason", ""));
-                data.put("repairCount", readInt(state, SqlAgentSpec.StateKey.REPAIR_COUNT));
-                break;
-            }
-            case SqlAgentSpec.Node.HITL: {
-                // Paused here pre-node — emit the awaiting-confirmation payload too.
-                data.put("needsReview", true);
-                data.put("awaitingConfirmation", true);
-                data.put("plan", state.value(SqlAgentSpec.StateKey.PLAN, ""));
-                data.put("repairCount", readInt(state, SqlAgentSpec.StateKey.REPAIR_COUNT));
-                break;
-            }
-            case SqlAgentSpec.Node.PLAN_DISPATCH:
-                data.put("currentStep", currentStep);
-                data.put("nextNode", state.value(SqlAgentSpec.StateKey.NEXT_NODE, ""));
-                break;
-            case SqlAgentSpec.Node.SQL_GENERATION:
-                data.put("sql", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
-                data.put("step", currentStep);
-                data.put("fixAttemptCount", readInt(state, SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT));
-                break;
-            case SqlAgentSpec.Node.SQL_EXECUTION:
-                data.put("step", currentStep);
-                addIfPresent(data, "sqlExecutionResult", state.value(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, ""));
-                addIfPresent(data, "errorMsg", state.value(SqlAgentSpec.StateKey.SQL_ERROR, ""));
-                data.put("fixAttemptCount", readInt(state, SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT));
-                break;
-            case SqlAgentSpec.Node.SQL_FIXER:
-                data.put("step", currentStep);
-                data.put("sql", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
-                data.put("fixAttemptCount", readInt(state, SqlAgentSpec.StateKey.FIX_ATTEMPT_COUNT));
-                break;
-            case SqlAgentSpec.Node.PYTHON_GENERATION:
-                data.put("pythonCode", state.value(SqlAgentSpec.StateKey.PYTHON_CODE, ""));
-                data.put("step", currentStep);
-                break;
-            case SqlAgentSpec.Node.PYTHON_EXECUTION:
-                data.put("pythonResult", state.value(SqlAgentSpec.StateKey.PYTHON_RESULT, ""));
-                data.put("step", currentStep);
-                break;
-            case SqlAgentSpec.Node.PYTHON_ANALYSIS:
-                data.put("analysis", state.value(SqlAgentSpec.StateKey.PYTHON_ANALYSIS_RESULT, ""));
-                data.put("step", currentStep);
-                data.put("executionOutput", state.value(SqlAgentSpec.StateKey.EXECUTION_OUTPUT, Map.of()));
-                break;
-            case SqlAgentSpec.Node.REPORT:
-                data.put("report", state.value(SqlAgentSpec.StateKey.REPORT_RESULT, ""));
-                break;
-            default:
-                for (String key : state.data().keySet()) {
-                    if (!SENSITIVE_KEYS.contains(key)) {
-                        Object val = state.value(key, null);
-                        if (val != null) {
-                            data.put(key, val);
-                        }
-                    }
-                }
-                break;
-        }
-        return data;
-    }
-
-    private void addIfPresent(Map<String, Object> data, String key, String value) {
-        if (value != null && !value.isBlank()) {
-            data.put(key, value);
-        }
-    }
-
-    private Integer readInt(OverAllState state, String key) {
-        Object v = state.value(key, (Integer) null);
-        if (v == null) return null;
-        if (v instanceof Number) return ((Number) v).intValue();
-        try {
-            return Integer.parseInt(String.valueOf(v).trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private List<String> extractFilteredTableNames(OverAllState state) {
-        Object tableNamesObj = state.value(SqlAgentSpec.StateKey.TABLE_NAMES, null);
-        if (tableNamesObj instanceof List<?>) {
-            List<String> names = (List<String>) tableNamesObj;
-            if (!names.isEmpty()) {
-                return names;
-            }
-        }
-        String tableRelation = state.value(SqlAgentSpec.StateKey.TABLE_RELATION, "");
-        if (tableRelation != null && !tableRelation.isBlank()) {
-            return Pattern.compile("# Table:\\s*(\\w+)")
-                    .matcher(tableRelation)
-                    .results()
-                    .map(m -> m.group(1))
-                    .collect(Collectors.toList());
-        }
-        return List.of();
     }
 
     /** Escape a message fragment for safe inline JSON strings (best-effort). */
@@ -434,21 +287,52 @@ public class SqlAgentController {
         exec.setSummary(summariseSessionTitle(handle, userInput));
         exec.setStatus("COMPLETED");
         exec.setThreadId(handle.getThreadId());
+        exec.setConversationId(handle.getContext().getConversationId());
+        exec.setAgentId(readLongState(handle, SqlAgentSpec.StateKey.AGENT_ID));
         exec.setTotalDurationMs(0L);
         exec.setCreateTime(LocalDateTime.now());
+
+        // Phase A3: populate trace summary fields from TraceContext (best-effort).
+        com.sql.logic.engine.domain.trace.TraceContext tc = handle.getContext().getTraceContext();
+        if (tc != null) {
+            exec.setTotalTokens(tc.getTotalInputTokens() + tc.getTotalOutputTokens());
+            exec.setModelCalls(tc.getModelCalls());
+            exec.setToolCalls((int) tc.getSteps().stream()
+                    .filter(st -> "TOOL_RESULT".equals(st.nodeType))
+                    .count());
+            exec.setTotalDurationMs(System.currentTimeMillis() - tc.getStartTime());
+        }
 
         if (request != null) {
             exec.setConnectionId(request.getConnectionId());
             exec.setSchemaName(request.getSchemaContext());
+            exec.setWorkspaceId(request.getWorkspaceId());
         } else {
             var ctx = handle.getContext();
             exec.setConnectionId(ctx.getConnectionId());
             exec.setSchemaName(ctx.getSchemaName());
+            exec.setWorkspaceId(ctx.getWorkspaceId());
         }
 
         agentHistoryAppService.saveExecution(exec);
         log.info("[SqlAgentController] Recorded agent execution id={}, summary='{}'",
                 exec.getId(), exec.getSummary());
+
+        // Persist this turn into the conversation so the next follow-up
+        // can recall it as context (sliding window managed by ConversationContextService).
+        Long conversationId = handle.getContext().getConversationId();
+        if (conversationId != null) {
+            String report = readStateValue(handle, SqlAgentSpec.StateKey.REPORT_RESULT, "");
+            String sql = readStateValue(handle, SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, "");
+            String execResult = readStateValue(handle, SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, "");
+            conversationContextService.appendTurn(conversationId, userInput, sql,
+                    report != null && !report.isBlank() ? report : execResult);
+            // Update conversation title from the AI-generated summary (first turn sets it,
+            // subsequent turns keep the original via truncateForTitle which preserves as-is).
+            if (exec.getSummary() != null && !exec.getSummary().isBlank()) {
+                conversationContextService.updateTitle(conversationId, exec.getSummary());
+            }
+        }
 
         // Persist the buffered per-node steps so the history timeline can be replayed.
         // Steps captured before the HITL pause PLUS resumed steps share the same context,
@@ -457,10 +341,37 @@ public class SqlAgentController {
             java.util.List<com.sql.logic.engine.infrastructure.po.AgentExecutionStep> steps =
                     handle.getContext().drainSteps();
             if (steps != null && !steps.isEmpty()) {
+                // Phase A3: enrich each step with trace data (latency/tokens/nodeType) where available.
+                com.sql.logic.engine.domain.trace.TraceContext stepTc = handle.getContext().getTraceContext();
                 LocalDateTime now = LocalDateTime.now();
-                for (com.sql.logic.engine.infrastructure.po.AgentExecutionStep s : steps) {
-                    s.setExecutionId(exec.getId());
-                    if (s.getCreateTime() == null) s.setCreateTime(now);
+                if (stepTc != null) {
+                    java.util.List<com.sql.logic.engine.domain.trace.TraceContext.StepTrace> traceSteps =
+                            stepTc.getSteps();
+                    int n = Math.min(steps.size(), traceSteps.size());
+                    for (int i = 0; i < n; i++) {
+                        com.sql.logic.engine.infrastructure.po.AgentExecutionStep s = steps.get(i);
+                        com.sql.logic.engine.domain.trace.TraceContext.StepTrace st = traceSteps.get(i);
+                        s.setExecutionId(exec.getId());
+                        if (s.getCreateTime() == null) s.setCreateTime(now);
+                        s.setInputTokens(st.inputTokens);
+                        s.setOutputTokens(st.outputTokens);
+                        s.setLatencyMs(st.latencyMs);
+                        if (st.durationMs > 0) {
+                            s.setDurationMs(st.durationMs);
+                        }
+                        if (s.getNodeType() == null) s.setNodeType(st.nodeType);
+                    }
+                    // Any remaining buffered steps beyond trace coverage still need executionId + createTime.
+                    for (int i = n; i < steps.size(); i++) {
+                        com.sql.logic.engine.infrastructure.po.AgentExecutionStep s = steps.get(i);
+                        s.setExecutionId(exec.getId());
+                        if (s.getCreateTime() == null) s.setCreateTime(now);
+                    }
+                } else {
+                    for (com.sql.logic.engine.infrastructure.po.AgentExecutionStep s : steps) {
+                        s.setExecutionId(exec.getId());
+                        if (s.getCreateTime() == null) s.setCreateTime(now);
+                    }
                 }
                 agentHistoryAppService.saveSteps(steps);
                 log.info("[SqlAgentController] Persisted {} step records for execution id={}",
@@ -473,6 +384,42 @@ public class SqlAgentController {
         log.warn("[SqlAgentController] Failed to record execution history: {}", e.getMessage());
     }
 }
+
+    /**
+     * Memory extraction: pass only the user's input to the async extractor
+     * (following AgentX's pattern — the extraction LLM focuses on the user's
+     * words to identify preferences/identity/goals, not the system response).
+     * Best-effort and fully non-blocking.
+     */
+    private void triggerMemoryExtraction(AgentRunHandle handle, Long userId, String userInput) {
+        try {
+            Long workspaceId = handle.getContext().getWorkspaceId();
+            Long llmConfigId = handle.getContext().getLlmConfigId();
+            Long agentId = readLongState(handle, SqlAgentSpec.StateKey.AGENT_ID);
+            // Pass only the user message — the extraction prompt is designed to
+            // extract long-term preferences from the user's own words.
+            memoryExtractorService.extractAndPersistAsync(
+                    userId, workspaceId, agentId, handle.getThreadId(), userInput, userInput, llmConfigId);
+        } catch (Exception e) {
+            log.debug("[SqlAgentController] Memory extraction trigger skipped: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Fire-and-forget wrapper called from {@code doFinally} so memory extraction
+     * runs even when {@link #recordExecution} fails part-way through.
+     * Skips extraction when the run is paused at HITL (extraction runs after resume).
+     */
+    private void triggerMemoryExtractionSafe(AgentRunHandle handle, Long userId) {
+        try {
+            if (handle.isHaltedAtHitl()) return;
+            String userInput = readStateValue(handle, SqlAgentSpec.StateKey.INPUT, "");
+            if (userInput.isBlank()) return;
+            triggerMemoryExtraction(handle, userId, userInput);
+        } catch (Exception e) {
+            log.debug("[SqlAgentController] Memory extraction safe trigger skipped: {}", e.getMessage());
+        }
+    }
 
     /**
      * Build a compact conversation excerpt (final report + generated SQL) from the
@@ -517,7 +464,7 @@ public class SqlAgentController {
             var state = snapshot == null ? null : snapshot.state();
             if (state == null) return null;
             Object v = state.value(key, null);
-            return com.sql.logic.engine.domain.agent.AgentStateUtil.toLong(v);
+            return AgentStateUtil.toLong(v);
         } catch (Exception e) {
             return null;
         }

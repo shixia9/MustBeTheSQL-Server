@@ -14,6 +14,7 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.retry.support.RetryTemplate;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.stereotype.Component;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -141,6 +142,7 @@ public class AiAgentFactory {
         OpenAiChatModel chatModel = OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(optionsBuilder.build())
+                .retryTemplate(noRetryTemplate())
                 .build();
         ChatClient chatClient = ChatClient.builder(chatModel).build();
 
@@ -167,10 +169,22 @@ public class AiAgentFactory {
         AnthropicChatModel chatModel = AnthropicChatModel.builder()
                 .anthropicApi(anthropicApi)
                 .defaultOptions(optionsBuilder.build())
+                .retryTemplate(noRetryTemplate())
                 .build();
         ChatClient chatClient = ChatClient.builder(chatModel).build();
 
         return new AnthropicLLMStrategy(chatClient.mutate());
+    }
+
+    /**
+     * Build a {@link RetryTemplate} that performs exactly one attempt — no
+     * retries on transient errors.
+     */
+    private RetryTemplate noRetryTemplate() {
+        return RetryTemplate.builder()
+                .maxAttempts(1)
+                .noBackoff()
+                .build();
     }
 
     /**

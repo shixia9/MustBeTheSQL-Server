@@ -27,6 +27,13 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
         </dependency>
+        <!-- Dubbo RPC (shared interface definitions) -->
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo-spring-boot-starter</artifactId>
+            <version>3.2.15</version>
+            <scope>provided</scope>
+        </dependency>
         <!-- Spring Web for SecurityContext (uses RequestContextHolder) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

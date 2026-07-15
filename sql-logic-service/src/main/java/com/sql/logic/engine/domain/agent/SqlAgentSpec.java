@@ -29,6 +29,14 @@ public final class SqlAgentSpec {
         public static final String PYTHON_EXECUTION = "PYTHON_EXECUTION";
         public static final String PYTHON_ANALYSIS = "PYTHON_ANALYSIS";
         public static final String REPORT = "REPORT";
+        // ---- Task split workflow ----
+        public static final String MEMORY_RECALL = "MEMORY_RECALL";
+        public static final String ANALYZER = "ANALYZER";
+        public static final String TASK_SPLIT = "TASK_SPLIT";
+        public static final String TASK_DISPATCH = "TASK_DISPATCH";
+        public static final String SUMMARIZE = "SUMMARIZE";
+        public static final String MCP_TOOL_EXECUTOR = "MCP_TOOL_EXECUTOR";
+        public static final String MCP_TOOL_FIXER = "MCP_TOOL_FIXER";
     }
 
     // ======================== State Keys ========================
@@ -39,6 +47,11 @@ public final class SqlAgentSpec {
         public static final String USER_ID = "userId";
         public static final String CONNECTION_ID = "connectionId";
         public static final String LLM_CONFIG_ID = "llmConfigId";
+        public static final String WORKSPACE_ID = "workspaceId";
+        public static final String THREAD_ID = "threadId";
+        public static final String SESSION_ID = "sessionId";
+        public static final String CONVERSATION_ID = "conversationId";
+        public static final String CONVERSATION_HISTORY = "conversationHistory";
         public static final String DB_TYPE = "dbType";
         public static final String SCHEMA_NAME = "schemaName";
 
@@ -86,6 +99,36 @@ public final class SqlAgentSpec {
 
         // ---- Report ----
         public static final String REPORT_RESULT = "reportResult";
+
+        // ---- Task Split workflow ----
+        public static final String COMPLEXITY = "complexity";
+        public static final String SUBTASKS = "subtasks";
+        public static final String CURRENT_SUBTASK = "currentSubtask";
+        public static final String SUBTASK_RESULTS = "subtaskResults";
+
+        // ---- Trace context (carried through state) ----
+        public static final String TRACE_CONTEXT = "traceContext";
+
+        // ---- Memory ----
+        public static final String USER_MEMORY = "userMemory";
+
+        // ---- Agent Studio config ----
+        public static final String AGENT_SYSTEM_PROMPT = "agentSystemPrompt";
+        public static final String AGENT_MEMORY_ENABLED = "agentMemoryEnabled";
+        public static final String AGENT_TOOLS = "agentTools";
+        public static final String AGENT_NAME = "agentName";
+        public static final String AGENT_ID = "agentId";
+        // ---- MCP Tool ----
+        public static final String MCP_TOOL_NAME = "mcpToolName";
+        public static final String MCP_TOOL_PARAMS = "mcpToolParams";
+        public static final String MCP_TOOL_RESULT = "mcpToolResult";
+        /** Set to true by McpToolExecutorNode when a call fails; consumed by the routing edge. */
+        public static final String MCP_CALL_FAILED = "mcpCallFailed";
+        /** Number of fix attempts for MCP tool calls (max 2). Reset to 0 by PlanDispatchNode. */
+        public static final String MCP_FIX_ATTEMPT_COUNT = "mcpFixAttemptCount";
+        /** Accumulated results of completed MCP steps, keyed by step number.
+         *  Used for $step_N.field reference resolution in chained MCP calls. */
+        public static final String MCP_STEP_RESULTS = "mcpStepResults";
     }
 
     // ======================== Prompt Template Names ========================
@@ -105,9 +148,13 @@ public final class SqlAgentSpec {
         public static final String EVIDENCE_GLOSSARY = "evidence-glossary";
         /** Few-shot knowledge wrapper (Phase 5 RAG) — {agentKnowledge}. */
         public static final String EVIDENCE_KNOWLEDGE = "evidence-knowledge";
+        public static final String COMPLEXITY_ANALYZER = "complexity-analyzer";
+        public static final String TASK_SPLIT = "task-split";
+        public static final String SUMMARIZE = "summarize";
+        public static final String MEMORY_EXTRACTION = "memory-extraction";
     }
 
-    // ======================== Retrieval (Phase 5 RAG) ========================
+    // ======================== Retrieval ========================
 
     /**
      * pgvector metadata keys and channel types for the four-channel vector retrieval.

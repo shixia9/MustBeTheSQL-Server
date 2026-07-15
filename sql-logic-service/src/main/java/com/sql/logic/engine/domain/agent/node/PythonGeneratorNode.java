@@ -8,7 +8,9 @@ import com.sql.logic.engine.domain.agent.PlanStepUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.infrastructure.util.MarkdownParserUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,13 +44,16 @@ public class PythonGeneratorNode implements NodeAction {
     private final LlmClientManager llmClientManager;
     private final PromptManager promptManager;
     private final ObjectMapper objectMapper;
+    private final LlmCallReporter llmCallReporter;
 
     public PythonGeneratorNode(LlmClientManager llmClientManager,
-                               PromptManager promptManager,
-                               ObjectMapper objectMapper) {
+                                PromptManager promptManager,
+                                ObjectMapper objectMapper,
+                                LlmCallReporter llmCallReporter) {
         this.llmClientManager = llmClientManager;
         this.promptManager = promptManager;
         this.objectMapper = objectMapper;
+        this.llmCallReporter = llmCallReporter;
     }
 
     @Override
@@ -82,7 +87,9 @@ public class PythonGeneratorNode implements NodeAction {
                 "plan_description", planDescription
         ));
 
-        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
+        LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,
+                (TraceContext) state.value(SqlAgentSpec.StateKey.TRACE_CONTEXT).orElse(null),
+                SqlAgentSpec.Node.PYTHON_GENERATION, llmCallReporter);
         String raw = strategy.generateSql(prompt, null);
         String pythonCode = MarkdownParserUtil.extractRawText(raw);
 

@@ -5,12 +5,17 @@ import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.agent.tool.ToolDefinition;
+import com.sql.logic.engine.domain.agent.tool.ToolRegistry;
+import com.sql.logic.engine.domain.trace.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -39,10 +44,16 @@ public class FeasibilityAssessmentNode implements NodeAction {
 
     private final LlmClientManager llmClientManager;
     private final PromptManager promptManager;
+    private final LlmCallReporter llmCallReporter;
+    private final ToolRegistry toolRegistry;
 
-    public FeasibilityAssessmentNode(LlmClientManager llmClientManager, PromptManager promptManager) {
+    public FeasibilityAssessmentNode(LlmClientManager llmClientManager, PromptManager promptManager,
+                                     LlmCallReporter llmCallReporter,
+                                     ToolRegistry toolRegistry) {
         this.llmClientManager = llmClientManager;
         this.promptManager = promptManager;
+        this.llmCallReporter = llmCallReporter;
+        this.toolRegistry = toolRegistry;
     }
 
     @Override
@@ -59,21 +70,28 @@ public class FeasibilityAssessmentNode implements NodeAction {
         Object userIdObj = state.value(SqlAgentSpec.StateKey.USER_ID, (Long) null);
         Long userId = com.sql.logic.engine.domain.agent.AgentStateUtil.toLong(userIdObj);
 
-        // multi_turn left empty in Phase 3 (conversation history arrives in Phase 5)
-        String multiTurn = "";
+        // Inject conversation history so follow-up questions are understood in context
+        String conversationHistory = state.value(SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "");
+        String multiTurn = (conversationHistory == null || conversationHistory.isBlank()) ? "" : conversationHistory;
 
         // Schema fallback: if Schema Linking produced nothing usable, show empty placeholder
         String recalledSchema = (tableRelation == null || tableRelation.isBlank()) ? "（无召回的 Schema）" : tableRelation;
         String evidenceText = (evidence == null || evidence.isBlank()) ? "无" : evidence;
 
+        // Include available MCP tools as additional data sources
+        String mcpToolsInfo = buildMcpInfo();
+
         String prompt = promptManager.render(SqlAgentSpec.PromptName.FEASIBILITY_ASSESSMENT, Map.of(
                 "canonical_query", rewriteQuery,
                 "recalled_schema", recalledSchema,
                 "evidence", evidenceText,
-                "multi_turn", multiTurn
+                "multi_turn", multiTurn,
+                "mcp_tools", mcpToolsInfo
         ));
 
-        LLMStrategy strategy = llmClientManager.resolveStrategy(llmConfigId, userId);
+        LLMStrategy strategy = llmClientManager.resolveTraced(llmConfigId, userId,
+                (TraceContext) state.value(SqlAgentSpec.StateKey.TRACE_CONTEXT).orElse(null),
+                SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT, llmCallReporter);
         String verdict = strategy.generateSql(prompt, null);
         if (verdict == null) {
             verdict = "";
@@ -118,5 +136,19 @@ public class FeasibilityAssessmentNode implements NodeAction {
         // Keep only the first line — the verdict may carry trailing sections.
         int nl = rest.indexOf('\n');
         return nl > 0 ? rest.substring(0, nl).trim() : rest;
+    }
+
+    private String buildMcpInfo() {
+        List<ToolDefinition> mcpTools = toolRegistry.listTools().stream()
+                .filter(t -> t.type().name().startsWith("MCP_"))
+                .toList();
+        if (mcpTools.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("【可用的外部数据源 (MCP Tools)】\n");
+        sb.append("除了数据库，你还可以通过以下外部工具获取实时数据。如果用户的请求无法通过数据库回答，但能被这些工具覆盖，应判定为《数据分析》。\n");
+        for (ToolDefinition t : mcpTools) {
+            sb.append("- ").append(t.displayName()).append(" (`").append(t.name()).append("`): ").append(t.description()).append("\n");
+        }
+        return sb.toString();
     }
 }

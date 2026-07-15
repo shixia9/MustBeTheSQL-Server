@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS conversation (
     title VARCHAR(255) NOT NULL,
     llm_strategy_id BIGINT NOT NULL,
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    summary_cache TEXT NULL
 );
 
 CREATE TABLE IF NOT EXISTS conversation_detail (
@@ -165,3 +166,139 @@ CREATE TABLE IF NOT EXISTS agent_execution_step (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_execution (execution_id, sequence_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent execution per-node detail';
+
+CREATE TABLE IF NOT EXISTS workspace (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL COMMENT 'Workspace display name',
+    description VARCHAR(500) DEFAULT NULL COMMENT 'Optional description',
+    owner_id BIGINT NOT NULL COMMENT 'FK to user_info.id - creator/owner',
+    status TINYINT(1) DEFAULT 1 COMMENT '0: inactive, 1: active',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_owner (owner_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Multi-tenant workspaces';
+
+CREATE TABLE IF NOT EXISTS workspace_member (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    workspace_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'MEMBER' COMMENT 'OWNER | ADMIN | MEMBER | VIEWER',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_workspace_user (workspace_id, user_id),
+    INDEX idx_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Workspace membership with role-based access';
+
+ALTER TABLE db_connection_conf ADD COLUMN workspace_id BIGINT DEFAULT NULL AFTER user_id;
+ALTER TABLE conversation ADD COLUMN workspace_id BIGINT DEFAULT NULL AFTER user_id;
+ALTER TABLE business_knowledge ADD COLUMN workspace_id BIGINT DEFAULT NULL AFTER user_id;
+ALTER TABLE agent_execution ADD COLUMN workspace_id BIGINT DEFAULT NULL AFTER user_id;
+
+ALTER TABLE agent_execution ADD COLUMN model_calls INT DEFAULT 0 AFTER total_tokens;
+ALTER TABLE agent_execution ADD COLUMN tool_calls INT DEFAULT 0 AFTER model_calls;
+
+ALTER TABLE agent_execution_step ADD COLUMN input_tokens INT DEFAULT 0 AFTER duration_ms;
+ALTER TABLE agent_execution_step ADD COLUMN output_tokens INT DEFAULT 0 AFTER input_tokens;
+ALTER TABLE agent_execution_step ADD COLUMN latency_ms BIGINT DEFAULT 0 AFTER output_tokens;
+ALTER TABLE agent_execution_step ADD COLUMN node_type VARCHAR(32) DEFAULT NULL AFTER latency_ms;
+ALTER TABLE agent_execution_step ADD COLUMN input_data JSON DEFAULT NULL AFTER node_type;
+ALTER TABLE agent_execution_step ADD COLUMN output_data_json JSON DEFAULT NULL AFTER input_data;
+
+
+-- ============================================================
+-- LLM HA + Memory + Subtasks
+-- ============================================================
+
+ALTER TABLE user_llm_config
+    ADD COLUMN strategy_type VARCHAR(32) DEFAULT NULL
+        COMMENT 'LOCAL | ROUND_ROBIN | LATENCY_FIRST | SUCCESS_RATE_FIRST | SMART; null=legacy direct call',
+    ADD COLUMN fallback_chain JSON DEFAULT NULL
+        COMMENT '降级链: [configId, ...]; 主实例失败时按序尝试',
+    ADD COLUMN circuit_state VARCHAR(16) NOT NULL DEFAULT 'CLOSED'
+        COMMENT 'CLOSED | OPEN | HALF_OPEN',
+    ADD COLUMN circuit_opened_at DATETIME DEFAULT NULL,
+    ADD COLUMN last_success_at DATETIME DEFAULT NULL,
+    ADD COLUMN last_failure_at DATETIME DEFAULT NULL,
+    ADD COLUMN consecutive_failures INT NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS llm_call_metrics (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    config_id BIGINT NOT NULL COMMENT 'FK user_llm_config.id; 0=系统默认',
+    user_id BIGINT DEFAULT NULL,
+    window_start DATETIME NOT NULL COMMENT '按分钟截断的时间窗',
+    success_count INT NOT NULL DEFAULT 0,
+    failure_count INT NOT NULL DEFAULT 0,
+    total_latency_ms BIGINT NOT NULL DEFAULT 0,
+    total_input_tokens INT NOT NULL DEFAULT 0,
+    total_output_tokens INT NOT NULL DEFAULT 0,
+    last_reported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_config_window (config_id, window_start),
+    INDEX idx_user_window (user_id, window_start)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM instance call metrics aggregation';
+
+CREATE TABLE IF NOT EXISTS memory_item (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    workspace_id BIGINT DEFAULT NULL,
+    type VARCHAR(16) NOT NULL COMMENT 'PROFILE | TASK | FACT | EPISODIC',
+    content TEXT NOT NULL,
+    importance DECIMAL(4,3) NOT NULL DEFAULT 0.500,
+    tags JSON DEFAULT NULL,
+    source_session_id VARCHAR(64) DEFAULT NULL COMMENT '来源 agent threadId',
+    dedupe_hash CHAR(64) NOT NULL COMMENT 'SHA-256(normalized content) for dedup',
+    status TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1=active, 0=archived',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_user_hash (user_id, dedupe_hash),
+    INDEX idx_user_type (user_id, type, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent memory items';
+
+CREATE TABLE IF NOT EXISTS agent_subtask (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    thread_id VARCHAR(64) NOT NULL COMMENT '关联 agent_execution thread_id',
+    parent_thread_id VARCHAR(64) DEFAULT NULL COMMENT '父任务 threadId',
+    user_id BIGINT NOT NULL,
+    workspace_id BIGINT DEFAULT NULL,
+    seq INT NOT NULL COMMENT '子任务序号（从 1 开始）',
+    instruction TEXT NOT NULL COMMENT '子任务描述',
+    status VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING | RUNNING | SUCCESS | FAILED | SKIPPED',
+    result JSON DEFAULT NULL COMMENT '子任务执行结果摘要',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_thread (thread_id),
+    INDEX idx_parent (parent_thread_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent subtasks from TaskSplit';
+
+-- ============================================================
+-- V005: Agent Studio configuration (agent_entity)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS agent_entity (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id         BIGINT NOT NULL COMMENT '拥有者',
+    workspace_id    BIGINT DEFAULT NULL COMMENT '所属工作区 (NULL=用户私有)',
+    name            VARCHAR(128) NOT NULL COMMENT 'Agent 名称',
+    description     VARCHAR(512) DEFAULT NULL COMMENT '简介',
+    avatar          VARCHAR(255) DEFAULT NULL COMMENT '头像 URL 或 emoji',
+    system_prompt   TEXT DEFAULT NULL COMMENT '系统提示词 (追加到各节点 prompt)',
+    welcome_message VARCHAR(512) DEFAULT NULL COMMENT '欢迎语',
+    tools_config    JSON DEFAULT NULL COMMENT '工具开关: {"sql":true,"schema":true,"python":true,"sample":true}',
+    rag_config      JSON DEFAULT NULL COMMENT 'RAG 参数: {"topK":5,"scoreThreshold":0.6,"enabled":true}',
+    memory_enabled  TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用记忆注入 0/1',
+    is_default      TINYINT NOT NULL DEFAULT 0 COMMENT '是否当前用户默认 Agent 0/1',
+    status          TINYINT NOT NULL DEFAULT 1 COMMENT '0:停用 1:启用',
+    create_time     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time     DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_agent_user (user_id),
+    INDEX idx_agent_workspace (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 配置实体 (Studio)';
+
+INSERT INTO agent_entity (user_id, workspace_id, name, description, system_prompt, welcome_message,
+                          tools_config, rag_config, memory_enabled, is_default, status)
+SELECT u.id, NULL, '默认数据助手', '开箱即用的 Text2SQL 数据分析助手',
+       '你是一位耐心、专业的数据分析助手，面向不熟悉 SQL 的业务人员，用自然语言解释结果。',
+       '你好，我可以帮你从数据库中查询和分析数据，请直接用自然语言描述你想知道的信息。',
+       JSON_OBJECT('sql', true, 'schema', true, 'python', true, 'sample', true),
+       JSON_OBJECT('topK', 5, 'scoreThreshold', 0.6, 'enabled', true),
+       1, 1, 1
+FROM user_info u
+WHERE NOT EXISTS (SELECT 1 FROM agent_entity ae WHERE ae.user_id = u.id);

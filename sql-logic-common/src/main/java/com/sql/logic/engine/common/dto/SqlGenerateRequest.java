@@ -15,6 +15,8 @@ public class SqlGenerateRequest {
     private String strategyName;
     private Long llmConfigId;
     private Long parentHistoryId;
-    /** Phase 4 HITL: when true, the LLM review gate is skipped and the plan auto-proceeds. */
     private Boolean autoConfirm;
+    private Long workspaceId;
+    
+    private Long conversationId;
 }

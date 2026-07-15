@@ -17,4 +17,6 @@ public class Conversation {
     private Long llmStrategyId;
     private Date createTime;
     private Date updateTime;
+    /** Cached summary of overflow turns for SUMMARIZE strategy. */
+    private String summaryCache;
 }
