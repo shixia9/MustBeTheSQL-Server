@@ -75,8 +75,16 @@ public class PlanDispatchNode implements NodeAction {
         if (SqlAgentSpec.Node.MCP_TOOL_EXECUTOR.equals(nextNode)) {
             Map<String, Object> params = new LinkedHashMap<>();
             params.put(SqlAgentSpec.StateKey.MCP_TOOL_NAME, step.toolToUse());
-            String inst = step.toolParameters() != null ? step.toolParameters().instruction() : "{}";
-            params.put(SqlAgentSpec.StateKey.MCP_TOOL_PARAMS, inst != null ? inst : "{}");
+            // Prefer mcp_params (natural JSON object) over instruction (legacy double-JSON-encoded string)
+            String paramsJson;
+            if (step.toolParameters() != null && step.toolParameters().mcpParams() != null
+                    && !step.toolParameters().mcpParams().isEmpty()) {
+                paramsJson = objectMapper.writeValueAsString(step.toolParameters().mcpParams());
+            } else {
+                String inst = step.toolParameters() != null ? step.toolParameters().instruction() : "{}";
+                paramsJson = inst != null ? inst : "{}";
+            }
+            params.put(SqlAgentSpec.StateKey.MCP_TOOL_PARAMS, paramsJson);
             out.putAll(params);
         }
         return out;

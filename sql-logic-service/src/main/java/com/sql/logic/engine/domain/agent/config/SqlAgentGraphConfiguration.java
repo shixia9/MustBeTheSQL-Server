@@ -35,7 +35,9 @@ import com.sql.logic.engine.domain.agent.node.SqlGenerationNode;
 import com.sql.logic.engine.domain.agent.node.SummarizeNode;
 import com.sql.logic.engine.domain.agent.node.TaskDispatchNode;
 import com.sql.logic.engine.domain.agent.node.TaskSplitNode;
+import com.sql.logic.engine.domain.agent.edge.McpToolFixerEdge;
 import com.sql.logic.engine.domain.agent.node.McpToolExecutorNode;
+import com.sql.logic.engine.domain.agent.node.McpToolFixerNode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -137,6 +139,9 @@ public class SqlAgentGraphConfiguration {
             strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_NAME, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_PARAMS, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.MCP_TOOL_RESULT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_CALL_FAILED, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_FIX_ATTEMPT_COUNT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.MCP_STEP_RESULTS, new ReplaceStrategy());
 
             return strategies;
         };
@@ -188,11 +193,13 @@ public class SqlAgentGraphConfiguration {
                                      TaskDispatchNode taskDispatchNode,
                                      SummarizeNode summarizeNode,
                                      McpToolExecutorNode mcpToolExecutorNode,
+                                     McpToolFixerNode mcpToolFixerNode,
                                      FeasibilityAssessmentEdge feasibilityEdge,
                                      HitlGateEdge hitlGateEdge,
                                      HitlEdge hitlEdge,
                                      PlanDispatchEdge planDispatchEdge,
                                      SqlExecutionEdge sqlExecutionEdge,
+                                     McpToolFixerEdge mcpToolFixerEdge,
                                      AnalyzerEdge analyzerEdge,
                                      TaskDispatchEdge taskDispatchEdge,
                                      KeyStrategyFactory sqlAgentKeyStrategyFactory) throws GraphStateException {
@@ -224,6 +231,10 @@ public class SqlAgentGraphConfiguration {
         sqlExecutionRouting.put(SqlAgentSpec.Node.SQL_FIXER, SqlAgentSpec.Node.SQL_FIXER);
         sqlExecutionRouting.put(SqlAgentSpec.Node.PLAN_DISPATCH, SqlAgentSpec.Node.PLAN_DISPATCH);
 
+        Map<String, String> mcpToolFixerRouting = new LinkedHashMap<>();
+        mcpToolFixerRouting.put(SqlAgentSpec.Node.MCP_TOOL_FIXER, SqlAgentSpec.Node.MCP_TOOL_FIXER);
+        mcpToolFixerRouting.put(SqlAgentSpec.Node.PLAN_DISPATCH, SqlAgentSpec.Node.PLAN_DISPATCH);
+
         Map<String, String> analyzerRouting = new LinkedHashMap<>();
         analyzerRouting.put(SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT, SqlAgentSpec.Node.FEASIBILITY_ASSESSMENT);
         analyzerRouting.put(SqlAgentSpec.Node.TASK_SPLIT, SqlAgentSpec.Node.TASK_SPLIT);
@@ -251,6 +262,7 @@ public class SqlAgentGraphConfiguration {
                 .addNode(SqlAgentSpec.Node.PYTHON_ANALYSIS, AsyncNodeAction.node_async(pythonAnalyzeNode))
                 .addNode(SqlAgentSpec.Node.REPORT, AsyncNodeAction.node_async(reportNode))
                 .addNode(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR, AsyncNodeAction.node_async(mcpToolExecutorNode))
+                .addNode(SqlAgentSpec.Node.MCP_TOOL_FIXER, AsyncNodeAction.node_async(mcpToolFixerNode))
 
                 // ---- Edges ----
                 // Memory recall first (injects USER_MEMORY before evidence rewriting),
@@ -298,7 +310,9 @@ public class SqlAgentGraphConfiguration {
                 .addEdge(SqlAgentSpec.Node.PYTHON_GENERATION, SqlAgentSpec.Node.PYTHON_EXECUTION)
                 .addEdge(SqlAgentSpec.Node.PYTHON_EXECUTION, SqlAgentSpec.Node.PYTHON_ANALYSIS)
                 .addEdge(SqlAgentSpec.Node.PYTHON_ANALYSIS, SqlAgentSpec.Node.PLAN_DISPATCH)
-                .addEdge(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR, SqlAgentSpec.Node.PLAN_DISPATCH)
+                .addConditionalEdges(SqlAgentSpec.Node.MCP_TOOL_EXECUTOR,
+                        AsyncEdgeAction.edge_async(mcpToolFixerEdge), mcpToolFixerRouting)
+                .addEdge(SqlAgentSpec.Node.MCP_TOOL_FIXER, SqlAgentSpec.Node.MCP_TOOL_EXECUTOR)
 
                 // Report terminates the graph
                 .addEdge(SqlAgentSpec.Node.REPORT, StateGraph.END);

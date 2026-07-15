@@ -146,17 +146,75 @@ public class PlannerNode implements NodeAction {
         StringBuilder sb = new StringBuilder();
         sb.append("## 4. 外部 MCP 工具 (Available MCP Tools)\n\n");
         sb.append("以下外部工具可直接调用以获取实时数据。在 `tool_to_use` 中使用工具的精确名称。\n");
-        sb.append("**重要**: `tool_parameters.instruction` 字段必须是一个 **合法的 JSON 字符串**（单行，双引号），而不是自然语言描述。\n\n");
+        sb.append("**重要**: 使用 `mcp_params` 字段直接传递 JSON 对象参数（不需要转义，直接写 JSON 对象即可）。\n");
+        sb.append("**日期格式**: 所有日期字段必须使用 `YYYY-MM-DD` 格式（如 `\"2026-07-15\"`，10个字符）。\n\n");
         for (ToolDefinition tool : mcpTools) {
             sb.append("- **`").append(tool.name()).append("`**: ").append(tool.description()).append("\n");
             if (tool.parametersSchema() != null) {
                 sb.append("  参数Schema: ").append(tool.parametersSchema()).append("\n");
+                // Parse required fields from inputSchema for explicit hint
+                String requiredHint = parseRequiredFields(tool.parametersSchema());
+                if (!requiredHint.isEmpty()) {
+                    sb.append("  **必填字段**: ").append(requiredHint).append("\n");
+                }
             }
             sb.append("\n");
         }
-        sb.append("**步骤格式** (instruction 必须是JSON字符串):\n```json\n");
+        sb.append("**步骤格式** (mcp_params 直接写 JSON 对象，无需转义):\n```json\n");
         sb.append("{\n  \"step\": 1,\n  \"tool_to_use\": \"search_tickets\",\n");
-        sb.append("  \"tool_parameters\": {\n    \"instruction\": \"{\\\"from\\\":\\\"广州\\\",\\\"to\\\":\\\"南昌\\\",\\\"date\\\":\\\"2026-07-15\\\"}\"\n  }\n}\n```\n");
+        sb.append("  \"tool_parameters\": {\n    \"mcp_params\": {\n      \"from\": \"广州\",\n      \"to\": \"南昌\",\n      \"date\": \"2026-07-15\"\n    }\n  }\n}\n```\n\n");
+        sb.append("### MCP 链式调用 (Chained MCP Calls)\n\n");
+        sb.append("当一个 MCP 工具的输出需要作为另一个 MCP 工具的输入时，使用 `$step_N.field` 或 `$prev.field` 引用语法。\n");
+        sb.append("- `$step_N.field` — 引用第 N 步的返回结果中的 field 字段（支持嵌套路径如 `$step_1.data.date`）\n");
+        sb.append("- `$prev.field` — 引用最近一个已完成步骤的返回结果中的 field 字段\n\n");
+        sb.append("**示例：先获取当前日期，再用日期查询车票**\n");
+        sb.append("```json\n{\n  \"execution_plan\": [\n");
+        sb.append("    {\n      \"step\": 1,\n      \"tool_to_use\": \"get-current-date\",\n");
+        sb.append("      \"tool_parameters\": { \"mcp_params\": {} }\n");
+        sb.append("    },\n");
+        sb.append("    {\n      \"step\": 2,\n      \"tool_to_use\": \"get-tickets\",\n");
+        sb.append("      \"tool_parameters\": {\n");
+        sb.append("        \"mcp_params\": {\n");
+        sb.append("          \"from\": \"广州\",\n");
+        sb.append("          \"to\": \"南昌\",\n");
+        sb.append("          \"date\": \"$step_1.date\"\n");
+        sb.append("        }\n");
+        sb.append("      }\n");
+        sb.append("    }\n");
+        sb.append("  ]\n}\n```\n");
+        sb.append("**注意**: 只有步骤 N 已执行成功后，`$step_N.field` 才能被正确解析。请根据各工具的返回 Schema 推断可引用的字段名。\n");
         return sb.toString();
+    }
+
+    /** Extract a short required-fields hint from a JSON schema string. */
+    private String parseRequiredFields(String schemaJson) {
+        if (schemaJson == null || schemaJson.isBlank()) return "";
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(schemaJson);
+            if (root.has("required") && root.get("required").isArray()) {
+                StringBuilder hint = new StringBuilder();
+                for (com.fasterxml.jackson.databind.JsonNode f : root.get("required")) {
+                    if (!hint.isEmpty()) hint.append(", ");
+                    hint.append("`").append(f.asText()).append("`");
+                }
+                // Append type hints for required fields
+                if (root.has("properties")) {
+                    com.fasterxml.jackson.databind.JsonNode props = root.get("properties");
+                    hint.append(" (");
+                    boolean first = true;
+                    for (com.fasterxml.jackson.databind.JsonNode f : root.get("required")) {
+                        String name = f.asText();
+                        if (props.has(name) && props.get(name).has("type")) {
+                            if (!first) hint.append(", ");
+                            hint.append(name).append(": ").append(props.get(name).get("type").asText());
+                            first = false;
+                        }
+                    }
+                    hint.append(")");
+                }
+                return hint.toString();
+            }
+        } catch (Exception ignore) { /* best-effort */ }
+        return "";
     }
 }

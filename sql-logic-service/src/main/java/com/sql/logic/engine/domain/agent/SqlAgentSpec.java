@@ -36,6 +36,7 @@ public final class SqlAgentSpec {
         public static final String TASK_DISPATCH = "TASK_DISPATCH";
         public static final String SUMMARIZE = "SUMMARIZE";
         public static final String MCP_TOOL_EXECUTOR = "MCP_TOOL_EXECUTOR";
+        public static final String MCP_TOOL_FIXER = "MCP_TOOL_FIXER";
     }
 
     // ======================== State Keys ========================
@@ -121,6 +122,13 @@ public final class SqlAgentSpec {
         public static final String MCP_TOOL_NAME = "mcpToolName";
         public static final String MCP_TOOL_PARAMS = "mcpToolParams";
         public static final String MCP_TOOL_RESULT = "mcpToolResult";
+        /** Set to true by McpToolExecutorNode when a call fails; consumed by the routing edge. */
+        public static final String MCP_CALL_FAILED = "mcpCallFailed";
+        /** Number of fix attempts for MCP tool calls (max 2). Reset to 0 by PlanDispatchNode. */
+        public static final String MCP_FIX_ATTEMPT_COUNT = "mcpFixAttemptCount";
+        /** Accumulated results of completed MCP steps, keyed by step number.
+         *  Used for $step_N.field reference resolution in chained MCP calls. */
+        public static final String MCP_STEP_RESULTS = "mcpStepResults";
     }
 
     // ======================== Prompt Template Names ========================

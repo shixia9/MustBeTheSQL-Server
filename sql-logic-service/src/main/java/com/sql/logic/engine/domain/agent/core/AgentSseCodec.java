@@ -38,22 +38,24 @@ public class AgentSseCodec {
             "connectionId", "llmConfigId", "userId"
     );
 
-    private static final Map<String, String> NODE_MESSAGE_TYPES = java.util.Map.ofEntries(
-            java.util.Map.entry("MEMORY_RECALL", "THINKING"),
-            java.util.Map.entry("EVIDENCE_RECALL", "THINKING"),
-            java.util.Map.entry("SCHEMA_LINKING", "THINKING"),
-            java.util.Map.entry("FEASIBILITY_ASSESSMENT", "THINKING"),
-            java.util.Map.entry("PLANNER", "THINKING"),
-            java.util.Map.entry("HITL_GATE", "STATUS"),
-            java.util.Map.entry("HITL", "STATUS"),
-            java.util.Map.entry("PLAN_DISPATCH", "STATUS"),
-            java.util.Map.entry("SQL_GENERATION", "TOOL_CALL"),
-            java.util.Map.entry("SQL_EXECUTION", "TOOL_RESULT"),
-            java.util.Map.entry("SQL_FIXER", "THINKING"),
-            java.util.Map.entry("PYTHON_GENERATION", "TOOL_CALL"),
-            java.util.Map.entry("PYTHON_EXECUTION", "TOOL_RESULT"),
-            java.util.Map.entry("PYTHON_ANALYSIS", "THINKING"),
-            java.util.Map.entry("REPORT", "REPORT")
+    private static final Map<String, String> NODE_MESSAGE_TYPES = Map.ofEntries(
+            Map.entry("MEMORY_RECALL", "THINKING"),
+            Map.entry("EVIDENCE_RECALL", "THINKING"),
+            Map.entry("SCHEMA_LINKING", "THINKING"),
+            Map.entry("FEASIBILITY_ASSESSMENT", "THINKING"),
+            Map.entry("PLANNER", "THINKING"),
+            Map.entry("HITL_GATE", "STATUS"),
+            Map.entry("HITL", "STATUS"),
+            Map.entry("PLAN_DISPATCH", "STATUS"),
+            Map.entry("SQL_GENERATION", "TOOL_CALL"),
+            Map.entry("SQL_EXECUTION", "TOOL_RESULT"),
+            Map.entry("SQL_FIXER", "THINKING"),
+            Map.entry("PYTHON_GENERATION", "TOOL_CALL"),
+            Map.entry("PYTHON_EXECUTION", "TOOL_RESULT"),
+            Map.entry("PYTHON_ANALYSIS", "THINKING"),
+            Map.entry("MCP_TOOL_EXECUTOR", "TOOL_CALL"),
+            Map.entry("MCP_TOOL_FIXER", "THINKING"),
+            Map.entry("REPORT", "REPORT")
     );
 
     public AgentSseCodec(ObjectMapper objectMapper) {
@@ -219,6 +221,12 @@ public class AgentSseCodec {
             case SqlAgentSpec.Node.MCP_TOOL_EXECUTOR:
                 data.put("toolName", state.value(SqlAgentSpec.StateKey.MCP_TOOL_NAME, ""));
                 data.put("toolResult", state.value(SqlAgentSpec.StateKey.MCP_TOOL_RESULT, ""));
+                data.put("step", currentStep);
+                break;
+            case SqlAgentSpec.Node.MCP_TOOL_FIXER:
+                data.put("toolName", state.value(SqlAgentSpec.StateKey.MCP_TOOL_NAME, ""));
+                data.put("fixAttempt", readInt(state, SqlAgentSpec.StateKey.MCP_FIX_ATTEMPT_COUNT));
+                data.put("fixedParams", state.value(SqlAgentSpec.StateKey.MCP_TOOL_PARAMS, ""));
                 data.put("step", currentStep);
                 break;
             default:

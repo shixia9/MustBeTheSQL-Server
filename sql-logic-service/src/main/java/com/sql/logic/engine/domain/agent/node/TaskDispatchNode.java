@@ -56,7 +56,7 @@ public class TaskDispatchNode implements NodeAction {
         Map<String, Object> current = subtasks.get(currentSubtask - 1);
         String instruction = current.get("instruction") instanceof String s ? s : "";
 
-        PlanStep.ToolParameters params = new PlanStep.ToolParameters(instruction, null);
+        PlanStep.ToolParameters params = new PlanStep.ToolParameters(instruction, null, null);
         PlanStep step = new PlanStep(1, "SQL_GENERATE_NODE", params);
         Plan syntheticPlan = new Plan(instruction, List.of(step));
         out.put(SqlAgentSpec.StateKey.PLAN, objectMapper.writeValueAsString(syntheticPlan));
