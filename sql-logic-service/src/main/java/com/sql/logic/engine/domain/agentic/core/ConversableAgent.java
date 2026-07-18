@@ -39,6 +39,7 @@ public abstract class ConversableAgent implements Agent {
     protected ProfileConfig profile;
     protected AgentMemory memory;
     protected AgentResource resource;
+    protected List<AgentResource> resources = new ArrayList<>();
     protected LLMStrategy llmStrategy;
     protected List<AgentAction> actions = new ArrayList<>();
     protected ProfileRenderer profileRenderer = new ProfileRenderer();
@@ -70,6 +71,11 @@ public abstract class ConversableAgent implements Agent {
 
     public ConversableAgent bind(List<AgentAction> actions) {
         this.actions = actions != null ? new ArrayList<>(actions) : new ArrayList<>();
+        return this;
+    }
+
+    public ConversableAgent bindResources(List<AgentResource> resources) {
+        this.resources = resources != null ? new ArrayList<>(resources) : new ArrayList<>();
         return this;
     }
 
@@ -242,8 +248,17 @@ public abstract class ConversableAgent implements Agent {
         // 1. Memory recall
         String memoryContext = (memory != null) ? memory.read(observation) : "";
 
-        // 2. Resource prompt
-        String resourceContext = (resource != null) ? resource.getPrompt(observation) : "";
+        // 2. Resource prompts (multi-resource injection — Schema, Knowledge, etc.)
+        StringBuilder resourceCtx = new StringBuilder();
+        if (resource != null) {
+            String rp = resource.getPrompt(observation);
+            if (rp != null && !rp.isBlank()) resourceCtx.append(rp).append("\n");
+        }
+        for (AgentResource r : resources) {
+            String rp = r.getPrompt(observation);
+            if (rp != null && !rp.isBlank()) resourceCtx.append(rp).append("\n");
+        }
+        String resourceContext = resourceCtx.toString();
 
         // 3. Build and add system prompt
         String systemPrompt = buildSystemPrompt(observation, memoryContext, resourceContext, context);

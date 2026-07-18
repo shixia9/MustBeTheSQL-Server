@@ -1,33 +1,26 @@
 package com.sql.logic.engine.domain.agentic.config;
 
+import com.alibaba.cloud.ai.graph.exception.GraphStateException;
+import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
+import com.sql.logic.engine.domain.agent.python.SimplePythonExecutor;
 import com.sql.logic.engine.domain.agent.service.SqlExecutionService;
-import com.sql.logic.engine.domain.agentic.action.SqlExecutionAction;
-import com.sql.logic.engine.domain.agentic.action.SqlFixAction;
-import com.sql.logic.engine.domain.agentic.action.SqlGenerationAction;
-import com.sql.logic.engine.domain.agentic.agent.DataScientistAgent;
+import com.sql.logic.engine.domain.agentic.action.*;
+import com.sql.logic.engine.domain.agentic.agent.*;
 import com.sql.logic.engine.domain.agentic.core.AgentMemory;
 import com.sql.logic.engine.domain.agentic.memory.SimpleAgentMemory;
+import com.sql.logic.engine.domain.agentic.plan.InMemoryPlanMemory;
+import com.sql.logic.engine.domain.agentic.plan.PlanMemory;
 import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
+import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import java.util.Map;
 
-/**
- * Spring auto-configuration for the Multi-Agent framework (Phase 1).
- * <p>
- * Registers core framework beans and the first concrete agent
- * ({@link DataScientistAgent}) with its actions. All beans are
- * conditional on the presence of the existing infrastructure classes
- * ({@code PromptManager}, {@code SqlExecutionService}, etc.) so that
- * the framework gracefully degrades when those are unavailable.
- * <p>
- * This configuration is additive — it does not modify or replace
- * any existing beans from the single-agent StateGraph.
- */
 @Configuration
 public class AgenticAutoConfiguration {
 
@@ -43,7 +36,12 @@ public class AgenticAutoConfiguration {
         return new SimpleAgentMemory(memoryDomainService, null, null);
     }
 
-    // ======================== Actions ========================
+    @Bean
+    public PlanMemory planMemory() {
+        return new InMemoryPlanMemory();
+    }
+
+    // ======================== Phase 1 Actions ========================
 
     @Bean
     @ConditionalOnClass(PromptManager.class)
@@ -63,7 +61,53 @@ public class AgenticAutoConfiguration {
         return new SqlFixAction(promptManager);
     }
 
-    // ======================== Agents ========================
+    // ======================== Phase 2 Actions ========================
+
+    @Bean
+    public PlanAction planAction(PlanMemory planMemory) {
+        return new PlanAction(planMemory, List.of(
+                Map.of("name", "DataScientist", "role", "数据科学家", "goal", "生成并执行 SQL"),
+                Map.of("name", "CodeAssistant", "role", "代码工程师", "goal", "执行 Python 数据分析"),
+                Map.of("name", "ToolAssistant", "role", "工具专家", "goal", "调用 MCP 外部工具"),
+                Map.of("name", "DashboardAssistant", "role", "报告生成者", "goal", "汇总生成报告")
+        ));
+    }
+
+    @Bean
+    @ConditionalOnClass(PromptManager.class)
+    public PythonGenerationAction pythonGenerationAction(PromptManager promptManager) {
+        return new PythonGenerationAction(promptManager);
+    }
+
+    @Bean
+    @ConditionalOnClass(SimplePythonExecutor.class)
+    public PythonExecutionAction pythonExecutionAction(SimplePythonExecutor executor) {
+        return new PythonExecutionAction(executor);
+    }
+
+    @Bean
+    @ConditionalOnClass(PromptManager.class)
+    public PythonAnalyzeAction pythonAnalyzeAction(PromptManager promptManager) {
+        return new PythonAnalyzeAction(promptManager);
+    }
+
+    @Bean
+    @ConditionalOnClass(PromptManager.class)
+    public DashboardAction dashboardAction(PromptManager promptManager) {
+        return new DashboardAction(promptManager);
+    }
+
+    @Bean
+    public McpToolAction mcpToolAction() {
+        return new McpToolAction();
+    }
+
+    @Bean
+    @ConditionalOnClass(PromptManager.class)
+    public McpToolFixAction mcpToolFixAction(PromptManager promptManager) {
+        return new McpToolFixAction(promptManager);
+    }
+
 
     @Bean
     public DataScientistAgent dataScientistAgent(
@@ -72,12 +116,106 @@ public class AgenticAutoConfiguration {
             SqlExecutionAction sqlExecutionAction,
             SqlFixAction sqlFixAction,
             ProfileRenderer profileRenderer) {
-
         DataScientistAgent agent = new DataScientistAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(sqlGenerationAction, sqlExecutionAction, sqlFixAction));
         agent.bind(profileRenderer);
         agent.build();
         return agent;
+    }
+
+    @Bean
+    public PlannerAgent plannerAgent(PlanAction planAction, AgentMemory agentMemory,
+                                      ProfileRenderer profileRenderer) {
+        PlannerAgent agent = new PlannerAgent();
+        agent.bind(agentMemory);
+        agent.bind(List.of(planAction));
+        agent.bind(profileRenderer);
+        agent.build();
+        return agent;
+    }
+
+    @Bean
+    public CodeAssistantAgent codeAssistantAgent(AgentMemory agentMemory,
+                                                  PythonGenerationAction genAction,
+                                                  PythonExecutionAction execAction,
+                                                  PythonAnalyzeAction analyzeAction,
+                                                  ProfileRenderer profileRenderer) {
+        CodeAssistantAgent agent = new CodeAssistantAgent();
+        agent.bind(agentMemory);
+        agent.bind(List.of(genAction, execAction, analyzeAction));
+        agent.bind(profileRenderer);
+        agent.build();
+        return agent;
+    }
+
+    @Bean
+    public DashboardAssistantAgent dashboardAssistantAgent(AgentMemory agentMemory,
+                                                            DashboardAction dashboardAction,
+                                                            ProfileRenderer profileRenderer) {
+        DashboardAssistantAgent agent = new DashboardAssistantAgent();
+        agent.bind(agentMemory);
+        agent.bind(List.of(dashboardAction));
+        agent.bind(profileRenderer);
+        agent.build();
+        return agent;
+    }
+
+    @Bean
+    public ToolAssistantAgent toolAssistantAgent(AgentMemory agentMemory,
+                                                  McpToolAction mcpToolAction,
+                                                  McpToolFixAction mcpToolFixAction,
+                                                  ProfileRenderer profileRenderer) {
+        ToolAssistantAgent agent = new ToolAssistantAgent();
+        agent.bind(agentMemory);
+        agent.bind(List.of(mcpToolAction, mcpToolFixAction));
+        agent.bind(profileRenderer);
+        agent.build();
+        return agent;
+    }
+
+    @Bean
+    public ManagerAgent managerAgent(PlanMemory planMemory, AgentMemory agentMemory,
+                                      PlannerAgent plannerAgent,
+                                      DashboardAssistantAgent dashboardAgent,
+                                      DataScientistAgent dataScientistAgent,
+                                      CodeAssistantAgent codeAssistantAgent,
+                                      ToolAssistantAgent toolAssistantAgent,
+                                      ProfileRenderer profileRenderer) {
+        ManagerAgent agent = new ManagerAgent();
+        agent.setPlanMemory(planMemory);
+        agent.setPlannerAgent(plannerAgent);
+        agent.setDashboardAgent(dashboardAgent);
+        agent.bind(agentMemory);
+        agent.bind(profileRenderer);
+        // Hire worker agents
+        agent.hire(dataScientistAgent);
+        agent.hire(codeAssistantAgent);
+        agent.hire(toolAssistantAgent);
+        agent.build();
+        return agent;
+    }
+
+    // ======================== Resource Beans ========================
+
+    @Bean
+    @ConditionalOnClass(VectorSearchService.class)
+    public KnowledgeResource knowledgeResource(VectorSearchService vectorSearchService) {
+        return new KnowledgeResource(vectorSearchService, null, null);
+    }
+
+    // ======================== Orchestrator ========================
+
+    @Bean
+    public AgentOrchestrator agentOrchestrator(
+            PlannerAgent plannerAgent,
+            ManagerAgent managerAgent,
+            DataScientistAgent dataScientistAgent,
+            CodeAssistantAgent codeAssistantAgent,
+            DashboardAssistantAgent dashboardAssistantAgent,
+            ToolAssistantAgent toolAssistantAgent) throws GraphStateException {
+        return new AgentOrchestrator(plannerAgent, managerAgent,
+                dataScientistAgent, codeAssistantAgent,
+                dashboardAssistantAgent, toolAssistantAgent);
     }
 }
