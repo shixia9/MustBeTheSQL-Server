@@ -1,5 +1,6 @@
 package com.sql.logic.engine.domain.agentic.memory;
 
+import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.domain.agentic.core.MemoryFragment;
 import org.slf4j.Logger;
@@ -13,13 +14,10 @@ import java.util.concurrent.Executors;
 /**
  * LLM-based insight extractor for memory fragments.
  * <p>
- * Extracts high-level insights
- * from memory fragments that have been evicted from short-term memory.
- * These insights are then persisted to long-term memory as condensed,
- * high-value entries.
+ * Extracts high-level insights from memory fragments evicted from short-term
+ * memory. These insights are persisted to long-term memory as condensed entries.
  * <p>
- * For example, from multiple SQL fix observations, the extractor might derive:
- * "User frequently uses CTEs rather than subqueries for complex joins."
+ * Resolves the LLM strategy lazily via {@link LlmClientManager} (system default).
  */
 public class LLMInsightExtractor {
 
@@ -36,27 +34,25 @@ public class LLMInsightExtractor {
 
             Reply with ONLY the insight (one sentence, max 100 characters).""";
 
-    private final LLMStrategy llmStrategy;
+    private final LlmClientManager llmClientManager;
 
-    public LLMInsightExtractor(LLMStrategy llmStrategy) {
-        this.llmStrategy = llmStrategy;
+    public LLMInsightExtractor(LlmClientManager llmClientManager) {
+        this.llmClientManager = llmClientManager;
     }
 
-    /**
-     * Extract insights from memory fragments asynchronously.
-     */
+    private LLMStrategy resolveStrategy() {
+        if (llmClientManager == null) return null;
+        return llmClientManager.getClient(0L);
+    }
+
     public CompletableFuture<List<MemoryFragment>> extractAsync(List<MemoryFragment> fragments) {
         return CompletableFuture.supplyAsync(() -> extract(fragments), executor);
     }
 
-    /**
-     * Extract an insight from the given memory fragments.
-     * @return a list containing one insight fragment, or empty if extraction fails
-     */
     public List<MemoryFragment> extract(List<MemoryFragment> fragments) {
-        if (llmStrategy == null || fragments == null || fragments.isEmpty()) {
-            return List.of();
-        }
+        if (fragments == null || fragments.isEmpty()) return List.of();
+        LLMStrategy strategy = resolveStrategy();
+        if (strategy == null) return List.of();
         try {
             StringBuilder observations = new StringBuilder();
             for (int i = 0; i < fragments.size(); i++) {
@@ -65,20 +61,16 @@ public class LLMInsightExtractor {
                         .append("\n");
             }
             String prompt = String.format(EXTRACTION_PROMPT, observations.toString());
-            String response = llmStrategy.generateSql(prompt, null);
+            String response = strategy.chat(prompt);
 
             if (response != null && !response.isBlank()) {
                 String insight = response.trim();
-                if (insight.length() > 200) {
-                    insight = insight.substring(0, 200);
-                }
+                if (insight.length() > 200) insight = insight.substring(0, 200);
                 double avgImportance = fragments.stream()
                         .mapToDouble(MemoryFragment::importance)
                         .average()
                         .orElse(0.6);
-                MemoryFragment insightFragment = MemoryFragment.of(insight, "INSIGHT", avgImportance)
-                        .withInsight(true);
-                return List.of(insightFragment);
+                return List.of(MemoryFragment.of(insight, "INSIGHT", avgImportance).withInsight(true));
             }
         } catch (Exception e) {
             log.debug("Insight extraction failed: {}", e.getMessage());

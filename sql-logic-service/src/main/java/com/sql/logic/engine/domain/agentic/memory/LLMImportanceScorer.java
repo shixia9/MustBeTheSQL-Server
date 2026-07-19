@@ -1,5 +1,6 @@
 package com.sql.logic.engine.domain.agentic.memory;
 
+import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.domain.agentic.core.MemoryFragment;
 import org.slf4j.Logger;
@@ -13,11 +14,12 @@ import java.util.concurrent.Executors;
 /**
  * LLM-based memory importance scorer.
  * <p>
- * The scoring prompt asks the LLM to rate importance on a 1-10 integer scale,
- * which is then normalized to 0.0-1.0 and weighted by {@code importanceWeight}.
+ * Rates each memory fragment on a 0.0-1.0 scale by asking the LLM to evaluate
+ * its significance on a 1-10 integer scale, normalized and weighted.
  * <p>
- * Scoring is non-blocking: calls are submitted to a virtual thread executor
- * and results are returned via CompletableFuture.
+ * Resolves the LLM strategy lazily via {@link LlmClientManager} (system default)
+ * so it works without per-request wiring. Falls back to default importance when
+ * no LLM is available.
  */
 public class LLMImportanceScorer {
 
@@ -37,33 +39,35 @@ public class LLMImportanceScorer {
 
             Reply with ONLY the integer score (1-10).""";
 
-    private final LLMStrategy llmStrategy;
+    private final LlmClientManager llmClientManager;
     private final double importanceWeight;
 
-    public LLMImportanceScorer(LLMStrategy llmStrategy) {
-        this(llmStrategy, 0.15);
+    public LLMImportanceScorer(LlmClientManager llmClientManager) {
+        this(llmClientManager, 0.15);
     }
 
-    public LLMImportanceScorer(LLMStrategy llmStrategy, double importanceWeight) {
-        this.llmStrategy = llmStrategy;
+    public LLMImportanceScorer(LlmClientManager llmClientManager, double importanceWeight) {
+        this.llmClientManager = llmClientManager;
         this.importanceWeight = importanceWeight;
     }
 
-    /**
-     * Score a single memory fragment asynchronously.
-     */
+    /** Resolve the system-default LLM strategy lazily. */
+    private LLMStrategy resolveStrategy() {
+        if (llmClientManager == null) return null;
+        return llmClientManager.getClient(0L);
+    }
+
     public CompletableFuture<Double> scoreAsync(MemoryFragment fragment) {
         return CompletableFuture.supplyAsync(() -> score(fragment), executor);
     }
 
-    /**
-     * Score a single memory fragment synchronously.
-     */
     public double score(MemoryFragment fragment) {
-        if (llmStrategy == null || fragment == null) return DEFAULT_IMPORTANCE * importanceWeight;
+        if (fragment == null) return DEFAULT_IMPORTANCE * importanceWeight;
+        LLMStrategy strategy = resolveStrategy();
+        if (strategy == null) return DEFAULT_IMPORTANCE * importanceWeight;
         try {
             String prompt = String.format(SCORING_PROMPT, truncate(fragment.observation(), 500));
-            String response = llmStrategy.generateSql(prompt, null);
+            String response = strategy.chat(prompt);
             int rawScore = parseScore(response);
             return (rawScore / 10.0) * importanceWeight;
         } catch (Exception e) {
@@ -72,9 +76,6 @@ public class LLMImportanceScorer {
         }
     }
 
-    /**
-     * Score a batch of memory fragments. Each returned score is normalized to [0,1].
-     */
     public double[] scoreBatch(List<MemoryFragment> fragments) {
         if (fragments == null || fragments.isEmpty()) return new double[0];
         double[] scores = new double[fragments.size()];
@@ -86,7 +87,6 @@ public class LLMImportanceScorer {
 
     private int parseScore(String llmOutput) {
         if (llmOutput == null) return 5;
-        // Extract first integer from the response
         String cleaned = llmOutput.replaceAll("[^0-9]", " ").trim();
         if (cleaned.isEmpty()) return 5;
         try {

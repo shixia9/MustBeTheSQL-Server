@@ -6,6 +6,8 @@ import java.util.function.BiConsumer;
 
 public interface LLMStrategy {
 
+    // ======================== SQL Generation ========================
+
     /**
      * Stream-generated SQL (default NL_TO_SQL prompt type)
      * @param prompt the prompt
@@ -44,5 +46,16 @@ public interface LLMStrategy {
      */
     default String generateSql(String prompt, PromptType promptType, BiConsumer<Integer, String> tokenAndSqlCallback) {
         return generateSql(prompt, tokenAndSqlCallback);
+    }
+
+    // ======================== General-purpose Chat ========================
+
+    /**
+     * General-purpose non-streaming LLM call for internal agent operations.
+     * @param prompt the raw prompt to send to the LLM
+     * @return the LLM's text response
+     */
+    default String chat(String prompt) {
+        return generateSql(prompt, (BiConsumer<Integer, String>) null);
     }
 }

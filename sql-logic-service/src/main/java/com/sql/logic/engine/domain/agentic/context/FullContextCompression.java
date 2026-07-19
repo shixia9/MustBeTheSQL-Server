@@ -87,7 +87,7 @@ public class FullContextCompression {
         String prompt = String.format(SUMMARY_PROMPT, convText.toString());
 
         try {
-            String summary = llmStrategy.generateSql(prompt, null);
+            String summary = llmStrategy.chat(prompt);
 
             AgentMessage summaryMsg = AgentMessage.builder()
                     .content("[Context Summary of " + oldMsgs.size() + " earlier messages]\n\n" + summary)

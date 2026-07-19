@@ -1,5 +1,6 @@
 package com.sql.logic.engine.domain.agentic.context;
 
+import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.domain.agentic.core.AgentMessage;
 import org.slf4j.Logger;
@@ -24,6 +25,7 @@ public class ContextManager {
 
     private final ContextBudgetTracker tracker;
     private final LLMStrategy llmStrategy;
+    private final LlmClientManager llmClientManager;
 
     private final ObservationMicroCompact layer1 = new ObservationMicroCompact();
     private final SessionMemoryCompact layer2 = new SessionMemoryCompact();
@@ -31,17 +33,23 @@ public class ContextManager {
     private final ReactiveCompact layer4 = new ReactiveCompact();
 
     public ContextManager(ContextBudgetConfig config) {
-        this(config, null);
+        this(config, null, null);
     }
 
     public ContextManager(ContextBudgetConfig config, LLMStrategy llmStrategy) {
-        this.tracker = new ContextBudgetTracker(config);
-        this.llmStrategy = llmStrategy;
+        this(config, llmStrategy, null);
     }
 
     public ContextManager(ContextBudgetConfig config, LLMStrategy llmStrategy, String modelName) {
-        this.tracker = new ContextBudgetTracker(config, modelName);
+        this.tracker = new ContextBudgetTracker(config, modelName != null ? modelName : "gpt-4");
         this.llmStrategy = llmStrategy;
+        this.llmClientManager = null;
+    }
+
+    public ContextManager(ContextBudgetConfig config, LlmClientManager llmClientManager) {
+        this.tracker = new ContextBudgetTracker(config);
+        this.llmStrategy = null;
+        this.llmClientManager = llmClientManager;
     }
 
     /**
@@ -88,9 +96,11 @@ public class ContextManager {
         }
 
         // Layer 3: LLM-based summarization
-        if (state.isGte(TokenState.ERROR) && llmStrategy != null) {
+        LLMStrategy effectiveStrategy = llmStrategy != null ? llmStrategy
+                : (llmClientManager != null ? llmClientManager.getClient(0L) : null);
+        if (state.isGte(TokenState.ERROR) && effectiveStrategy != null) {
             try {
-                messages = layer3.compact(messages, llmStrategy, tracker);
+                messages = layer3.compact(messages, effectiveStrategy, tracker);
                 tracker.recordCompactSuccess();
                 tokenCount = tracker.countMessages(messages);
                 state = tracker.getState(tokenCount);

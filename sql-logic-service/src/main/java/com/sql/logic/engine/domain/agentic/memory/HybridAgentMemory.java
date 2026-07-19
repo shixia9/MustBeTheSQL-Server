@@ -29,8 +29,8 @@ public class HybridAgentMemory implements AgentMemory {
     private final SensoryMemory sensoryMemory;
     private final AgentShortTermMemory shortTermMemory;
     private final AgentLongTermMemory longTermMemory;
-    private final LLMImportanceScorer importanceScorer;
-    private final LLMInsightExtractor insightExtractor;
+    private LLMImportanceScorer importanceScorer;
+    private LLMInsightExtractor insightExtractor;
     private final ExecutorService asyncExecutor;
 
     // Task progress tracker (independent of message serialization)
@@ -77,6 +77,16 @@ public class HybridAgentMemory implements AgentMemory {
 
     public void setIdentity(Long userId, Long agentId) {
         longTermMemory.setIdentity(userId, agentId);
+    }
+
+    /** Inject LLM-based importance scorer (optional — falls back to default scoring). */
+    public void setImportanceScorer(LLMImportanceScorer scorer) {
+        this.importanceScorer = scorer;
+    }
+
+    /** Inject LLM-based insight extractor (optional — insights are skipped when absent). */
+    public void setInsightExtractor(LLMInsightExtractor extractor) {
+        this.insightExtractor = extractor;
     }
 
     // ========================================================================

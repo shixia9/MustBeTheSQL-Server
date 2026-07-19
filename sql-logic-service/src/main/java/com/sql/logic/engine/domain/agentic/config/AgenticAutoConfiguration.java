@@ -5,7 +5,7 @@ import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.python.SimplePythonExecutor;
 import com.sql.logic.engine.domain.agent.service.SqlExecutionService;
-import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agentic.action.*;
 import com.sql.logic.engine.domain.agentic.agent.*;
 import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
@@ -18,7 +18,6 @@ import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
 import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
 import com.sql.logic.engine.infrastructure.dao.TaskProgressSnapshotDao;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,8 +38,13 @@ public class AgenticAutoConfiguration {
 
     @Bean
     @Primary
-    public AgentMemory agentMemory(MemoryDomainService memoryDomainService) {
-        return new HybridAgentMemory(memoryDomainService);
+    public AgentMemory agentMemory(MemoryDomainService memoryDomainService,
+                                   LLMImportanceScorer importanceScorer,
+                                   LLMInsightExtractor insightExtractor) {
+        HybridAgentMemory memory = new HybridAgentMemory(memoryDomainService);
+        memory.setImportanceScorer(importanceScorer);
+        memory.setInsightExtractor(insightExtractor);
+        return memory;
     }
 
     /**
@@ -64,8 +68,9 @@ public class AgenticAutoConfiguration {
     }
 
     @Bean
-    public ContextManager contextManager(ContextBudgetConfig config) {
-        return new ContextManager(config);
+    public ContextManager contextManager(ContextBudgetConfig config,
+                                         LlmClientManager llmClientManager) {
+        return new ContextManager(config, llmClientManager);
     }
 
     // ======================== Phase 3: Task Progress Persistence ========================
@@ -79,18 +84,15 @@ public class AgenticAutoConfiguration {
     // ======================== Phase 3: LLM-based Memory Scoring ========================
 
     @Bean
-    @ConditionalOnClass(LLMStrategy.class)
-    public LLMImportanceScorer llmImportanceScorer(
-            @Autowired(required = false) LLMStrategy llmStrategy) {
-        return new LLMImportanceScorer(llmStrategy);
+    public LLMImportanceScorer llmImportanceScorer(LlmClientManager llmClientManager) {
+        return new LLMImportanceScorer(llmClientManager);
     }
 
     @Bean
-    @ConditionalOnClass(LLMStrategy.class)
-    public LLMInsightExtractor llmInsightExtractor(
-            @Autowired(required = false) LLMStrategy llmStrategy) {
-        return new LLMInsightExtractor(llmStrategy);
+    public LLMInsightExtractor llmInsightExtractor(LlmClientManager llmClientManager) {
+        return new LLMInsightExtractor(llmClientManager);
     }
+
 
     // ======================== Phase 1 Actions ========================
 
