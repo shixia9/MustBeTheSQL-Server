@@ -98,6 +98,14 @@ class ConversableAgentTest {
         @Override public List<MemoryFragment> getRecentFragments(int count) {
             return fragments.stream().limit(count).toList();
         }
+        @Override public List<MemoryFragment> clear() {
+            List<MemoryFragment> result = List.copyOf(fragments);
+            fragments.clear();
+            progress.clear();
+            return result;
+        }
+        @Override public int totalFragmentCount() { return fragments.size(); }
+        @Override public void flushToLongTerm() { /* no-op */ }
         int fragmentCount() { return fragments.size(); }
         int progressCount() { return progress.size(); }
     }

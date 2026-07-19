@@ -25,6 +25,9 @@ class DataScientistAgentTest {
         @Override public void recordTaskProgress(TaskProgressEntry e) { progress.add(e); }
         @Override public String getTaskProgressSummary() { return null; }
         @Override public List<MemoryFragment> getRecentFragments(int c) { return List.of(); }
+        @Override public List<MemoryFragment> clear() { fragments.clear(); return List.of(); }
+        @Override public int totalFragmentCount() { return fragments.size(); }
+        @Override public void flushToLongTerm() { /* no-op */ }
     }
 
     @BeforeEach

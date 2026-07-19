@@ -5,18 +5,24 @@ import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.python.SimplePythonExecutor;
 import com.sql.logic.engine.domain.agent.service.SqlExecutionService;
+import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.domain.agentic.action.*;
 import com.sql.logic.engine.domain.agentic.agent.*;
+import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
+import com.sql.logic.engine.domain.agentic.context.ContextManager;
 import com.sql.logic.engine.domain.agentic.core.AgentMemory;
-import com.sql.logic.engine.domain.agentic.memory.SimpleAgentMemory;
+import com.sql.logic.engine.domain.agentic.memory.*;
 import com.sql.logic.engine.domain.agentic.plan.InMemoryPlanMemory;
 import com.sql.logic.engine.domain.agentic.plan.PlanMemory;
 import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
 import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
+import com.sql.logic.engine.infrastructure.dao.TaskProgressSnapshotDao;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.util.List;
 import java.util.Map;
@@ -32,13 +38,58 @@ public class AgenticAutoConfiguration {
     }
 
     @Bean
+    @Primary
     public AgentMemory agentMemory(MemoryDomainService memoryDomainService) {
+        return new HybridAgentMemory(memoryDomainService);
+    }
+
+    /**
+     * Legacy simple memory — kept for backward compatibility and testing.
+     */
+    @Bean
+    public SimpleAgentMemory simpleAgentMemory(MemoryDomainService memoryDomainService) {
         return new SimpleAgentMemory(memoryDomainService, null, null);
     }
 
     @Bean
     public PlanMemory planMemory() {
         return new InMemoryPlanMemory();
+    }
+
+    // ======================== Phase 3: Context Management ========================
+
+    @Bean
+    public ContextBudgetConfig contextBudgetConfig() {
+        return new ContextBudgetConfig();
+    }
+
+    @Bean
+    public ContextManager contextManager(ContextBudgetConfig config) {
+        return new ContextManager(config);
+    }
+
+    // ======================== Phase 3: Task Progress Persistence ========================
+
+    @Bean
+    public TaskProgressPersistenceService taskProgressPersistenceService(
+            TaskProgressSnapshotDao dao) {
+        return new TaskProgressPersistenceService(dao);
+    }
+
+    // ======================== Phase 3: LLM-based Memory Scoring ========================
+
+    @Bean
+    @ConditionalOnClass(LLMStrategy.class)
+    public LLMImportanceScorer llmImportanceScorer(
+            @Autowired(required = false) LLMStrategy llmStrategy) {
+        return new LLMImportanceScorer(llmStrategy);
+    }
+
+    @Bean
+    @ConditionalOnClass(LLMStrategy.class)
+    public LLMInsightExtractor llmInsightExtractor(
+            @Autowired(required = false) LLMStrategy llmStrategy) {
+        return new LLMInsightExtractor(llmStrategy);
     }
 
     // ======================== Phase 1 Actions ========================
@@ -108,6 +159,7 @@ public class AgenticAutoConfiguration {
         return new McpToolFixAction(promptManager);
     }
 
+    // ======================== Agents ========================
 
     @Bean
     public DataScientistAgent dataScientistAgent(
@@ -115,11 +167,15 @@ public class AgenticAutoConfiguration {
             SqlGenerationAction sqlGenerationAction,
             SqlExecutionAction sqlExecutionAction,
             SqlFixAction sqlFixAction,
-            ProfileRenderer profileRenderer) {
+            ProfileRenderer profileRenderer,
+            ContextManager contextManager,
+            TaskProgressPersistenceService persistenceService) {
         DataScientistAgent agent = new DataScientistAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(sqlGenerationAction, sqlExecutionAction, sqlFixAction));
         agent.bind(profileRenderer);
+        agent.bindContextManager(contextManager);
+        agent.bindPersistence(persistenceService);
         agent.build();
         return agent;
     }
@@ -140,11 +196,15 @@ public class AgenticAutoConfiguration {
                                                   PythonGenerationAction genAction,
                                                   PythonExecutionAction execAction,
                                                   PythonAnalyzeAction analyzeAction,
-                                                  ProfileRenderer profileRenderer) {
+                                                  ProfileRenderer profileRenderer,
+                                                  ContextManager contextManager,
+                                                  TaskProgressPersistenceService persistenceService) {
         CodeAssistantAgent agent = new CodeAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(genAction, execAction, analyzeAction));
         agent.bind(profileRenderer);
+        agent.bindContextManager(contextManager);
+        agent.bindPersistence(persistenceService);
         agent.build();
         return agent;
     }
@@ -181,13 +241,17 @@ public class AgenticAutoConfiguration {
                                       DataScientistAgent dataScientistAgent,
                                       CodeAssistantAgent codeAssistantAgent,
                                       ToolAssistantAgent toolAssistantAgent,
-                                      ProfileRenderer profileRenderer) {
+                                      ProfileRenderer profileRenderer,
+                                      ContextManager contextManager,
+                                      TaskProgressPersistenceService persistenceService) {
         ManagerAgent agent = new ManagerAgent();
         agent.setPlanMemory(planMemory);
         agent.setPlannerAgent(plannerAgent);
         agent.setDashboardAgent(dashboardAgent);
         agent.bind(agentMemory);
         agent.bind(profileRenderer);
+        agent.bindContextManager(contextManager);
+        agent.bindPersistence(persistenceService);
         // Hire worker agents
         agent.hire(dataScientistAgent);
         agent.hire(codeAssistantAgent);

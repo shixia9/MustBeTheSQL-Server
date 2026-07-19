@@ -115,6 +115,24 @@ public class SimpleAgentMemory implements AgentMemory {
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public List<MemoryFragment> clear() {
+        List<MemoryFragment> result = new ArrayList<>(shortTerm);
+        shortTerm.clear();
+        taskProgress.clear();
+        return result;
+    }
+
+    @Override
+    public int totalFragmentCount() {
+        return shortTerm.size();
+    }
+
+    @Override
+    public void flushToLongTerm() {
+        // No-op: SimpleAgentMemory doesn't have a long-term write path
+    }
+
     public int shortTermSize() {
         return shortTerm.size();
     }

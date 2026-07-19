@@ -4,6 +4,9 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.domain.agentic.bridge.AgentStateBridge;
+import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
+import com.sql.logic.engine.domain.agentic.context.ContextManager;
+import com.sql.logic.engine.domain.agentic.memory.TaskProgressPersistenceService;
 import com.sql.logic.engine.domain.agentic.profile.ProfileConfig;
 import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
 import com.sql.logic.engine.domain.agentic.resource.AgentResource;
@@ -16,19 +19,13 @@ import java.util.Map;
 import java.util.concurrent.*;
 
 /**
- * Core Agent execution engine.
+ * Core Agent execution engine with Phase 3 context management.
  * <p>
  * Implements the standardized {@code generateReply()} pipeline:
  * <pre>
- *   loadThinkingMessages() → thinking() → review() → act() → verify()
+ *   loadThinkingMessages() → manageContext() → thinking() → review() → act() → verify()
  * </pre>
- * with a configurable retry loop. Subclasses register domain-specific
- * {@link AgentAction}s and override {@link #buildSystemPrompt} /
- * {@link #buildUserPrompt} to inject role-specific prompt sections.
- * <p>
- * Integration with the existing StateGraph is via {@link #asNodeAction()},
- * which wraps the agent as a {@link NodeAction} that can be added to any
- * {@code StateGraph} node — enabling mixed Agent/Node workflows.
+ * with configurable retry loop and progressive 4-layer context compaction.
  */
 public abstract class ConversableAgent implements Agent {
 
@@ -46,6 +43,10 @@ public abstract class ConversableAgent implements Agent {
 
     protected int maxRetryCount = 3;
     protected long maxTimeoutSeconds = 600;
+
+    // Context management and persistence
+    protected ContextManager contextManager;
+    protected TaskProgressPersistenceService persistenceService;
 
     // --- Fluent binding API ---
 
@@ -85,6 +86,32 @@ public abstract class ConversableAgent implements Agent {
     }
 
     /**
+     * Bind a context manager for multi-layer compaction.
+     */
+    public ConversableAgent bindContextManager(ContextManager manager) {
+        this.contextManager = manager;
+        return this;
+    }
+
+    /**
+     * Bind a persistence service for task progress snapshots.
+     */
+    public ConversableAgent bindPersistence(TaskProgressPersistenceService service) {
+        this.persistenceService = service;
+        return this;
+    }
+
+    /**
+     * Initialize context management with defaults derived from agent context.
+     */
+    public void initContextManagement() {
+        if (contextManager == null) {
+            contextManager = new ContextManager(new ContextBudgetConfig());
+        }
+        log.info("Context management enabled for agent {}", name());
+    }
+
+    /**
      * Finalize binding. Subclasses may override for validation.
      */
     public ConversableAgent build() {
@@ -94,13 +121,14 @@ public abstract class ConversableAgent implements Agent {
         return this;
     }
 
-    // --- Accessors for actions and tests ---
+    // --- Accessors ---
 
     public ProfileConfig getProfile() { return profile; }
     public AgentMemory getMemory() { return memory; }
     public AgentResource getResource() { return resource; }
     public LLMStrategy getLlmStrategy() { return llmStrategy; }
     public List<AgentAction> getActions() { return actions; }
+    public ContextManager getContextManager() { return contextManager; }
 
     // --- Agent interface: identity ---
 
@@ -145,11 +173,11 @@ public abstract class ConversableAgent implements Agent {
     }
 
     // ========================================================================
-    //  Core pipeline — generateReply()
+    //  Core pipeline — generateReply() with Phase 3 context management
     // ========================================================================
 
     /**
-     * The standardized execution loop.
+     * The standardized execution loop with progressive context compaction.
      */
     @Override
     public CompletableFuture<AgentMessage> generateReply(
@@ -172,6 +200,13 @@ public abstract class ConversableAgent implements Agent {
                             relyMessages, historicalDialogues,
                             replyMessage.context()
                     );
+
+                    // Context budget management — compact if needed
+                    if (contextManager != null) {
+                        String taskProgress = memory != null ? memory.getTaskProgressSummary() : null;
+                        thinkingMessages = contextManager.manageContext(
+                                thinkingMessages, retry, taskProgress);
+                    }
 
                     // Step 2: Thinking (LLM inference)
                     String llmOutput = thinking(thinkingMessages);
@@ -216,6 +251,34 @@ public abstract class ConversableAgent implements Agent {
                 } catch (Exception e) {
                     log.warn("[{}] generateReply error (retry {}/{}): {}", name(), retry, maxRetryCount, e.getMessage());
                     failReason = e.getMessage();
+
+                    // Reactive compaction on context_too_long errors
+                    if (isContextTooLongError(e) && contextManager != null) {
+                        try {
+                            var messages = loadThinkingMessages(
+                                    receivedMessage, sender, observation,
+                                    relyMessages, historicalDialogues,
+                                    replyMessage.context()
+                            );
+                            var compacted = contextManager.reactiveCompact(messages);
+                            // Retry with compacted context
+                            String llmOutput = thinking(compacted);
+                            replyMessage = replyMessage.withContent(llmOutput);
+                            ReviewInfo review = review(llmOutput);
+                            if (review.approved()) {
+                                ActionOutput actionOut = act(replyMessage, sender).join();
+                                VerifyResult verifyResult = verify(replyMessage, sender).join();
+                                if (verifyResult.passed()) {
+                                    writeMemories(receivedMessage, llmOutput, actionOut, true, null, retry);
+                                    replyMessage = replyMessage.withSuccess(true).withActionReport(actionOut);
+                                    break;
+                                }
+                            }
+                        } catch (Exception ignored) {
+                            // Fall through to normal retry
+                        }
+                    }
+
                     observation = failReason;
                     try {
                         writeMemories(receivedMessage, null, null, false, failReason, retry);
@@ -231,10 +294,6 @@ public abstract class ConversableAgent implements Agent {
     //  Pipeline stages — overridable by subclasses
     // ========================================================================
 
-    /**
-     * Load the full thinking context: system prompt + memory + resources +
-     * task progress + historical dialogues + rely messages + current input.
-     */
     protected List<AgentMessage> loadThinkingMessages(
             AgentMessage receivedMessage,
             Agent sender,
@@ -248,7 +307,7 @@ public abstract class ConversableAgent implements Agent {
         // 1. Memory recall
         String memoryContext = (memory != null) ? memory.read(observation) : "";
 
-        // 2. Resource prompts (multi-resource injection — Schema, Knowledge, etc.)
+        // 2. Resource prompts (multi-resource injection)
         StringBuilder resourceCtx = new StringBuilder();
         if (resource != null) {
             String rp = resource.getPrompt(observation);
@@ -266,7 +325,7 @@ public abstract class ConversableAgent implements Agent {
             messages.add(AgentMessage.system(systemPrompt));
         }
 
-        // 4. Task progress (never-lost tracker — independent of message serialization)
+        // 4. Task progress (never-lost tracker)
         if (memory != null) {
             String taskProgress = memory.getTaskProgressSummary();
             if (taskProgress != null) {
@@ -279,7 +338,7 @@ public abstract class ConversableAgent implements Agent {
             messages.addAll(historicalDialogues);
         }
 
-        // 6. Rely messages (dependency step results)
+        // 6. Rely messages
         if (relyMessages != null) {
             messages.addAll(relyMessages);
         }
@@ -291,10 +350,6 @@ public abstract class ConversableAgent implements Agent {
         return messages;
     }
 
-    /**
-     * LLM inference stage. Default: concatenate all messages and call LLM.
-     * Subclasses may override for streaming or multi-step reasoning.
-     */
     protected String thinking(List<AgentMessage> messages) {
         if (llmStrategy == null) {
             throw new IllegalStateException("No LLMStrategy bound to agent " + name());
@@ -303,18 +358,10 @@ public abstract class ConversableAgent implements Agent {
         return llmStrategy.generateSql(prompt, null);
     }
 
-    /**
-     * Content review stage. Default: always approve.
-     * Subclasses may override to add content filtering or safety checks.
-     */
     protected ReviewInfo review(String llmOutput) {
         return ReviewInfo.APPROVED;
     }
 
-    /**
-     * Action execution stage. Default: execute the first registered action.
-     * Subclasses should override to implement domain-specific action selection.
-     */
     @Override
     public CompletableFuture<ActionOutput> act(AgentMessage message, Agent sender) {
         if (actions.isEmpty()) {
@@ -325,10 +372,6 @@ public abstract class ConversableAgent implements Agent {
         return actions.get(0).execute(message, this);
     }
 
-    /**
-     * Verification stage. Default: check actionOutput.isSuccess().
-     * Subclasses override for domain-specific correctness checks.
-     */
     @Override
     public CompletableFuture<VerifyResult> verify(AgentMessage message, Agent sender) {
         ActionOutput ao = message.actionReport();
@@ -341,18 +384,12 @@ public abstract class ConversableAgent implements Agent {
     }
 
     // ========================================================================
-    //  Abstract methods — subclasses must implement
+    //  Abstract methods
     // ========================================================================
 
-    /**
-     * Build the system prompt from profile, memory, resources, and context.
-     */
     protected abstract String buildSystemPrompt(String observation, String memoryContext,
                                                  String resourceContext, Map<String, Object> context);
 
-    /**
-     * Build the user-facing prompt for the current observation.
-     */
     protected abstract String buildUserPrompt(String observation, String memoryContext,
                                                String resourceContext, Map<String, Object> context);
 
@@ -363,7 +400,6 @@ public abstract class ConversableAgent implements Agent {
     protected void writeMemories(AgentMessage received, String llmOutput, ActionOutput actionOut,
                                   boolean success, String failReason, int retry) {
         if (memory == null) return;
-
         try {
             String question = received != null ? received.content() : "";
             String summary = success
@@ -416,9 +452,6 @@ public abstract class ConversableAgent implements Agent {
         return sb.toString();
     }
 
-    /**
-     * Render the profile into a system prompt section using the configured template.
-     */
     protected String renderProfilePrompt() {
         if (profile == null) return "";
         if (profile.systemPromptTemplate() != null && !profile.systemPromptTemplate().isBlank()) {
@@ -430,7 +463,6 @@ public abstract class ConversableAgent implements Agent {
                     "description", profile.description()
             ));
         }
-        // Default prompt when no template is configured
         return """
                 You are %s, a %s.
                 Your goal: %s
@@ -442,27 +474,29 @@ public abstract class ConversableAgent implements Agent {
     }
 
     // ========================================================================
-    //  StateGraph integration — asNodeAction()
+    //  Context error detection
     // ========================================================================
 
     /**
-     * Wrap this agent as a {@link NodeAction} that can be added to any existing
-     * or future {@code StateGraph} as a node.
-     * <p>
-     * This is the bridge between the Multi-Agent framework and the Spring AI
-     * Alibaba StateGraph runtime. When the graph reaches this node:
-     * <ol>
-     *   <li>{@link AgentStateBridge} converts {@code OverAllState} → {@link AgentMessage}</li>
-     *   <li>{@link #generateReply} executes the full pipeline</li>
-     *   <li>{@link AgentStateBridge} converts {@link AgentMessage} → state updates</li>
-     * </ol>
-     * <p>
-     * Usage in a StateGraph:
-     * <pre>{@code
-     *   DataScientistAgent agent = ...;
-     *   workflow.addNode("DATA_SCIENTIST", agent.asNodeAction());
-     * }</pre>
+     * Detect whether an exception indicates a context-too-long error from the LLM.
+     * Subclasses may override to add provider-specific detection.
      */
+    protected boolean isContextTooLongError(Exception e) {
+        if (e == null) return false;
+        String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+        return msg.contains("context_length_exceeded")
+                || msg.contains("context too long")
+                || msg.contains("maximum context length")
+                || msg.contains("reduce the length")
+                || msg.contains("token limit")
+                || msg.contains("4003")
+                || (e.getCause() != null && isContextTooLongError((Exception) e.getCause()));
+    }
+
+    // ========================================================================
+    //  StateGraph integration — asNodeAction()
+    // ========================================================================
+
     public NodeAction asNodeAction() {
         return (OverAllState state) -> {
             AgentMessage input = AgentStateBridge.toAgentMessage(state);
@@ -473,7 +507,7 @@ public abstract class ConversableAgent implements Agent {
     }
 
     /**
-     * Optionally record a task progress step from the state's current step info.
+     * Record a task progress step and persist to database.
      */
     private void maybeRecordStep(OverAllState state, AgentMessage output) {
         if (memory == null) return;
@@ -481,13 +515,21 @@ public abstract class ConversableAgent implements Agent {
             Object stepObj = state.value("currentStep").orElse(null);
             int step = stepObj instanceof Number n ? n.intValue() : 0;
             String phase = state.value("nextNode").orElse(name()).toString();
-            memory.recordTaskProgress(new AgentMemory.TaskProgressEntry(
+            AgentMemory.TaskProgressEntry entry = new AgentMemory.TaskProgressEntry(
                     step,
                     output.actionReport() != null ? output.actionReport().content() : output.content(),
                     phase,
                     output.success() ? AgentMemory.TaskStatus.DONE : AgentMemory.TaskStatus.FAILED,
                     output.content()
-            ));
+            );
+            memory.recordTaskProgress(entry);
+
+            // Context persistence
+            if (persistenceService != null) {
+                Object convIdObj = state.value("threadId").orElse(null);
+                String convId = convIdObj != null ? convIdObj.toString() : null;
+                persistenceService.persistAsync(convId, entry);
+            }
         } catch (Exception ignored) {
             // Best-effort progress tracking
         }
