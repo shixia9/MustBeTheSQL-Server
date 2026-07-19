@@ -177,6 +177,12 @@
             <artifactId>hutool-all</artifactId>
         </dependency>
 
+        <!-- JTokkit -->
+        <dependency>
+            <groupId>com.knuddels</groupId>
+            <artifactId>jtokkit</artifactId>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

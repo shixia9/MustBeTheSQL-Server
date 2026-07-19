@@ -35,6 +35,7 @@
         <jsqlparser.version>4.6</jsqlparser.version>
         <hutool.version>5.8.44</hutool.version>
         <commons-lang3.version>3.12.0</commons-lang3.version>
+        <jtokkit.version>0.6.1</jtokkit.version>
     </properties>
 
     <dependencyManagement>
@@ -145,6 +146,12 @@
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-lang3</artifactId>
                 <version>${commons-lang3.version}</version>
+            </dependency>
+            <!-- JTokkit -->
+            <dependency>
+                <groupId>com.knuddels</groupId>
+                <artifactId>jtokkit</artifactId>
+                <version>${jtokkit.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
