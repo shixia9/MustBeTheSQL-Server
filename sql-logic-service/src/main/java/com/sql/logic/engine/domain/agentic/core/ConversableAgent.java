@@ -50,6 +50,9 @@ public abstract class ConversableAgent implements Agent {
     protected ContextManager contextManager;
     protected TaskProgressPersistenceService persistenceService;
 
+    // Per-request llmConfigId (set from received message context at the start of generateReply)
+    private Long currentRequestLlmConfigId;
+
     // --- Fluent binding API ---
 
     public ConversableAgent bind(ProfileConfig profile) {
@@ -205,13 +208,22 @@ public abstract class ConversableAgent implements Agent {
             String failReason = null;
             long startTime = System.currentTimeMillis();
 
+            // Capture request-level llmConfigId for LLM strategy resolution
+            if (receivedMessage != null) {
+                Object cid = receivedMessage.context().get("llmConfigId");
+                if (cid instanceof Number n) this.currentRequestLlmConfigId = n.longValue();
+                else if (cid instanceof String s) {
+                    try { this.currentRequestLlmConfigId = Long.parseLong(s); } catch (NumberFormatException ignored) {}
+                }
+            }
+
             for (int retry = 0; retry < maxRetryCount; retry++) {
                 try {
                     // Step 1: Load thinking context
                     List<AgentMessage> thinkingMessages = loadThinkingMessages(
                             receivedMessage, sender, observation,
                             relyMessages, historicalDialogues,
-                            replyMessage.context()
+                            receivedMessage != null ? receivedMessage.context() : Map.of()
                     );
 
                     // Context budget management — compact if needed
@@ -330,6 +342,13 @@ public abstract class ConversableAgent implements Agent {
             String rp = r.getPrompt(observation);
             if (rp != null && !rp.isBlank()) resourceCtx.append(rp).append("\n");
         }
+
+        // 2b. Inject pre-loaded schema DDL from message context
+        String schemaDdl = extractContextString(context, "schemaDdl");
+        if (schemaDdl != null && !schemaDdl.isBlank()) {
+            resourceCtx.append("### Database Schema\n").append(schemaDdl).append("\n");
+        }
+
         String resourceContext = resourceCtx.toString();
 
         // 3. Build and add system prompt
@@ -375,12 +394,28 @@ public abstract class ConversableAgent implements Agent {
 
     /**
      * Resolve the effective LLM strategy: direct binding takes precedence,
-     * otherwise fall back to lazy resolution via {@link LlmClientManager#getClient(Long)}
-     * with the system default key (0L).
+     * then request-level llmConfigId, then system default (key 0L),
+     * then any available strategy as last resort.
      */
     private LLMStrategy resolveLlmStrategy() {
-        if (llmStrategy != null) return llmStrategy;
-        if (llmClientManager != null) return llmClientManager.getClient(0L);
+        if (llmStrategy != null) {
+            return llmStrategy;
+        }
+        if (llmClientManager != null) {
+            // 1. Try request-level config
+            if (currentRequestLlmConfigId != null && currentRequestLlmConfigId > 0) {
+                LLMStrategy s = llmClientManager.getClient(currentRequestLlmConfigId);
+                if (s != null) return s;
+            }
+            // 2. Try system default
+            LLMStrategy s = llmClientManager.getClient(0L);
+            if (s != null) return s;
+            // 3. Any available strategy
+            s = llmClientManager.getAnyClient();
+            if (s != null) return s;
+        }
+        log.error("[{}] No LLM strategy available — llmStrategy={}, llmClientManager={}, requestConfigId={}",
+                name(), llmStrategy != null, llmClientManager != null, currentRequestLlmConfigId);
         return null;
     }
 
@@ -444,12 +479,16 @@ public abstract class ConversableAgent implements Agent {
     }
 
     protected AgentMessage initReplyMessage(AgentMessage received, Agent sender) {
-        return AgentMessage.builder()
+        AgentMessage.Builder builder = AgentMessage.builder()
                 .senderName(name())
                 .senderRole(role())
                 .rounds(received != null ? received.rounds() + 1 : 1)
-                .success(false)
-                .build();
+                .success(false);
+        // Preserve context from received message (threadId, connectionId, llmConfigId, schemaDdl, etc.)
+        if (received != null && received.context() != null) {
+            received.context().forEach(builder::putContext);
+        }
+        return builder.build();
     }
 
     // ========================================================================
@@ -502,6 +541,15 @@ public abstract class ConversableAgent implements Agent {
     // ========================================================================
     //  Context error detection
     // ========================================================================
+
+    /**
+     * Extract a string value from the message context map.
+     */
+    private static String extractContextString(Map<String, Object> context, String key) {
+        if (context == null) return null;
+        Object v = context.get(key);
+        return v != null ? v.toString() : null;
+    }
 
     /**
      * Detect whether an exception indicates a context-too-long error from the LLM.

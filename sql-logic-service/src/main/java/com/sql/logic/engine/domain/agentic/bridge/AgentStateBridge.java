@@ -74,6 +74,12 @@ public final class AgentStateBridge {
                 // Resource info
                 .putResourceInfo("tableNames", getString(state, SqlAgentSpec.StateKey.TABLE_NAMES));
 
+        // Pre-loaded schema DDL
+        String schemaDdl = getString(state, SqlAgentSpec.StateKey.SCHEMA_DDL);
+        if (schemaDdl != null && !schemaDdl.isBlank()) {
+            builder.putContext("schemaDdl", schemaDdl);
+        }
+
         // Inject execution description from the current plan step
         String planJson = getString(state, SqlAgentSpec.StateKey.PLAN);
         if (planJson != null && !planJson.isBlank()) {

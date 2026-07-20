@@ -240,6 +240,8 @@ public class AgentSseCodec {
                 data.put("nextNode", state.value(SqlAgentSpec.StateKey.NEXT_NODE, ""));
                 data.put("plan", state.value(SqlAgentSpec.StateKey.PLAN, ""));
                 data.put("agentSuccess", state.value("agentSuccess", ""));
+                addIfPresent(data, "errorMsg", state.value(SqlAgentSpec.StateKey.SQL_ERROR, ""));
+                addIfPresent(data, "content", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
                 break;
             case "DATA_SCIENTIST":
                 data.put("sql", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));

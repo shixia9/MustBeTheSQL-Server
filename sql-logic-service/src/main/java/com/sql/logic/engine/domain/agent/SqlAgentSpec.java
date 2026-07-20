@@ -118,6 +118,8 @@ public final class SqlAgentSpec {
         public static final String AGENT_TOOLS = "agentTools";
         public static final String AGENT_NAME = "agentName";
         public static final String AGENT_ID = "agentId";
+        /** Pre-loaded schema DDL text injected into agent prompts (DB-GPT pattern). */
+        public static final String SCHEMA_DDL = "schemaDdl";
         // ---- MCP Tool ----
         public static final String MCP_TOOL_NAME = "mcpToolName";
         public static final String MCP_TOOL_PARAMS = "mcpToolParams";

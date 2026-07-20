@@ -45,7 +45,8 @@ public class PlanAction implements AgentAction {
 
                 List<PlanInput> planInputs = parsePlanInputs(llmOutput);
                 if (planInputs.isEmpty()) {
-                    return ActionOutput.fail("Failed to parse plan from LLM output");
+                    // Fallback: if LLM returns empty plan, create a default DataScientist step
+                    planInputs = List.of(fallbackPlan(context));
                 }
 
                 String convId = (String) context.context().getOrDefault("threadId", "default");
@@ -127,6 +128,18 @@ public class PlanAction implements AgentAction {
         int end = text.lastIndexOf('}');
         if (start >= 0 && end > start) return text.substring(start, end + 1);
         return null;
+    }
+
+    /**
+     * Fallback plan when LLM returns empty — at minimum query the database.
+     */
+    private PlanInput fallbackPlan(AgentMessage context) {
+        PlanInput pi = new PlanInput();
+        pi.serial_number = 1;
+        pi.agent = "DataScientist";
+        pi.content = "Execute SQL query to answer the user's question";
+        pi.rely = "";
+        return pi;
     }
 
     /**

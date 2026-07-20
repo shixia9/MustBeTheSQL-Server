@@ -220,6 +220,17 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     }
 
     // ========================================================================
+    //  Override thinking — ManagerAgent is a pure orchestrator, no LLM needed
+    // ========================================================================
+
+    @Override
+    protected String thinking(List<AgentMessage> messages) {
+        // ManagerAgent doesn't need LLM — it orchestrates other agents.
+        // Return a dummy ack so the pipeline proceeds to act().
+        return "ORCHESTRATE";
+    }
+
+    // ========================================================================
     //  Prompt building
     // ========================================================================
 

@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
+import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agentic.agent.ManagerAgent;
 import com.sql.logic.engine.domain.agentic.config.AgentOrchestrator;
@@ -25,10 +26,6 @@ import java.util.UUID;
 
 /**
  * Streaming executor for the 6-Agent Multi-Agent system (AgentOrchestrator).
- * <p>
- * Mirrors {@link SqlAgentRunner} but wraps the agentic 6-node StateGraph
- * (MANAGER → {PLANNER, DATA_SCIENTIST, CODE_ASSISTANT, TOOL_ASSISTANT, DASHBOARD}).
- * HITL is handled through {@link ManagerAgent#resumeWithDecision(boolean)}.
  */
 @Service
 public class AgenticRunner {
@@ -42,6 +39,7 @@ public class AgenticRunner {
     private final TraceContextRegistry traceContextRegistry;
     private final NodeStartedSinkRegistry sinkRegistry;
     private final AgentSseCodec codec;
+    private final DatabaseMetaDataService databaseMetaDataService;
 
     public AgenticRunner(AgentOrchestrator orchestrator,
                          ManagerAgent managerAgent,
@@ -49,13 +47,15 @@ public class AgenticRunner {
                          TraceContextRegistry traceContextRegistry,
                          AgentSseStartedListener sseStartedListener,
                          NodeStartedSinkRegistry sinkRegistry,
-                         AgentSseCodec codec) {
+                         AgentSseCodec codec,
+                         DatabaseMetaDataService databaseMetaDataService) {
         this.orchestrator = orchestrator;
         this.managerAgent = managerAgent;
         this.hitlSessionRegistry = hitlSessionRegistry;
         this.traceContextRegistry = traceContextRegistry;
         this.sinkRegistry = sinkRegistry;
         this.codec = codec;
+        this.databaseMetaDataService = databaseMetaDataService;
         try {
             this.compiledGraph = orchestrator.compile(CompileConfig.builder()
                     .saverConfig(SaverConfig.builder().register(new MemorySaver()).build())
@@ -104,8 +104,12 @@ public class AgenticRunner {
                 conversationHistory != null ? conversationHistory : "");
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
 
-        log.info("[AgenticRunner] Starting 6-Agent graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, input='{}'",
-                threadId, autoConfirm, connectionId, userId, userInput);
+        // Pre-load database schema DDL (DB-GPT pattern: Resource injection at loadThinkingMessages time)
+        String schemaDdl = buildSchemaDdl(connectionId, tableNames, schemaName);
+        initialState.put(SqlAgentSpec.StateKey.SCHEMA_DDL, schemaDdl);
+
+        log.info("[AgenticRunner] Starting 6-Agent graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, llmConfigId={}, input='{}'",
+                threadId, autoConfirm, connectionId, userId, llmConfigId, userInput);
 
         TraceContext traceContext = new TraceContext(threadId, userId, workspaceId);
         traceContextRegistry.register(threadId, traceContext);
@@ -174,6 +178,47 @@ public class AgenticRunner {
 
     public ManagerAgent getManagerAgent() {
         return managerAgent;
+    }
+
+    /**
+     * Pre-load database schema DDL for the given connection.
+     * Fetches table metadata and builds a structured schema context string
+     * for injection into agent prompts.
+     */
+    private String buildSchemaDdl(Long connectionId, List<String> tableNames, String schemaName) {
+        if (connectionId == null || connectionId <= 0) {
+            log.warn("[AgenticRunner] No connectionId, skipping schema preload");
+            return "";
+        }
+        try {
+            List<String> tables = (tableNames != null && !tableNames.isEmpty())
+                    ? tableNames
+                    : databaseMetaDataService.getTableNames(connectionId, schemaName);
+
+            if (tables.isEmpty()) {
+                log.warn("[AgenticRunner] No tables found for connectionId={}", connectionId);
+                return "Database connection #" + connectionId + " — no tables discovered. Ask the user to specify tables.";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("Database connection #").append(connectionId).append(":\n\n");
+            for (String table : tables) {
+                try {
+                    String ddl = databaseMetaDataService.getTableDDL(connectionId, schemaName, table);
+                    if (ddl != null && !ddl.isBlank()) {
+                        sb.append(ddl).append("\n");
+                    }
+                } catch (Exception e) {
+                    log.debug("[AgenticRunner] Failed to get DDL for table {}: {}", table, e.getMessage());
+                }
+            }
+            String result = sb.toString();
+            log.info("[AgenticRunner] Built schema DDL: {} tables, {} chars", tables.size(), result.length());
+            return result;
+        } catch (Exception e) {
+            log.warn("[AgenticRunner] Schema preload failed: {}", e.getMessage());
+            return "";
+        }
     }
 
     /**

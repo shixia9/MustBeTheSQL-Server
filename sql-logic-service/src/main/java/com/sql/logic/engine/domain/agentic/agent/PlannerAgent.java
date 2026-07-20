@@ -36,10 +36,12 @@ public class PlannerAgent extends ConversableAgent {
                     {agents}
 
                     请根据用户输入，生成 JSON 格式的执行计划。
-                    输出格式必须为 JSON 数组：
-                    [{"serial_number": 1, "agent": "AgentName", "content": "任务描述", "rely": ""}]
+                    输出格式必须为 JSON 数组，每个元素包含 serial_number, agent, content, rely 字段：
+                    [{"serial_number": 1, "agent": "DataScientist", "content": "任务描述", "rely": ""}]
 
-                    其中 rely 字段填写依赖的步骤编号（逗号分隔），无依赖则为空字符串。
+                    rely 字段填写依赖的步骤编号（逗号分隔），无依赖则为空字符串。
+                    重要：即使信息有限，也必须至少生成一个步骤。如果用户想分析数据，
+                    至少生成一个 DataScientist 步骤来查询数据库。
                     """)
             .build();
 

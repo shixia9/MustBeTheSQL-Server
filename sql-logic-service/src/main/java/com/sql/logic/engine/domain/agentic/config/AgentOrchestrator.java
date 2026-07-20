@@ -43,6 +43,7 @@ public class AgentOrchestrator {
             strategies.put(SqlAgentSpec.StateKey.SQL_ERROR, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.REPORT_RESULT, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.PLAN, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.SCHEMA_DDL, new ReplaceStrategy());
             return strategies;
         };
 
