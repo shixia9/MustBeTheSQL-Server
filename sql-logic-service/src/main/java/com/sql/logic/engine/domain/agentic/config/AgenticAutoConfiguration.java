@@ -177,7 +177,7 @@ public class AgenticAutoConfiguration {
         agent.bind(agentMemory);
         agent.bind(List.of(sqlGenerationAction, sqlExecutionAction, sqlFixAction));
         agent.bind(profileRenderer);
-        agent.bind(llmClientManager.getClient(0L));
+        agent.bind(llmClientManager);
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
         agent.build();
@@ -192,7 +192,7 @@ public class AgenticAutoConfiguration {
         agent.bind(agentMemory);
         agent.bind(List.of(planAction));
         agent.bind(profileRenderer);
-        agent.bind(llmClientManager.getClient(0L));
+        agent.bind(llmClientManager);
         agent.build();
         return agent;
     }
@@ -210,7 +210,7 @@ public class AgenticAutoConfiguration {
         agent.bind(agentMemory);
         agent.bind(List.of(genAction, execAction, analyzeAction));
         agent.bind(profileRenderer);
-        agent.bind(llmClientManager.getClient(0L));
+        agent.bind(llmClientManager);
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
         agent.build();
@@ -226,7 +226,7 @@ public class AgenticAutoConfiguration {
         agent.bind(agentMemory);
         agent.bind(List.of(dashboardAction));
         agent.bind(profileRenderer);
-        agent.bind(llmClientManager.getClient(0L));
+        agent.bind(llmClientManager);
         agent.build();
         return agent;
     }
@@ -241,7 +241,7 @@ public class AgenticAutoConfiguration {
         agent.bind(agentMemory);
         agent.bind(List.of(mcpToolAction, mcpToolFixAction));
         agent.bind(profileRenderer);
-        agent.bind(llmClientManager.getClient(0L));
+        agent.bind(llmClientManager);
         agent.build();
         return agent;
     }
@@ -263,7 +263,7 @@ public class AgenticAutoConfiguration {
         agent.setDashboardAgent(dashboardAgent);
         agent.bind(agentMemory);
         agent.bind(profileRenderer);
-        agent.bind(llmClientManager.getClient(0L));
+        agent.bind(llmClientManager);
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
         // Hire worker agents

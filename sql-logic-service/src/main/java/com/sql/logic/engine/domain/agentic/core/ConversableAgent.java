@@ -2,6 +2,7 @@ package com.sql.logic.engine.domain.agentic.core;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.domain.agentic.bridge.AgentStateBridge;
 import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
@@ -38,6 +39,7 @@ public abstract class ConversableAgent implements Agent {
     protected AgentResource resource;
     protected List<AgentResource> resources = new ArrayList<>();
     protected LLMStrategy llmStrategy;
+    protected LlmClientManager llmClientManager;
     protected List<AgentAction> actions = new ArrayList<>();
     protected ProfileRenderer profileRenderer = new ProfileRenderer();
 
@@ -67,6 +69,17 @@ public abstract class ConversableAgent implements Agent {
 
     public ConversableAgent bind(LLMStrategy llmStrategy) {
         this.llmStrategy = llmStrategy;
+        return this;
+    }
+
+    /**
+     * Bind a {@link LlmClientManager} for lazy LLM strategy resolution.
+     * When set, {@link #thinking(List)} resolves the strategy at call time
+     * via {@code llmClientManager.getClient(0L)} if no direct strategy is bound.
+     * This avoids bean-initialization ordering issues.
+     */
+    public ConversableAgent bind(LlmClientManager llmClientManager) {
+        this.llmClientManager = llmClientManager;
         return this;
     }
 
@@ -351,11 +364,24 @@ public abstract class ConversableAgent implements Agent {
     }
 
     protected String thinking(List<AgentMessage> messages) {
-        if (llmStrategy == null) {
-            throw new IllegalStateException("No LLMStrategy bound to agent " + name());
+        LLMStrategy strategy = resolveLlmStrategy();
+        if (strategy == null) {
+            throw new IllegalStateException("No LLMStrategy bound to agent " + name()
+                    + " — bind either a direct LLMStrategy or a LlmClientManager for lazy resolution");
         }
         String prompt = messagesToPrompt(messages);
-        return llmStrategy.generateSql(prompt, null);
+        return strategy.chat(prompt);
+    }
+
+    /**
+     * Resolve the effective LLM strategy: direct binding takes precedence,
+     * otherwise fall back to lazy resolution via {@link LlmClientManager#getClient(Long)}
+     * with the system default key (0L).
+     */
+    private LLMStrategy resolveLlmStrategy() {
+        if (llmStrategy != null) return llmStrategy;
+        if (llmClientManager != null) return llmClientManager.getClient(0L);
+        return null;
     }
 
     protected ReviewInfo review(String llmOutput) {
