@@ -203,9 +203,19 @@ public class AgenticRunner {
             return "";
         }
         try {
+            // Auto-discover schema if not specified
+            String effectiveSchema = schemaName;
+            if (effectiveSchema == null || effectiveSchema.isBlank()) {
+                List<String> schemas = databaseMetaDataService.getSchemas(connectionId);
+                if (!schemas.isEmpty()) {
+                    effectiveSchema = schemas.get(0);
+                    log.info("[AgenticRunner] Auto-discovered schema '{}' for connectionId={}", effectiveSchema, connectionId);
+                }
+            }
+
             List<String> tables = (tableNames != null && !tableNames.isEmpty())
                     ? tableNames
-                    : databaseMetaDataService.getTableNames(connectionId, schemaName);
+                    : databaseMetaDataService.getTableNames(connectionId, effectiveSchema);
 
             if (tables.isEmpty()) {
                 log.warn("[AgenticRunner] No tables found for connectionId={}", connectionId);
@@ -216,7 +226,7 @@ public class AgenticRunner {
             sb.append("Database connection #").append(connectionId).append(":\n\n");
             for (String table : tables) {
                 try {
-                    String ddl = databaseMetaDataService.getTableDDL(connectionId, schemaName, table);
+                    String ddl = databaseMetaDataService.getTableDDL(connectionId, effectiveSchema, table);
                     if (ddl != null && !ddl.isBlank()) {
                         sb.append(ddl).append("\n");
                     }

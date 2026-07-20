@@ -49,8 +49,8 @@ public class SqlGenerationAction implements AgentAction {
                 vars.put("dialect", context.context().getOrDefault("dialect", "MySQL"));
                 vars.put("question", context.content());
                 vars.put("schema_info", context.context().getOrDefault("schemaInfo", ""));
-                vars.put("evidence", context.context().getOrDefault("evidence", ""));
-                vars.put("execution_description", context.context().getOrDefault("executionDescription", ""));
+                vars.put("evidence", context.context().getOrDefault("evidence", "无"));
+                vars.put("execution_description", context.context().getOrDefault("executionDescription", context.content()));
 
                 // Conversation history
                 String conversationHistory = (String) context.context().getOrDefault("conversationHistory", "");
@@ -66,6 +66,9 @@ public class SqlGenerationAction implements AgentAction {
                 String agentSystemPrompt = (String) context.context().getOrDefault("agentSystemPrompt", "");
                 vars.put("system_prompt_section",
                         agentSystemPrompt.isEmpty() ? "" : "## 系统提示\n" + agentSystemPrompt);
+
+                // Execution description section (template slot — may be empty)
+                vars.put("execution_description_section", "");
 
                 // Resource context
                 if (resource != null) {

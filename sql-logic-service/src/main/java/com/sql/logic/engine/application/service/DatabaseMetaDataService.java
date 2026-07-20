@@ -40,6 +40,20 @@ public class DatabaseMetaDataService {
         return getTableNames(connectionId, null);
     }
 
+    /**
+     * List available database/schema names for the given connection.
+     */
+    public List<String> getSchemas(Long connectionId) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf == null) throw new IllegalArgumentException("Connection not found");
+        try (Connection conn = databaseAppService.getConnection(connectionId)) {
+            MetaData metaData = dialectFactory.getMetaData(conf.getDbType());
+            return metaData.schemas(conn).stream().map(SchemaDTO::getName).collect(Collectors.toList());
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to fetch schemas: " + e.getMessage(), e);
+        }
+    }
+
     public List<String> getTableNames(Long connectionId, String schemaName) {
         DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
         if (conf == null) throw new IllegalArgumentException("Connection not found");

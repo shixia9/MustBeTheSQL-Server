@@ -48,6 +48,19 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     private AgentEventSinkRegistry eventSinkRegistry;
     private AgentSseCodec codec;
 
+    // Agent name → SSE node name mapping (CamelCase → UPPER_SNAKE)
+    private static final Map<String, String> NODE_NAME_MAP = Map.of(
+            "DataScientist", "DATA_SCIENTIST",
+            "CodeAssistant", "CODE_ASSISTANT",
+            "DashboardAssistant", "DASHBOARD",
+            "ToolAssistant", "TOOL_ASSISTANT",
+            "Planner", "PLANNER"
+    );
+
+    private static String toNodeName(String agentName) {
+        return NODE_NAME_MAP.getOrDefault(agentName, agentName.toUpperCase());
+    }
+
     public ManagerAgent() {
         this.profile = DEFAULT_PROFILE;
     }
@@ -154,7 +167,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                         .build();
 
                 // Emit STARTED for the worker agent
-                String speakerNodeName = speaker.name().toUpperCase();
+                String speakerNodeName = toNodeName(speaker.name());
                 emitSse(threadId, speakerNodeName, "STARTED", null);
 
                 // Send to speaker and get reply
