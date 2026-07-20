@@ -171,11 +171,13 @@ public class AgenticAutoConfiguration {
             SqlFixAction sqlFixAction,
             ProfileRenderer profileRenderer,
             ContextManager contextManager,
-            TaskProgressPersistenceService persistenceService) {
+            TaskProgressPersistenceService persistenceService,
+            LlmClientManager llmClientManager) {
         DataScientistAgent agent = new DataScientistAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(sqlGenerationAction, sqlExecutionAction, sqlFixAction));
         agent.bind(profileRenderer);
+        agent.bind(llmClientManager.getClient(0L));
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
         agent.build();
@@ -184,11 +186,13 @@ public class AgenticAutoConfiguration {
 
     @Bean
     public PlannerAgent plannerAgent(PlanAction planAction, AgentMemory agentMemory,
-                                      ProfileRenderer profileRenderer) {
+                                      ProfileRenderer profileRenderer,
+                                      LlmClientManager llmClientManager) {
         PlannerAgent agent = new PlannerAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(planAction));
         agent.bind(profileRenderer);
+        agent.bind(llmClientManager.getClient(0L));
         agent.build();
         return agent;
     }
@@ -200,11 +204,13 @@ public class AgenticAutoConfiguration {
                                                   PythonAnalyzeAction analyzeAction,
                                                   ProfileRenderer profileRenderer,
                                                   ContextManager contextManager,
-                                                  TaskProgressPersistenceService persistenceService) {
+                                                  TaskProgressPersistenceService persistenceService,
+                                                  LlmClientManager llmClientManager) {
         CodeAssistantAgent agent = new CodeAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(genAction, execAction, analyzeAction));
         agent.bind(profileRenderer);
+        agent.bind(llmClientManager.getClient(0L));
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
         agent.build();
@@ -214,11 +220,13 @@ public class AgenticAutoConfiguration {
     @Bean
     public DashboardAssistantAgent dashboardAssistantAgent(AgentMemory agentMemory,
                                                             DashboardAction dashboardAction,
-                                                            ProfileRenderer profileRenderer) {
+                                                            ProfileRenderer profileRenderer,
+                                                            LlmClientManager llmClientManager) {
         DashboardAssistantAgent agent = new DashboardAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(dashboardAction));
         agent.bind(profileRenderer);
+        agent.bind(llmClientManager.getClient(0L));
         agent.build();
         return agent;
     }
@@ -227,11 +235,13 @@ public class AgenticAutoConfiguration {
     public ToolAssistantAgent toolAssistantAgent(AgentMemory agentMemory,
                                                   McpToolAction mcpToolAction,
                                                   McpToolFixAction mcpToolFixAction,
-                                                  ProfileRenderer profileRenderer) {
+                                                  ProfileRenderer profileRenderer,
+                                                  LlmClientManager llmClientManager) {
         ToolAssistantAgent agent = new ToolAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(mcpToolAction, mcpToolFixAction));
         agent.bind(profileRenderer);
+        agent.bind(llmClientManager.getClient(0L));
         agent.build();
         return agent;
     }
@@ -245,13 +255,15 @@ public class AgenticAutoConfiguration {
                                       ToolAssistantAgent toolAssistantAgent,
                                       ProfileRenderer profileRenderer,
                                       ContextManager contextManager,
-                                      TaskProgressPersistenceService persistenceService) {
+                                      TaskProgressPersistenceService persistenceService,
+                                      LlmClientManager llmClientManager) {
         ManagerAgent agent = new ManagerAgent();
         agent.setPlanMemory(planMemory);
         agent.setPlannerAgent(plannerAgent);
         agent.setDashboardAgent(dashboardAgent);
         agent.bind(agentMemory);
         agent.bind(profileRenderer);
+        agent.bind(llmClientManager.getClient(0L));
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
         // Hire worker agents
