@@ -3,6 +3,8 @@ package com.sql.logic.engine.domain.agentic.util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.knuddels.jtokkit.api.EncodingType;
+
 /**
  * Token counting utility for context budget management.
  * <p>
@@ -90,11 +92,11 @@ public final class TokenCounter {
         private static Object resolveEncodingType(Class<?> encodingTypeClass, String model) throws Exception {
             // Map common model names to JTokkit encoding types
             String typeName = switch (model.toLowerCase()) {
-                case "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-4o-mini" -> "CL100K_BASE";
-                case "gpt-3.5-turbo", "gpt-3.5-turbo-16k" -> "CL100K_BASE";
-                case "text-davinci-003", "text-davinci-002" -> "P50K_BASE";
-                case "text-embedding-ada-002" -> "CL100K_BASE";
-                default -> "CL100K_BASE";
+                case "gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-4o-mini" -> EncodingType.CL100K_BASE.name();
+                case "gpt-3.5-turbo", "gpt-3.5-turbo-16k" -> EncodingType.CL100K_BASE.name();
+                case "text-davinci-003", "text-davinci-002" -> EncodingType.P50K_BASE.name();
+                case "text-embedding-ada-002" -> EncodingType.CL100K_BASE.name();
+                default -> EncodingType.CL100K_BASE.name();
             };
             return encodingTypeClass.getField(typeName).get(null);
         }

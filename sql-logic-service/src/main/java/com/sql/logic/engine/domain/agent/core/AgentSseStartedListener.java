@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Graph lifecycle listener that emits a STARTED SSE event onto the run's
@@ -36,13 +37,16 @@ public class AgentSseStartedListener implements GraphLifecycleListener {
 
     private static final Logger log = LoggerFactory.getLogger(AgentSseStartedListener.class);
 
-    private static final java.util.Set<String> KNOWN_NODES = java.util.Set.of(
+    private static final Set<String> KNOWN_NODES = Set.of(
             "MEMORY_RECALL",
             "EVIDENCE_RECALL", "SCHEMA_LINKING", "FEASIBILITY_ASSESSMENT", "PLANNER",
             "HITL_GATE", "HITL", "PLAN_DISPATCH",
             "SQL_GENERATION", "SQL_EXECUTION", "SQL_FIXER",
             "PYTHON_GENERATION", "PYTHON_EXECUTION", "PYTHON_ANALYSIS",
-            "REPORT"
+            "REPORT",
+            // 6-Agent Multi-Agent system nodes
+            "MANAGER", "DATA_SCIENTIST", "CODE_ASSISTANT",
+            "DASHBOARD", "TOOL_ASSISTANT"
     );
 
     private final NodeStartedSinkRegistry sinkRegistry;
@@ -76,11 +80,11 @@ public class AgentSseStartedListener implements GraphLifecycleListener {
             if (sink == null) return;
 
             // Build extra context for looped nodes so the frontend can distinguish visits
-            java.util.Map<String, Object> extra = java.util.Map.of();
+            Map<String, Object> extra = Map.of();
             if (SqlAgentSpec.Node.PLAN_DISPATCH.equals(name) && state != null) {
                 Object step = state.get(SqlAgentSpec.StateKey.CURRENT_STEP);
                 if (step != null) {
-                    extra = java.util.Map.of("currentStep", step);
+                    extra = Map.of("currentStep", step);
                 }
             }
 

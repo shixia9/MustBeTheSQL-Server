@@ -23,6 +23,7 @@ import java.util.Map;
  */
 public class AgentOrchestrator {
 
+    private final StateGraph stateGraph;
     private final CompiledGraph compiledGraph;
 
     public AgentOrchestrator(
@@ -41,6 +42,7 @@ public class AgentOrchestrator {
             strategies.put(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.SQL_ERROR, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.REPORT_RESULT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.PLAN, new ReplaceStrategy());
             return strategies;
         };
 
@@ -80,10 +82,20 @@ public class AgentOrchestrator {
         graph.addEdge("TOOL_ASSISTANT", "MANAGER");
         graph.addEdge("DASHBOARD", StateGraph.END);
 
+        this.stateGraph = graph;
         this.compiledGraph = graph.compile(CompileConfig.builder().build());
     }
 
     public CompiledGraph getCompiledGraph() {
         return compiledGraph;
+    }
+
+    /**
+     * Compile the underlying StateGraph with a custom {@link CompileConfig}.
+     * Enables callers (e.g. {@code AgenticRunner}) to attach lifecycle listeners,
+     * saver config, etc. without duplicating graph construction.
+     */
+    public CompiledGraph compile(CompileConfig config) throws GraphStateException {
+        return stateGraph.compile(config);
     }
 }
