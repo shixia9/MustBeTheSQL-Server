@@ -57,7 +57,7 @@ public class SqlFixAction implements AgentAction {
                         SqlAgentSpec.PromptName.SQL_ERROR_FIXER, vars
                 );
 
-                String rawSql = ca.getLlmStrategy().generateSql(renderedPrompt, null);
+                String rawSql = ca.resolveLlmStrategy().generateSql(renderedPrompt, null);
                 String fixedSql = MarkdownParserUtil.extractRawText(rawSql);
 
                 return ActionOutput.success(fixedSql, Map.of(

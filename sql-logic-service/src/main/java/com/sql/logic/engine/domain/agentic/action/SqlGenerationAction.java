@@ -78,7 +78,7 @@ public class SqlGenerationAction implements AgentAction {
                         SqlAgentSpec.PromptName.NEW_SQL_GENERATE, vars
                 );
 
-                String rawSql = ca.getLlmStrategy().generateSql(renderedPrompt, null);
+                String rawSql = ca.resolveLlmStrategy().generateSql(renderedPrompt, null);
                 String cleanSql = MarkdownParserUtil.extractRawText(rawSql);
 
                 return ActionOutput.success(cleanSql, Map.of("sql", cleanSql));

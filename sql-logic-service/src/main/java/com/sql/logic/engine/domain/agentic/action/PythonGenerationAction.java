@@ -37,7 +37,7 @@ public class PythonGenerationAction implements AgentAction {
                 vars.put("data_summary", context.context().getOrDefault("dataSummary", ""));
 
                 String prompt = promptManager.render("python-generator", vars);
-                String rawCode = ca.getLlmStrategy().generateSql(prompt, null);
+                String rawCode = ca.resolveLlmStrategy().generateSql(prompt, null);
                 String code = MarkdownParserUtil.extractRawText(rawCode);
 
                 return ActionOutput.success(code, Map.of("code", code));

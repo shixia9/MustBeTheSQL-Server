@@ -36,7 +36,7 @@ public class PythonAnalyzeAction implements AgentAction {
                 vars.put("python_result", context.content());
 
                 String prompt = promptManager.render("python-analyze", vars);
-                String analysis = ca.getLlmStrategy().generateSql(prompt, null);
+                String analysis = ca.resolveLlmStrategy().generateSql(prompt, null);
 
                 return ActionOutput.success(analysis, Map.of("analysis", analysis));
             } catch (Exception e) {

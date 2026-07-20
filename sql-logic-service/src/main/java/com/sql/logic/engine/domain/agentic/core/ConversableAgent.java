@@ -397,7 +397,7 @@ public abstract class ConversableAgent implements Agent {
      * then request-level llmConfigId, then system default (key 0L),
      * then any available strategy as last resort.
      */
-    private LLMStrategy resolveLlmStrategy() {
+    public LLMStrategy resolveLlmStrategy() {
         if (llmStrategy != null) {
             return llmStrategy;
         }

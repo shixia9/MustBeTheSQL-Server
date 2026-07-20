@@ -52,7 +52,7 @@ public class DashboardAction implements AgentAction {
 
                 String templateName = "report-generator-plain";
                 String prompt = promptManager.render(templateName, vars);
-                String report = ca.getLlmStrategy().generateSql(prompt, null);
+                String report = ca.resolveLlmStrategy().generateSql(prompt, null);
 
                 return ActionOutput.success(report, Map.of("report", report));
             } catch (Exception e) {

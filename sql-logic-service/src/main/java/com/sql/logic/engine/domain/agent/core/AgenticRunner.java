@@ -38,6 +38,7 @@ public class AgenticRunner {
     private final HitlSessionRegistry hitlSessionRegistry;
     private final TraceContextRegistry traceContextRegistry;
     private final NodeStartedSinkRegistry sinkRegistry;
+    private final AgentEventSinkRegistry eventSinkRegistry;
     private final AgentSseCodec codec;
     private final DatabaseMetaDataService databaseMetaDataService;
 
@@ -47,6 +48,7 @@ public class AgenticRunner {
                          TraceContextRegistry traceContextRegistry,
                          AgentSseStartedListener sseStartedListener,
                          NodeStartedSinkRegistry sinkRegistry,
+                         AgentEventSinkRegistry eventSinkRegistry,
                          AgentSseCodec codec,
                          DatabaseMetaDataService databaseMetaDataService) {
         this.orchestrator = orchestrator;
@@ -54,6 +56,7 @@ public class AgenticRunner {
         this.hitlSessionRegistry = hitlSessionRegistry;
         this.traceContextRegistry = traceContextRegistry;
         this.sinkRegistry = sinkRegistry;
+        this.eventSinkRegistry = eventSinkRegistry;
         this.codec = codec;
         this.databaseMetaDataService = databaseMetaDataService;
         try {
@@ -116,6 +119,7 @@ public class AgenticRunner {
         initialState.put(SqlAgentSpec.StateKey.TRACE_CONTEXT, traceContext);
 
         Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
+        Sinks.Many<String> customSink = eventSinkRegistry.register(threadId);
         Flux<NodeOutput> graphFlux = compiledGraph.stream(initialState, rc)
                 .subscribeOn(Schedulers.boundedElastic())
                 .doOnNext(output -> log.info("[AgenticRunner] Agent node completed: {}", output.node()))
@@ -126,7 +130,7 @@ public class AgenticRunner {
         context.setTraceContext(traceContext);
         context.setConversationId(conversationId);
 
-        Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, threadId, context);
+        Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, customSink, threadId, context);
         return new AgentRunHandle(threadId, context, rc, graphFlux, unified);
     }
 
@@ -150,6 +154,7 @@ public class AgenticRunner {
 
         RunnableConfig rc = context.getRunnableConfig();
         Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
+        Sinks.Many<String> customSink = eventSinkRegistry.register(threadId);
         Flux<NodeOutput> graphFlux = compiledGraph.stream(null, rc)
                 .subscribeOn(Schedulers.boundedElastic())
                 .doOnNext(output -> log.info("[AgenticRunner] Resumed agent node completed (threadId={}): {}", threadId, output.node()))
@@ -159,17 +164,24 @@ public class AgenticRunner {
                 })
                 .doOnError(e -> log.error("[AgenticRunner] Resume stream error (threadId={})", threadId, e));
 
-        Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, threadId, context);
+        Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, customSink, threadId, context);
         return new AgentRunHandle(threadId, context, rc, graphFlux, unified);
     }
 
     private Flux<String> buildUnifiedSse(Flux<NodeOutput> graphFlux, Sinks.Many<String> startedSink,
+                                         Sinks.Many<String> customSink,
                                          String threadId, AgentRunContext runContext) {
         Flux<String> finished = graphFlux.map(o -> codec.nodeOutputToJson(o, runContext))
                 .filter(s -> !s.isEmpty())
-                .doFinally(sig -> startedSink.tryEmitComplete());
-        return Flux.merge(finished, startedSink.asFlux())
-                .doFinally(sig -> sinkRegistry.remove(threadId));
+                .doFinally(sig -> {
+                    startedSink.tryEmitComplete();
+                    customSink.tryEmitComplete();
+                });
+        return Flux.merge(finished, startedSink.asFlux(), customSink.asFlux())
+                .doFinally(sig -> {
+                    sinkRegistry.remove(threadId);
+                    eventSinkRegistry.remove(threadId);
+                });
     }
 
     public CompiledGraph getCompiledGraph() {

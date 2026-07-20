@@ -5,6 +5,8 @@ import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.python.SimplePythonExecutor;
 import com.sql.logic.engine.domain.agent.service.SqlExecutionService;
+import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
+import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agentic.action.*;
 import com.sql.logic.engine.domain.agentic.agent.*;
@@ -256,11 +258,15 @@ public class AgenticAutoConfiguration {
                                       ProfileRenderer profileRenderer,
                                       ContextManager contextManager,
                                       TaskProgressPersistenceService persistenceService,
-                                      LlmClientManager llmClientManager) {
+                                      LlmClientManager llmClientManager,
+                                      AgentEventSinkRegistry eventSinkRegistry,
+                                      AgentSseCodec agentSseCodec) {
         ManagerAgent agent = new ManagerAgent();
         agent.setPlanMemory(planMemory);
         agent.setPlannerAgent(plannerAgent);
         agent.setDashboardAgent(dashboardAgent);
+        agent.setEventSinkRegistry(eventSinkRegistry);
+        agent.setCodec(agentSseCodec);
         agent.bind(agentMemory);
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);

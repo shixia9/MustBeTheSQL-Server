@@ -1,11 +1,14 @@
 package com.sql.logic.engine.domain.agentic.agent;
 
+import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
+import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
 import com.sql.logic.engine.domain.agentic.core.*;
 import com.sql.logic.engine.domain.agentic.plan.PlanMemory;
 import com.sql.logic.engine.domain.agentic.plan.PlanStep;
 import com.sql.logic.engine.domain.agentic.plan.PlanStatus;
 import com.sql.logic.engine.domain.agentic.profile.ProfileConfig;
 import com.sql.logic.engine.domain.agentic.team.TeamMixin;
+import reactor.core.publisher.Sinks;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -41,6 +44,10 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     private String pendingThreadId;
     private CompletableFuture<Boolean> hitlFuture;
 
+    // SSE event emission for sub-agent steps
+    private AgentEventSinkRegistry eventSinkRegistry;
+    private AgentSseCodec codec;
+
     public ManagerAgent() {
         this.profile = DEFAULT_PROFILE;
     }
@@ -49,6 +56,8 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     public void setPlannerAgent(PlannerAgent plannerAgent) { this.plannerAgent = plannerAgent; }
     public void setDashboardAgent(DashboardAssistantAgent dashboardAgent) { this.dashboardAgent = dashboardAgent; }
     public void setHitlEnabled(boolean hitlEnabled) { this.hitlEnabled = hitlEnabled; }
+    public void setEventSinkRegistry(AgentEventSinkRegistry registry) { this.eventSinkRegistry = registry; }
+    public void setCodec(AgentSseCodec codec) { this.codec = codec; }
 
     @Override
     public List<Agent> getAgents() { return agents; }
@@ -70,21 +79,39 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
             for (int round = 0; round < maxRound; round++) {
                 List<PlanStep> todoPlans = planMemory.getTodoPlans(threadId);
+                List<PlanStep> allPlans = planMemory.getByConvId(threadId);
+
+                // Check if all plans are completed
+                boolean allDone = !allPlans.isEmpty()
+                        && allPlans.stream().allMatch(p -> p.getStatus() == PlanStatus.COMPLETED);
+                if (allDone) {
+                    break;
+                }
 
                 // No plans → invoke PlannerAgent
                 if (todoPlans.isEmpty()) {
                     if (round > 3) {
                         return ActionOutput.fail("重试 3 次仍无法生成有效计划");
                     }
+                    emitSse(threadId, "PLANNER", "STARTED", null);
+
                     AgentMessage planInput = AgentMessage.builder()
                             .content(userInput)
                             .currentGoal("生成执行计划")
                             .putContext("threadId", threadId)
                             .putContext("agentDescriptions", buildAgentDescriptions())
+                            .putContext("llmConfigId", message.context().get("llmConfigId"))
                             .rounds(message.rounds() + 1)
                             .build();
                     AgentMessage planResult = plannerAgent.generateReply(
                             planInput, this, null, null).join();
+
+                    Map<String, Object> planData = new LinkedHashMap<>();
+                    planData.put("agentSuccess", planResult.success());
+                    if (planResult.actionReport() != null) {
+                        planData.put("content", planResult.actionReport().content());
+                    }
+                    emitSse(threadId, "PLANNER", "FINISHED", planData);
 
                     if (!planResult.success()) {
                         return ActionOutput.fail("PlannerAgent 计划生成失败: " + planResult.content());
@@ -113,7 +140,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 // Build rely messages from dependency steps
                 List<AgentMessage> relyMessages = processRelyMessages(threadId, currentPlan);
 
-                // Build goal message
+                // Build goal message with full context
                 AgentMessage goalMessage = AgentMessage.builder()
                         .content(currentPlan.getContent())
                         .currentGoal(currentPlan.getContent())
@@ -122,14 +149,24 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                         .putContext("userId", message.context().get("userId"))
                         .putContext("connectionId", message.context().get("connectionId"))
                         .putContext("llmConfigId", message.context().get("llmConfigId"))
+                        .putContext("schemaDdl", message.context().get("schemaDdl"))
                         .rounds(message.rounds() + 1)
                         .build();
+
+                // Emit STARTED for the worker agent
+                String speakerNodeName = speaker.name().toUpperCase();
+                emitSse(threadId, speakerNodeName, "STARTED", null);
 
                 // Send to speaker and get reply
                 try {
                     send(goalMessage, speaker).join();
                     AgentMessage reply = speaker.generateReply(
                             goalMessage, this, relyMessages, null).join();
+
+                    // Emit FINISHED with extracted data
+                    Map<String, Object> eventData = extractSubAgentData(speaker, reply);
+                    eventData.put("agentSuccess", reply.success());
+                    emitSse(threadId, speakerNodeName, "FINISHED", eventData);
 
                     if (reply.success()) {
                         String result = reply.actionReport() != null
@@ -161,19 +198,78 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
             // All steps complete — invoke DashboardAssistantAgent
             if (dashboardAgent != null && !allStepResults.isEmpty()) {
+                emitSse(threadId, "DASHBOARD", "STARTED", null);
+
                 AgentMessage summaryMessage = AgentMessage.builder()
                         .content("请汇总以下分析结果生成报告")
                         .putContext("stepResults", allStepResults)
                         .putContext("question", userInput)
+                        .putContext("llmConfigId", message.context().get("llmConfigId"))
                         .rounds(message.rounds() + 1)
                         .build();
                 AgentMessage report = dashboardAgent.generateReply(
                         summaryMessage, this, null, null).join();
+
+                Map<String, Object> reportData = new LinkedHashMap<>();
+                reportData.put("report", report.content());
+                reportData.put("agentSuccess", report.success());
+                emitSse(threadId, "DASHBOARD", "FINISHED", reportData);
+
                 return ActionOutput.success(report.content());
             }
 
             return ActionOutput.success("所有步骤已完成", Map.of("stepResults", allStepResults));
         });
+    }
+
+    // ========================================================================
+    //  SSE event emission
+    // ========================================================================
+
+    private void emitSse(String threadId, String nodeName, String outputType,
+                         Map<String, Object> data) {
+        if (eventSinkRegistry == null || codec == null) return;
+        Sinks.Many<String> sink = eventSinkRegistry.get(threadId);
+        if (sink == null) return;
+        try {
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("nodeName", nodeName);
+            event.put("outputType", outputType);
+            event.put("messageType", codec.messageTypeForNode(nodeName));
+            event.put("sequenceNo", 0);
+            if (data != null && !data.isEmpty()) {
+                event.put("data", data);
+            }
+            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(event);
+            sink.tryEmitNext(json);
+        } catch (Exception ignored) {
+            // Best-effort SSE emission
+        }
+    }
+
+    private Map<String, Object> extractSubAgentData(Agent speaker, AgentMessage reply) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        String name = speaker.name();
+        if (reply.actionReport() != null) {
+            ActionOutput ao = reply.actionReport();
+            if (ao.data() != null) {
+                data.putAll(ao.data());
+            }
+            if (ao.content() != null && !ao.content().isBlank()) {
+                if ("DataScientist".equals(name)) {
+                    data.putIfAbsent("sql", ao.content());
+                } else if ("CodeAssistant".equals(name)) {
+                    data.putIfAbsent("pythonCode", ao.content());
+                }
+            }
+            if (!ao.isExeSuccess()) {
+                data.put("errorMsg", ao.content());
+            }
+        }
+        if (!reply.success()) {
+            data.putIfAbsent("errorMsg", reply.content());
+        }
+        return data;
     }
 
     // ========================================================================
@@ -211,7 +307,6 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
         for (Agent a : agents) {
             descs.add(a.name() + " (" + a.role() + "): " + a.goal());
         }
-        // Also describe the planner's own available agents for context
         descs.add("DataScientist (数据科学家): 生成并执行 SQL 查询");
         descs.add("CodeAssistant (代码工程师): 执行 Python 代码进行数据分析");
         descs.add("ToolAssistant (工具专家): 调用 MCP 外部工具");
@@ -225,8 +320,6 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
     @Override
     protected String thinking(List<AgentMessage> messages) {
-        // ManagerAgent doesn't need LLM — it orchestrates other agents.
-        // Return a dummy ack so the pipeline proceeds to act().
         return "ORCHESTRATE";
     }
 
@@ -236,7 +329,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
     @Override
     protected String buildSystemPrompt(String observation, String memoryContext,
-                                        String resourceContext, Map<String, Object> context) {
+                                       String resourceContext, Map<String, Object> context) {
         StringBuilder sb = new StringBuilder();
         sb.append(renderProfilePrompt());
         sb.append("\n");
@@ -248,7 +341,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
     @Override
     protected String buildUserPrompt(String observation, String memoryContext,
-                                      String resourceContext, Map<String, Object> context) {
+                                     String resourceContext, Map<String, Object> context) {
         return observation;
     }
 }
