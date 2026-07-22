@@ -26,7 +26,7 @@ Schema召回: {schema_summary}
 业务知识: {evidence_summary}
 
 请只输出一个JSON对象，格式如下：
-{
+\{
   "complexity": "SIMPLE" | "COMPLEX" | "CLARIFY",
   "reason": "简短原因说明"
-}
+\}

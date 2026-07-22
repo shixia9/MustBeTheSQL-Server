@@ -396,7 +396,8 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                     "No complexity router available", null);
         }
         try {
-            String userQuery = message.content();
+            String userQuery = (String) message.context().getOrDefault(
+                    "originalUserInput", message.content());
             String schemaSummary = (String) message.context().getOrDefault("schemaSummary", "");
             String evidenceSummary = (String) message.context().getOrDefault("evidence", "");
             Long llmConfigId = null;
