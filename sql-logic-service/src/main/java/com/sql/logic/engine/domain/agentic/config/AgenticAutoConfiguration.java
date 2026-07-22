@@ -18,6 +18,8 @@ import com.sql.logic.engine.domain.agentic.plan.InMemoryPlanMemory;
 import com.sql.logic.engine.domain.agentic.plan.PlanMemory;
 import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
 import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
+import com.sql.logic.engine.domain.agentic.routing.ComplexityRouter;
+import com.sql.logic.engine.domain.agentic.skill.SkillRegistry;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
 import com.sql.logic.engine.infrastructure.dao.TaskProgressSnapshotDao;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -49,9 +51,6 @@ public class AgenticAutoConfiguration {
         return memory;
     }
 
-    /**
-     * Legacy simple memory — kept for backward compatibility and testing.
-     */
     @Bean
     public SimpleAgentMemory simpleAgentMemory(MemoryDomainService memoryDomainService) {
         return new SimpleAgentMemory(memoryDomainService, null, null);
@@ -75,15 +74,11 @@ public class AgenticAutoConfiguration {
         return new ContextManager(config, llmClientManager);
     }
 
-    // ======================== Phase 3: Task Progress Persistence ========================
-
     @Bean
     public TaskProgressPersistenceService taskProgressPersistenceService(
             TaskProgressSnapshotDao dao) {
         return new TaskProgressPersistenceService(dao);
     }
-
-    // ======================== Phase 3: LLM-based Memory Scoring ========================
 
     @Bean
     public LLMImportanceScorer llmImportanceScorer(LlmClientManager llmClientManager) {
@@ -95,6 +90,42 @@ public class AgenticAutoConfiguration {
         return new LLMInsightExtractor(llmClientManager);
     }
 
+    // ======================== Phase 4: Complexity Routing ========================
+
+    @Bean
+    @ConditionalOnClass(PromptManager.class)
+    public ComplexityRouter complexityRouter(LlmClientManager llmClientManager,
+                                              PromptManager promptManager) {
+        return new ComplexityRouter(llmClientManager, promptManager);
+    }
+
+    @Bean
+    public ComplexityRouter complexityRouterNoPrompt(LlmClientManager llmClientManager) {
+        return new ComplexityRouter(llmClientManager, null);
+    }
+
+    // ======================== Phase 4: Multi-Candidate SQL ========================
+
+    @Bean
+    public SqlCandidateScorer sqlCandidateScorer(LlmClientManager llmClientManager) {
+        return new SqlCandidateScorer(llmClientManager);
+    }
+
+    @Bean
+    @ConditionalOnClass(PromptManager.class)
+    public MultiCandidateSqlAction multiCandidateSqlAction(PromptManager promptManager,
+                                                            SqlCandidateScorer scorer) {
+        return new MultiCandidateSqlAction(promptManager, scorer, 3);
+    }
+
+    // ======================== Phase 4: Skill System ========================
+
+    @Bean
+    public SkillRegistry skillRegistry() {
+        SkillRegistry registry = new SkillRegistry();
+        registry.registerBuiltinSkills();
+        return registry;
+    }
 
     // ======================== Phase 1 Actions ========================
 
@@ -171,17 +202,21 @@ public class AgenticAutoConfiguration {
             SqlGenerationAction sqlGenerationAction,
             SqlExecutionAction sqlExecutionAction,
             SqlFixAction sqlFixAction,
+            MultiCandidateSqlAction multiCandidateSqlAction,
             ProfileRenderer profileRenderer,
             ContextManager contextManager,
             TaskProgressPersistenceService persistenceService,
+            SkillRegistry skillRegistry,
             LlmClientManager llmClientManager) {
         DataScientistAgent agent = new DataScientistAgent();
         agent.bind(agentMemory);
-        agent.bind(List.of(sqlGenerationAction, sqlExecutionAction, sqlFixAction));
+        agent.bind(List.of(multiCandidateSqlAction, sqlGenerationAction,
+                sqlExecutionAction, sqlFixAction));
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
+        agent.bindSkills(skillRegistry);
         agent.build();
         return agent;
     }
@@ -189,12 +224,14 @@ public class AgenticAutoConfiguration {
     @Bean
     public PlannerAgent plannerAgent(PlanAction planAction, AgentMemory agentMemory,
                                       ProfileRenderer profileRenderer,
+                                      SkillRegistry skillRegistry,
                                       LlmClientManager llmClientManager) {
         PlannerAgent agent = new PlannerAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(planAction));
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
+        agent.bindSkills(skillRegistry);
         agent.build();
         return agent;
     }
@@ -207,6 +244,7 @@ public class AgenticAutoConfiguration {
                                                   ProfileRenderer profileRenderer,
                                                   ContextManager contextManager,
                                                   TaskProgressPersistenceService persistenceService,
+                                                  SkillRegistry skillRegistry,
                                                   LlmClientManager llmClientManager) {
         CodeAssistantAgent agent = new CodeAssistantAgent();
         agent.bind(agentMemory);
@@ -215,6 +253,7 @@ public class AgenticAutoConfiguration {
         agent.bind(llmClientManager);
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
+        agent.bindSkills(skillRegistry);
         agent.build();
         return agent;
     }
@@ -223,12 +262,14 @@ public class AgenticAutoConfiguration {
     public DashboardAssistantAgent dashboardAssistantAgent(AgentMemory agentMemory,
                                                             DashboardAction dashboardAction,
                                                             ProfileRenderer profileRenderer,
+                                                            SkillRegistry skillRegistry,
                                                             LlmClientManager llmClientManager) {
         DashboardAssistantAgent agent = new DashboardAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(dashboardAction));
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
+        agent.bindSkills(skillRegistry);
         agent.build();
         return agent;
     }
@@ -238,12 +279,14 @@ public class AgenticAutoConfiguration {
                                                   McpToolAction mcpToolAction,
                                                   McpToolFixAction mcpToolFixAction,
                                                   ProfileRenderer profileRenderer,
+                                                  SkillRegistry skillRegistry,
                                                   LlmClientManager llmClientManager) {
         ToolAssistantAgent agent = new ToolAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(mcpToolAction, mcpToolFixAction));
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
+        agent.bindSkills(skillRegistry);
         agent.build();
         return agent;
     }
@@ -255,9 +298,11 @@ public class AgenticAutoConfiguration {
                                       DataScientistAgent dataScientistAgent,
                                       CodeAssistantAgent codeAssistantAgent,
                                       ToolAssistantAgent toolAssistantAgent,
+                                      ComplexityRouter complexityRouter,
                                       ProfileRenderer profileRenderer,
                                       ContextManager contextManager,
                                       TaskProgressPersistenceService persistenceService,
+                                      SkillRegistry skillRegistry,
                                       LlmClientManager llmClientManager,
                                       AgentEventSinkRegistry eventSinkRegistry,
                                       AgentSseCodec agentSseCodec) {
@@ -265,6 +310,8 @@ public class AgenticAutoConfiguration {
         agent.setPlanMemory(planMemory);
         agent.setPlannerAgent(plannerAgent);
         agent.setDashboardAgent(dashboardAgent);
+        agent.setDataScientistAgent(dataScientistAgent);
+        agent.setComplexityRouter(complexityRouter);
         agent.setEventSinkRegistry(eventSinkRegistry);
         agent.setCodec(agentSseCodec);
         agent.bind(agentMemory);
@@ -272,7 +319,7 @@ public class AgenticAutoConfiguration {
         agent.bind(llmClientManager);
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
-        // Hire worker agents
+        agent.bindSkills(skillRegistry);
         agent.hire(dataScientistAgent);
         agent.hire(codeAssistantAgent);
         agent.hire(toolAssistantAgent);

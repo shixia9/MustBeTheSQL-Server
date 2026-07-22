@@ -11,6 +11,7 @@ import com.sql.logic.engine.domain.agentic.memory.TaskProgressPersistenceService
 import com.sql.logic.engine.domain.agentic.profile.ProfileConfig;
 import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
 import com.sql.logic.engine.domain.agentic.resource.AgentResource;
+import com.sql.logic.engine.domain.agentic.skill.SkillRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,6 +50,9 @@ public abstract class ConversableAgent implements Agent {
     // Context management and persistence
     protected ContextManager contextManager;
     protected TaskProgressPersistenceService persistenceService;
+
+    // Skill system
+    protected SkillRegistry skillRegistry;
 
     // Per-request llmConfigId (set from received message context at the start of generateReply)
     private Long currentRequestLlmConfigId;
@@ -114,6 +118,14 @@ public abstract class ConversableAgent implements Agent {
      */
     public ConversableAgent bindPersistence(TaskProgressPersistenceService service) {
         this.persistenceService = service;
+        return this;
+    }
+
+    /**
+     * Bind a skill registry for skill prompt injection.
+     */
+    public ConversableAgent bindSkills(SkillRegistry registry) {
+        this.skillRegistry = registry;
         return this;
     }
 
@@ -207,6 +219,12 @@ public abstract class ConversableAgent implements Agent {
             String observation = receivedMessage != null ? receivedMessage.content() : "";
             String failReason = null;
             long startTime = System.currentTimeMillis();
+
+            // Preserve original user input in context so act() can access it
+            // even after thinking() overwrites replyMessage.content()
+            if (observation != null && !observation.isBlank()) {
+                replyMessage = replyMessage.withContext("originalUserInput", observation);
+            }
 
             // Capture request-level llmConfigId for LLM strategy resolution
             if (receivedMessage != null) {
@@ -355,6 +373,20 @@ public abstract class ConversableAgent implements Agent {
         String systemPrompt = buildSystemPrompt(observation, memoryContext, resourceContext, context);
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             messages.add(AgentMessage.system(systemPrompt));
+        }
+
+        // 3b. Skill injection
+        if (skillRegistry != null) {
+            var relevantSkills = skillRegistry.findRelevant(observation, 3);
+            if (!relevantSkills.isEmpty()) {
+                String skillPrompt = skillRegistry.buildInjectionPrompt(
+                        relevantSkills.stream().map(s -> s.getName()).toList(),
+                        context
+                );
+                if (!skillPrompt.isBlank()) {
+                    messages.add(AgentMessage.system(skillPrompt));
+                }
+            }
         }
 
         // 4. Task progress (never-lost tracker)

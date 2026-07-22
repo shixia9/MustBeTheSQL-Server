@@ -1,5 +1,7 @@
 package com.sql.logic.engine.domain.agentic.agent;
 
+import com.sql.logic.engine.domain.agentic.action.MultiCandidateSqlAction;
+import com.sql.logic.engine.domain.agentic.action.SqlCandidate;
 import com.sql.logic.engine.domain.agentic.core.*;
 import com.sql.logic.engine.domain.agentic.profile.ProfileConfig;
 
@@ -10,19 +12,21 @@ import java.util.concurrent.CompletableFuture;
 /**
  * The Data Scientist Agent — generates, executes, and fixes SQL queries.
  * <p>
- * Registered actions:
+ * Phase 4 enhancements:
+ * <ul>
+ *   <li>Multi-candidate SQL generation for MEDIUM/COMPLEX queries (via
+ *       {@link MultiCandidateSqlAction})</li>
+ *   <li>Enhanced {@code correctnessCheck()} with execution-based row-count
+ *       validation (DB-GPT pattern)</li>
+ *   <li>Simple queries use single-path {@code SqlGenerationAction}</li>
+ * </ul>
+ * <p>
+ * Registered actions (complex mode):
  * <ol>
- *   <li>{@code SqlGenerationAction} — generate SQL via LLM</li>
+ *   <li>{@code MultiCandidateSqlAction} — generate N candidates, score, select best</li>
  *   <li>{@code SqlExecutionAction} — execute SQL against the database</li>
  *   <li>{@code SqlFixAction} — fix failed SQL (invoked on retry)</li>
  * </ol>
- * <p>
- * The {@code verify()} stage checks that:
- * <ul>
- *   <li>Action output indicates success</li>
- *   <li>SQL syntax is valid (via {@code correctnessCheck()})</li>
- *   <li>Execution results are non-empty (when applicable)</li>
- * </ul>
  */
 public class DataScientistAgent extends ConversableAgent {
 
@@ -52,15 +56,31 @@ public class DataScientistAgent extends ConversableAgent {
                     """)
             .build();
 
+    /** Whether to use multi-candidate SQL generation for this request. */
+    private volatile boolean multiCandidateMode = false;
+
     public DataScientistAgent() {
         this.profile = DEFAULT_PROFILE;
     }
 
     /**
+     * Enable or disable multi-candidate SQL generation.
+     * Called by ManagerAgent based on complexity assessment.
+     */
+    public void setMultiCandidateMode(boolean enabled) {
+        this.multiCandidateMode = enabled;
+    }
+
+    public boolean isMultiCandidateMode() {
+        return multiCandidateMode;
+    }
+
+    /**
      * Select the appropriate action based on the current message context.
      * <p>
-     * If a previous action failed with a retry-able error, invoke the fix action.
-     * Otherwise, invoke the primary generation action.
+     * Multi-candidate mode: use {@code MultiCandidateSqlAction} as primary,
+     * falling back to single-path on retry with previous failure.
+     * Single-candidate mode: use the original {@code SqlGenerationAction}.
      */
     @Override
     public CompletableFuture<ActionOutput> act(AgentMessage message, Agent sender) {
@@ -70,11 +90,9 @@ public class DataScientistAgent extends ConversableAgent {
             );
         }
 
-        // If the context indicates a previous failure that needs fixing,
-        // use the fix action (typically the last action in the list)
+        // Retry with fix action on previous failure
         ActionOutput previousReport = message.actionReport();
         if (previousReport != null && !previousReport.isExeSuccess() && previousReport.hasRetry()) {
-            // Find the fix action by name
             for (AgentAction action : actions) {
                 if ("sql_fix".equals(action.name())) {
                     return action.execute(message, this);
@@ -82,12 +100,24 @@ public class DataScientistAgent extends ConversableAgent {
             }
         }
 
-        // Default: use the first action (SQL generation)
+        // Multi-candidate mode: find MultiCandidateSqlAction
+        if (multiCandidateMode) {
+            for (AgentAction action : actions) {
+                if ("multi_candidate_sql".equals(action.name())) {
+                    return action.execute(message, this);
+                }
+            }
+        }
+
+        // Default: first registered action (typically SqlGenerationAction)
         return actions.get(0).execute(message, this);
     }
 
     /**
      * Domain-specific verification for SQL generation and execution.
+     * <p>
+     * Phase 4 enhanced: includes execution-based validation when
+     * SqlExecutionService results are available in the action output.
      */
     @Override
     public CompletableFuture<VerifyResult> verify(AgentMessage message, Agent sender) {
@@ -103,34 +133,97 @@ public class DataScientistAgent extends ConversableAgent {
     /**
      * Validate the SQL result for correctness.
      * <p>
-     * Checks performed:
+     * Phase 4 enhanced checks (DB-GPT {@code correctness_check} pattern):
      * <ul>
      *   <li>SQL text is not blank</li>
      *   <li>SQL passes basic syntax validation (JSQLParser)</li>
-     *   <li>SQL is read-only (SELECT/WITH/SHOW)</li>
+     *   <li>SQL is read-only (SELECT/WITH/SHOW/EXPLAIN)</li>
+     *   <li>If execution result data contains row count, verify rows > 0</li>
+     *   <li>If execution result contains error, fail with the error</li>
      * </ul>
      */
     protected VerifyResult correctnessCheck(AgentMessage message, ActionOutput actionOutput) {
-        String sql = actionOutput.content();
+        String sql = extractSql(actionOutput);
         if (sql == null || sql.isBlank()) {
             return VerifyResult.fail("生成的 SQL 为空");
         }
 
+        // Allow EXPLAIN as a valid read-only statement
         String upper = sql.trim().toUpperCase();
         boolean looksSelect = upper.startsWith("SELECT") || upper.startsWith("WITH")
-                || upper.startsWith("SHOW ") || upper.startsWith("(");
+                || upper.startsWith("SHOW ") || upper.startsWith("EXPLAIN")
+                || upper.startsWith("DESCRIBE ") || upper.startsWith("DESC ")
+                || upper.startsWith("(");
         if (!looksSelect) {
-            return VerifyResult.fail("SQL 不是只读查询语句: " + upper.substring(0, Math.min(40, upper.length())));
+            return VerifyResult.fail("SQL 不是只读查询语句: "
+                    + upper.substring(0, Math.min(40, upper.length())));
         }
 
-        // Basic JSQLParser syntax validation
+        // JSQLParser syntax validation
         try {
             net.sf.jsqlparser.parser.CCJSqlParserUtil.parse(sql.trim());
         } catch (Exception e) {
             return VerifyResult.fail("SQL 语法错误: " + e.getMessage());
         }
 
+        // Execution-based validation (DB-GPT pattern)
+        if (actionOutput.data() != null) {
+            // Check for execution errors
+            Object errorObj = actionOutput.data().get("error");
+            if (errorObj != null && !errorObj.toString().isBlank()) {
+                return VerifyResult.fail("SQL 执行错误: " + errorObj);
+            }
+
+            // Check row count when available
+            Object rowCount = actionOutput.data().get("rowCount");
+            if (rowCount instanceof Number n) {
+                if (n.intValue() <= 0) {
+                    return VerifyResult.fail(
+                            "SQL 执行返回0行数据，可能存在过滤条件错误或字段值不匹配");
+                }
+            }
+
+            // Check rows data directly
+            Object rows = actionOutput.data().get("rows");
+            if (rows instanceof List list) {
+                if (list.isEmpty()) {
+                    return VerifyResult.fail(
+                            "SQL 执行返回空结果集，请检查过滤条件是否正确");
+                }
+            }
+        }
+
         return VerifyResult.PASSED;
+    }
+
+    /**
+     * Extract SQL text from the action output.
+     * Handles both direct SQL content and nested sql key in data map.
+     */
+    private String extractSql(ActionOutput ao) {
+        if (ao == null) return null;
+
+        // Multi-candidate output: sql is in the content (best candidate)
+        String content = ao.content();
+        if (content != null && !content.isBlank()) {
+            String upper = content.trim().toUpperCase();
+            if (upper.startsWith("SELECT") || upper.startsWith("WITH")
+                    || upper.startsWith("SHOW ") || upper.startsWith("EXPLAIN")
+                    || upper.startsWith("DESCRIBE ") || upper.startsWith("DESC ")
+                    || upper.startsWith("(")) {
+                return content;
+            }
+        }
+
+        // Check data map for sql key (from multi-candidate action)
+        if (ao.data() != null) {
+            Object sql = ao.data().get("sql");
+            if (sql != null && !sql.toString().isBlank()) {
+                return sql.toString();
+            }
+        }
+
+        return content;
     }
 
     // ========================================================================
@@ -145,6 +238,15 @@ public class DataScientistAgent extends ConversableAgent {
         // Agent profile
         sb.append(renderProfilePrompt());
         sb.append("\n");
+
+        // Multi-candidate mode hint
+        if (multiCandidateMode) {
+            sb.append("\n### Multi-Candidate Mode\n");
+            sb.append("You are generating SQL in a competitive mode. Multiple candidates\n");
+            sb.append("will be generated and the best one selected. Focus on correctness\n");
+            sb.append("and efficiency - use table aliases, proper JOINs, and clear structure.\n");
+            sb.append("\n");
+        }
 
         // Resource context (schema DDL, FK, column samples)
         if (resourceContext != null && !resourceContext.isBlank()) {
