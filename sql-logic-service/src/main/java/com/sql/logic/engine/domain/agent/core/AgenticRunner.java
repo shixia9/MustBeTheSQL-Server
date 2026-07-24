@@ -96,7 +96,6 @@ public class AgenticRunner {
         initialState.put(SqlAgentSpec.StateKey.USER_ID, userId);
         initialState.put(SqlAgentSpec.StateKey.CONNECTION_ID, connectionId);
         initialState.put(SqlAgentSpec.StateKey.LLM_CONFIG_ID, llmConfigId);
-        initialState.put(SqlAgentSpec.StateKey.DB_TYPE, "");
         initialState.put(SqlAgentSpec.StateKey.TABLE_NAMES, tableNames != null ? tableNames : List.of());
         initialState.put(SqlAgentSpec.StateKey.SCHEMA_NAME, schemaName != null ? schemaName : "");
         initialState.put(SqlAgentSpec.StateKey.AUTO_CONFIRM, autoConfirm);
@@ -110,6 +109,10 @@ public class AgenticRunner {
         // Pre-load database schema DDL (DB-GPT pattern: Resource injection at loadThinkingMessages time)
         String schemaDdl = buildSchemaDdl(connectionId, tableNames, schemaName);
         initialState.put(SqlAgentSpec.StateKey.SCHEMA_DDL, schemaDdl);
+
+        // Resolve actual database dialect type from connection config
+        String dbType = resolveDbType(connectionId);
+        initialState.put(SqlAgentSpec.StateKey.DB_TYPE, dbType);
 
         log.info("[AgenticRunner] Starting 6-Agent graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, llmConfigId={}, input='{}'",
                 threadId, autoConfirm, connectionId, userId, llmConfigId, userInput);
@@ -241,6 +244,19 @@ public class AgenticRunner {
             log.warn("[AgenticRunner] Schema preload failed: {}", e.getMessage());
             return "";
         }
+    }
+
+    /**
+     * Resolve the database dialect type from the connection configuration.
+     */
+    private String resolveDbType(Long connectionId) {
+        if (connectionId == null || connectionId <= 0) return "";
+        try {
+            return databaseMetaDataService.getDbType(connectionId);
+        } catch (Exception e) {
+            log.debug("[AgenticRunner] Failed to resolve dbType: {}", e.getMessage());
+        }
+        return "mysql";
     }
 
     /**

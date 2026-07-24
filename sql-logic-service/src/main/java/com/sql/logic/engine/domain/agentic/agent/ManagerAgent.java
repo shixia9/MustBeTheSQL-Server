@@ -166,17 +166,13 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
         planMemory.removeByConvId(threadId);
         planMemory.savePlan(threadId, List.of(simpleStep));
 
-        AgentMessage goalMessage = AgentMessage.builder()
+        AgentMessage.Builder goalBuilder = AgentMessage.builder()
                 .content(userInput)
                 .currentGoal(userInput)
-                .putContext("threadId", threadId)
                 .putContext("plan_task_num", 1)
-                .putContext("userId", message.context().get("userId"))
-                .putContext("connectionId", message.context().get("connectionId"))
-                .putContext("llmConfigId", message.context().get("llmConfigId"))
-                .putContext("schemaDdl", message.context().get("schemaDdl"))
-                .rounds(message.rounds() + 1)
-                .build();
+                .rounds(message.rounds() + 1);
+        forwardAllContext(message, goalBuilder);
+        AgentMessage goalMessage = goalBuilder.build();
 
         try {
             send(goalMessage, speaker).join();
@@ -263,14 +259,13 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 }
                 emitSse(threadId, "PLANNER", "STARTED", null);
 
-                AgentMessage planInput = AgentMessage.builder()
+                AgentMessage.Builder planBuilder = AgentMessage.builder()
                         .content(userInput)
                         .currentGoal("生成执行计划")
-                        .putContext("threadId", threadId)
                         .putContext("agentDescriptions", buildAgentDescriptions())
-                        .putContext("llmConfigId", message.context().get("llmConfigId"))
-                        .rounds(message.rounds() + 1)
-                        .build();
+                        .rounds(message.rounds() + 1);
+                forwardAllContext(message, planBuilder);
+                AgentMessage planInput = planBuilder.build();
                 AgentMessage planResult = plannerAgent.generateReply(
                         planInput, this, null, null).join();
 
@@ -307,17 +302,13 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
             List<AgentMessage> relyMessages = processRelyMessages(threadId, currentPlan);
 
-            AgentMessage goalMessage = AgentMessage.builder()
+            AgentMessage.Builder goalBuilder = AgentMessage.builder()
                     .content(currentPlan.getContent())
                     .currentGoal(currentPlan.getContent())
-                    .putContext("threadId", threadId)
                     .putContext("plan_task_num", currentPlan.getSerialNumber())
-                    .putContext("userId", message.context().get("userId"))
-                    .putContext("connectionId", message.context().get("connectionId"))
-                    .putContext("llmConfigId", message.context().get("llmConfigId"))
-                    .putContext("schemaDdl", message.context().get("schemaDdl"))
-                    .rounds(message.rounds() + 1)
-                    .build();
+                    .rounds(message.rounds() + 1);
+            forwardAllContext(message, goalBuilder);
+            AgentMessage goalMessage = goalBuilder.build();
 
             String speakerNodeName = toNodeName(speaker.name());
             emitSse(threadId, speakerNodeName, "STARTED", null);
@@ -361,13 +352,13 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
         // All steps complete → Dashboard
         if (dashboardAgent != null && !allStepResults.isEmpty()) {
             emitSse(threadId, "DASHBOARD", "STARTED", null);
-            AgentMessage summaryMessage = AgentMessage.builder()
+            AgentMessage.Builder summaryBuilder = AgentMessage.builder()
                     .content("请汇总以下分析结果生成报告")
                     .putContext("stepResults", allStepResults)
                     .putContext("question", userInput)
-                    .putContext("llmConfigId", message.context().get("llmConfigId"))
-                    .rounds(message.rounds() + 1)
-                    .build();
+                    .rounds(message.rounds() + 1);
+            forwardAllContext(message, summaryBuilder);
+            AgentMessage summaryMessage = summaryBuilder.build();
             AgentMessage report = dashboardAgent.generateReply(
                     summaryMessage, this, null, null).join();
 
@@ -492,6 +483,29 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     // ========================================================================
     //  Helpers
     // ========================================================================
+
+    // ========================================================================
+    //  Context forwarding — ensures all schema/evidence/identity keys
+    //  propagate from the ManagerAgent's message to sub-agent messages
+    // ========================================================================
+
+    private static final List<String> CONTEXT_FORWARD_KEYS = List.of(
+            "userId", "connectionId", "llmConfigId", "workspaceId",
+            "schemaDdl", "schemaInfo", "dialect", "schemaName",
+            "evidence", "conversationHistory", "userMemory",
+            "agentSystemPrompt", "executionDescription",
+            "threadId", "sessionId"
+    );
+
+    private void forwardAllContext(AgentMessage source, AgentMessage.Builder target) {
+        if (source == null || source.context() == null) return;
+        for (String key : CONTEXT_FORWARD_KEYS) {
+            Object value = source.context().get(key);
+            if (value != null) {
+                target.putContext(key, value);
+            }
+        }
+    }
 
     private List<String> buildAgentDescriptions() {
         List<String> descs = new ArrayList<>();

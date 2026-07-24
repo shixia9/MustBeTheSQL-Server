@@ -41,6 +41,16 @@ public class DatabaseMetaDataService {
     }
 
     /**
+     * Resolve the database dialect type (mysql, postgresql, etc.) for a connection.
+     */
+    public String getDbType(Long connectionId) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf == null) return "mysql";
+        String dbType = conf.getDbType();
+        return (dbType != null && !dbType.isBlank()) ? dbType.toLowerCase() : "mysql";
+    }
+
+    /**
      * List available database/schema names for the given connection.
      */
     public List<String> getSchemas(Long connectionId) {

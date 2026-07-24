@@ -78,6 +78,10 @@ public final class AgentStateBridge {
         String schemaDdl = getString(state, SqlAgentSpec.StateKey.SCHEMA_DDL);
         if (schemaDdl != null && !schemaDdl.isBlank()) {
             builder.putContext("schemaDdl", schemaDdl);
+            String existingInfo = getString(state, SqlAgentSpec.StateKey.TABLE_RELATION);
+            if (existingInfo == null || existingInfo.isBlank()) {
+                builder.putContext("schemaInfo", schemaDdl);
+            }
         }
 
         // Inject execution description from the current plan step
