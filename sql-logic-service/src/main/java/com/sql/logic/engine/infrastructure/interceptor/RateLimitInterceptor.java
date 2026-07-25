@@ -1,4 +1,4 @@
-package com.sql.logic.engine.trigger.http;
+package com.sql.logic.engine.infrastructure.interceptor;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -32,18 +32,16 @@ public class RateLimitInterceptor implements Filter {
             throws IOException, ServletException {
         HttpServletRequest req = (HttpServletRequest) request;
 
-        // Only rate-limit /v1/ endpoints
         if (!req.getRequestURI().startsWith("/v1/")) {
             chain.doFilter(request, response);
             return;
         }
 
-        // Use userId from auth filter
         Long userId = (Long) req.getAttribute("openai_userId");
         String key = userId != null ? "user:" + userId : "ip:" + req.getRemoteAddr();
 
         long now = System.currentTimeMillis();
-        long windowMs = 60_000; // 1 minute window
+        long windowMs = 60_000;
 
         RateBucket bucket = bucketCache.get(key, k -> new RateBucket(now, 0));
 

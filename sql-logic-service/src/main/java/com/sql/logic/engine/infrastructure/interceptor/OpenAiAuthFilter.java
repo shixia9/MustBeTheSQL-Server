@@ -1,4 +1,4 @@
-package com.sql.logic.engine.trigger.http;
+package com.sql.logic.engine.infrastructure.interceptor;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sql.logic.engine.infrastructure.dao.UserLlmApiKeyDao;
@@ -29,7 +29,6 @@ public class OpenAiAuthFilter implements Filter {
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse resp = (HttpServletResponse) response;
 
-        // Only filter /v1/ endpoints
         String path = req.getRequestURI();
         if (!path.startsWith("/v1/")) {
             chain.doFilter(request, response);
@@ -48,7 +47,6 @@ public class OpenAiAuthFilter implements Filter {
             return;
         }
 
-        // Look up token in user_llm_api_key table
         UserLlmApiKey apiKey = apiKeyDao.selectOne(
                 new LambdaQueryWrapper<UserLlmApiKey>()
                         .eq(UserLlmApiKey::getApiKey, token)
@@ -58,7 +56,6 @@ public class OpenAiAuthFilter implements Filter {
             return;
         }
 
-        // Store userId in request attribute for downstream use
         req.setAttribute("openai_userId", apiKey.getUserId());
         chain.doFilter(request, response);
     }
@@ -66,6 +63,7 @@ public class OpenAiAuthFilter implements Filter {
     private void sendError(HttpServletResponse resp, int code, String message) throws IOException {
         resp.setStatus(code);
         resp.setContentType("application/json");
-        resp.getWriter().write("{\"error\":{\"message\":\"" + message + "\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}");
+        resp.getWriter().write("{\"error\":{\"message\":\"" + message +
+                "\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}");
     }
 }
