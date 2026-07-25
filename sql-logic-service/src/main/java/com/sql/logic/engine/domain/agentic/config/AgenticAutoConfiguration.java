@@ -20,6 +20,7 @@ import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
 import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
 import com.sql.logic.engine.domain.agentic.routing.ComplexityRouter;
 import com.sql.logic.engine.domain.agentic.skill.SkillRegistry;
+import com.sql.logic.engine.domain.agentic.workflow.NodeRegistry;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
 import com.sql.logic.engine.infrastructure.dao.TaskProgressSnapshotDao;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -348,5 +349,12 @@ public class AgenticAutoConfiguration {
         return new AgentOrchestrator(plannerAgent, managerAgent,
                 dataScientistAgent, codeAssistantAgent,
                 dashboardAssistantAgent, toolAssistantAgent);
+    }
+
+    // ======================== Platform Beans ========================
+
+    @Bean
+    public NodeRegistry nodeRegistry() {
+        return new NodeRegistry();
     }
 }
