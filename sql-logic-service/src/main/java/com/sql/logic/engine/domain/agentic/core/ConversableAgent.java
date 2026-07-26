@@ -292,8 +292,15 @@ public abstract class ConversableAgent implements Agent {
                     }
 
                 } catch (Exception e) {
-                    log.warn("[{}] generateReply error (retry {}/{}): {}", name(), retry, maxRetryCount, e.getMessage());
-                    failReason = e.getMessage();
+                    String errorMsg = e.getMessage();
+                    if (errorMsg == null || errorMsg.isBlank()) {
+                        errorMsg = e.getClass().getSimpleName();
+                        if (e.getCause() != null && e.getCause().getMessage() != null) {
+                            errorMsg = errorMsg + ": " + e.getCause().getMessage();
+                        }
+                    }
+                    log.warn("[{}] generateReply error (retry {}/{}): {}", name(), retry, maxRetryCount, errorMsg);
+                    failReason = errorMsg;
 
                     // Reactive compaction on context_too_long errors
                     if (isContextTooLongError(e) && contextManager != null) {
@@ -329,6 +336,14 @@ public abstract class ConversableAgent implements Agent {
                 }
             }
 
+            // If all retries exhausted, propagate failure reason to content
+            if (!replyMessage.success()) {
+                replyMessage = replyMessage.withSuccess(false);
+                if (failReason != null && !failReason.isBlank()
+                        && (replyMessage.content() == null || replyMessage.content().isBlank())) {
+                    replyMessage = replyMessage.withContent(failReason);
+                }
+            }
             return replyMessage;
         }, VT_EXECUTOR);
     }
