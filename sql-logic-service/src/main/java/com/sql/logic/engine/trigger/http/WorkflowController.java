@@ -1,5 +1,6 @@
 package com.sql.logic.engine.trigger.http;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.domain.agentic.workflow.*;
 import org.slf4j.Logger;
@@ -29,6 +30,20 @@ public class WorkflowController {
         this.nodeRegistry = new NodeRegistry();
     }
 
+    // --- Auth helper ---
+
+    private Long currentUserId() {
+        try {
+            String id = (String) StpUtil.getLoginId();
+            if (id == null || !id.matches("\\d+")) return null;
+            return Long.valueOf(id);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // --- Endpoints ---
+
     @GetMapping("/nodes")
     public ResponseEntity<Result<List<Map<String, Object>>>> getNodeTypes() {
         return ResponseEntity.ok(Result.success(nodeRegistry.getNodeTypes()));
@@ -36,7 +51,9 @@ public class WorkflowController {
 
     @GetMapping
     public ResponseEntity<Result<List<Map<String, String>>>> listWorkflows() {
-        return ResponseEntity.ok(Result.success(repository.listAll()));
+        Long userId = currentUserId();
+        if (userId == null) return ResponseEntity.ok(Result.success(List.of()));
+        return ResponseEntity.ok(Result.success(repository.listAll(userId)));
     }
 
     @GetMapping("/{id}")
@@ -48,23 +65,38 @@ public class WorkflowController {
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Result<Map<String, String>>> createWorkflow(@RequestBody WorkflowDefinition def) {
-        String id = repository.save(def);
+        Long userId = currentUserId();
+        if (userId == null) return ResponseEntity.ok(Result.error(401, "Login required"));
+        Long workspaceId = extractWorkspaceId(def);
+        String id = repository.save(def, userId, workspaceId);
         return ResponseEntity.ok(Result.success(Map.of("id", id, "name", def.getName())));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Result<Map<String, String>>> updateWorkflow(@PathVariable String id, @RequestBody WorkflowDefinition def) {
-        if (repository.findById(id).isEmpty()) {
-            return ResponseEntity.ok(Result.error(404, "Workflow not found: " + id));
+    public ResponseEntity<Result<Map<String, String>>> updateWorkflow(@PathVariable String id,
+                                                                       @RequestBody WorkflowDefinition def) {
+        Long userId = currentUserId();
+        if (userId == null) return ResponseEntity.ok(Result.error(401, "Login required"));
+        try {
+            repository.update(id, def, userId);
+            return ResponseEntity.ok(Result.success(Map.of("id", id, "name", def.getName())));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.ok(Result.error(404, e.getMessage()));
+        } catch (SecurityException e) {
+            return ResponseEntity.ok(Result.error(403, e.getMessage()));
         }
-        repository.update(id, def);
-        return ResponseEntity.ok(Result.success(Map.of("id", id, "name", def.getName())));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Result<Void>> deleteWorkflow(@PathVariable String id) {
-        repository.delete(id);
-        return ResponseEntity.ok(Result.success(null));
+        Long userId = currentUserId();
+        if (userId == null) return ResponseEntity.ok(Result.error(401, "Login required"));
+        try {
+            repository.delete(id, userId);
+            return ResponseEntity.ok(Result.success(null));
+        } catch (SecurityException e) {
+            return ResponseEntity.ok(Result.error(403, e.getMessage()));
+        }
     }
 
     /**
@@ -114,7 +146,7 @@ public class WorkflowController {
         engine.execute(def, inputContext, event -> {
             String json = event.toJson();
             log.debug("[Workflow] Event: {}", json);
-            eventSink.tryEmitNext("data: " + json);
+            eventSink.tryEmitNext(json);
         }).thenAccept(result -> {
             if (result.success()) {
                 log.info("[Workflow] Flow '{}' completed with {} node outputs",
@@ -125,7 +157,7 @@ public class WorkflowController {
             eventSink.tryEmitComplete();
         }).exceptionally(e -> {
             log.error("[Workflow] Flow '{}' execution error", def.getName(), e);
-            eventSink.tryEmitNext("data: {\"type\":\"ERROR\",\"message\":\"" + e.getMessage() + "\"}");
+            eventSink.tryEmitNext("{\"type\":\"ERROR\",\"message\":\"" + e.getMessage() + "\"}");
             eventSink.tryEmitComplete();
             return null;
         });
@@ -142,13 +174,27 @@ public class WorkflowController {
 
     @PostMapping("/import")
     public ResponseEntity<Result<Map<String, String>>> importWorkflow(@RequestBody WorkflowDefinition def) {
-        String id = repository.save(def);
+        Long userId = currentUserId();
+        if (userId == null) return ResponseEntity.ok(Result.error(401, "Login required"));
+        Long workspaceId = extractWorkspaceId(def);
+        String id = repository.save(def, userId, workspaceId);
         return ResponseEntity.ok(Result.success(Map.of("id", id, "name", def.getName())));
     }
+
+    // --- Helpers ---
 
     private Long toLong(Object v) {
         if (v instanceof Number n) return n.longValue();
         if (v instanceof String s) { try { return Long.parseLong(s); } catch (Exception ignored) {} }
+        return null;
+    }
+
+    /**
+     * Extract workspaceId from the workflow definition if present.
+     * The frontend may pass it as a node data field or we use the user's default workspace.
+     */
+    private Long extractWorkspaceId(WorkflowDefinition def) {
+        // For now, return null (no workspace scoping). Future: read from def context or session.
         return null;
     }
 }
