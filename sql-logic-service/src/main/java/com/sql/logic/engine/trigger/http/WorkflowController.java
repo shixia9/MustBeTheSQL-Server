@@ -1,7 +1,6 @@
 package com.sql.logic.engine.trigger.http;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sql.logic.engine.domain.agent.core.AgenticRunner;
+import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.domain.agentic.workflow.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
 
 import java.util.*;
 
@@ -20,51 +20,57 @@ public class WorkflowController {
 
     private final WorkflowRepository repository;
     private final NodeRegistry nodeRegistry;
-    private final ObjectMapper objectMapper;
-    private final AgenticRunner agenticRunner;
+    private final WorkflowEngine.WorkflowAgentExecutor workflowAgentExecutor;
 
-    public WorkflowController(WorkflowRepository repository, ObjectMapper objectMapper,
-                               AgenticRunner agenticRunner) {
+    public WorkflowController(WorkflowRepository repository,
+                               WorkflowEngine.WorkflowAgentExecutor workflowAgentExecutor) {
         this.repository = repository;
-        this.objectMapper = objectMapper;
-        this.agenticRunner = agenticRunner;
+        this.workflowAgentExecutor = workflowAgentExecutor;
         this.nodeRegistry = new NodeRegistry();
     }
 
     @GetMapping("/nodes")
-    public ResponseEntity<List<Map<String, Object>>> getNodeTypes() {
-        return ResponseEntity.ok(nodeRegistry.getNodeTypes());
+    public ResponseEntity<Result<List<Map<String, Object>>>> getNodeTypes() {
+        return ResponseEntity.ok(Result.success(nodeRegistry.getNodeTypes()));
     }
 
     @GetMapping
-    public ResponseEntity<List<Map<String, String>>> listWorkflows() {
-        return ResponseEntity.ok(repository.listAll());
+    public ResponseEntity<Result<List<Map<String, String>>>> listWorkflows() {
+        return ResponseEntity.ok(Result.success(repository.listAll()));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<?> getWorkflow(@PathVariable String id) {
-        return repository.findById(id).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<Result<WorkflowDefinition>> getWorkflow(@PathVariable String id) {
+        return repository.findById(id)
+                .map(def -> ResponseEntity.ok(Result.success(def)))
+                .orElse(ResponseEntity.ok(Result.error(404, "Workflow not found: " + id)));
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, String>> createWorkflow(@RequestBody WorkflowDefinition def) {
+    public ResponseEntity<Result<Map<String, String>>> createWorkflow(@RequestBody WorkflowDefinition def) {
         String id = repository.save(def);
-        return ResponseEntity.ok(Map.of("id", id, "name", def.getName()));
+        return ResponseEntity.ok(Result.success(Map.of("id", id, "name", def.getName())));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<?> updateWorkflow(@PathVariable String id, @RequestBody WorkflowDefinition def) {
-        if (repository.findById(id).isEmpty()) return ResponseEntity.notFound().build();
+    public ResponseEntity<Result<Map<String, String>>> updateWorkflow(@PathVariable String id, @RequestBody WorkflowDefinition def) {
+        if (repository.findById(id).isEmpty()) {
+            return ResponseEntity.ok(Result.error(404, "Workflow not found: " + id));
+        }
         repository.update(id, def);
-        return ResponseEntity.ok(Map.of("id", id, "name", def.getName()));
+        return ResponseEntity.ok(Result.success(Map.of("id", id, "name", def.getName())));
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteWorkflow(@PathVariable String id) {
+    public ResponseEntity<Result<Void>> deleteWorkflow(@PathVariable String id) {
         repository.delete(id);
-        return ResponseEntity.ok().build();
+        return ResponseEntity.ok(Result.success(null));
     }
 
+    /**
+     * Execute a workflow by compiling the user's custom DAG and running it
+     * through the WorkflowEngine with per-node SSE streaming.
+     */
     @PostMapping(value = "/{id}/execute", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> executeWorkflow(@PathVariable String id,
                                          @RequestBody Map<String, Object> params) {
@@ -83,42 +89,61 @@ public class WorkflowController {
             return Flux.just("{\"type\":\"ERROR\",\"message\":\"userInput is required\"}");
         }
 
-        // Extract agent names from flow nodes
+        // Extract agent names for logging
         List<String> agentNames = def.getNodes().stream()
                 .filter(n -> "agent".equals(n.getType()) && n.getData() != null && n.getData().getAgentName() != null)
                 .map(n -> n.getData().getAgentName())
                 .distinct().toList();
 
-        log.info("[Workflow] Executing flow '{}' with agents={}, input='{}'",
-                def.getName(), agentNames, userInput);
+        log.info("[Workflow] Executing flow '{}' id={} with agents={}, input='{}'",
+                def.getName(), id, agentNames, userInput);
 
-        try {
-            AgenticRunner.AgentRunHandle handle = agenticRunner.execute(
-                    connectionId != null ? connectionId : 1L,
-                    userInput,
-                    userId != null ? userId : 1L,
-                    llmConfigId != null ? llmConfigId : 0L,
-                    null, null, "", true);
+        // Build input context
+        Map<String, Object> inputContext = new LinkedHashMap<>();
+        inputContext.put("userInput", userInput);
+        if (connectionId != null) inputContext.put("connectionId", connectionId);
+        if (userId != null) inputContext.put("userId", userId);
+        if (llmConfigId != null) inputContext.put("llmConfigId", llmConfigId);
+        inputContext.put("threadId", UUID.randomUUID().toString());
 
-            return handle.getUnifiedSseFlux()
-                    .concatWith(Flux.just("{\"type\":\"WORKFLOW_COMPLETED\"}"))
-                    .onErrorResume(e -> Flux.just(
-                            "{\"type\":\"ERROR\",\"message\":\"" + e.getMessage() + "\"}"));
-        } catch (Exception e) {
-            log.error("[Workflow] Execution failed", e);
-            return Flux.just("{\"type\":\"ERROR\",\"message\":\"" + e.getMessage() + "\"}");
-        }
+        // Create SSE sink for per-node events
+        Sinks.Many<String> eventSink = Sinks.many().multicast().onBackpressureBuffer();
+
+        // Build the engine with event callback
+        WorkflowEngine engine = new WorkflowEngine(workflowAgentExecutor);
+        engine.execute(def, inputContext, event -> {
+            String json = event.toJson();
+            log.debug("[Workflow] Event: {}", json);
+            eventSink.tryEmitNext("data: " + json);
+        }).thenAccept(result -> {
+            if (result.success()) {
+                log.info("[Workflow] Flow '{}' completed with {} node outputs",
+                        def.getName(), result.nodeOutputs().size());
+            } else {
+                log.error("[Workflow] Flow '{}' failed: {}", def.getName(), result.errorMessage());
+            }
+            eventSink.tryEmitComplete();
+        }).exceptionally(e -> {
+            log.error("[Workflow] Flow '{}' execution error", def.getName(), e);
+            eventSink.tryEmitNext("data: {\"type\":\"ERROR\",\"message\":\"" + e.getMessage() + "\"}");
+            eventSink.tryEmitComplete();
+            return null;
+        });
+
+        return eventSink.asFlux();
     }
 
     @GetMapping("/{id}/export")
-    public ResponseEntity<?> exportWorkflow(@PathVariable String id) {
-        return repository.findById(id).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<Result<WorkflowDefinition>> exportWorkflow(@PathVariable String id) {
+        return repository.findById(id)
+                .map(def -> ResponseEntity.ok(Result.success(def)))
+                .orElse(ResponseEntity.ok(Result.error(404, "Workflow not found: " + id)));
     }
 
     @PostMapping("/import")
-    public ResponseEntity<Map<String, String>> importWorkflow(@RequestBody WorkflowDefinition def) {
+    public ResponseEntity<Result<Map<String, String>>> importWorkflow(@RequestBody WorkflowDefinition def) {
         String id = repository.save(def);
-        return ResponseEntity.ok(Map.of("id", id, "name", def.getName()));
+        return ResponseEntity.ok(Result.success(Map.of("id", id, "name", def.getName())));
     }
 
     private Long toLong(Object v) {

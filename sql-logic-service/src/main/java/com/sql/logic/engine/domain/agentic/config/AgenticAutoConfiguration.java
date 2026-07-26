@@ -12,6 +12,7 @@ import com.sql.logic.engine.domain.agentic.action.*;
 import com.sql.logic.engine.domain.agentic.agent.*;
 import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
 import com.sql.logic.engine.domain.agentic.context.ContextManager;
+import com.sql.logic.engine.domain.agentic.core.Agent;
 import com.sql.logic.engine.domain.agentic.core.AgentMemory;
 import com.sql.logic.engine.domain.agentic.memory.*;
 import com.sql.logic.engine.domain.agentic.plan.InMemoryPlanMemory;
@@ -21,6 +22,7 @@ import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
 import com.sql.logic.engine.domain.agentic.routing.ComplexityRouter;
 import com.sql.logic.engine.domain.agentic.skill.SkillRegistry;
 import com.sql.logic.engine.domain.agentic.workflow.NodeRegistry;
+import com.sql.logic.engine.domain.agentic.workflow.WorkflowAgentExecutorImpl;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
 import com.sql.logic.engine.infrastructure.dao.TaskProgressSnapshotDao;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -28,6 +30,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -356,5 +359,37 @@ public class AgenticAutoConfiguration {
     @Bean
     public NodeRegistry nodeRegistry() {
         return new NodeRegistry();
+    }
+
+    // ======================== Workflow Engine Beans ========================
+
+    @Bean
+    public WorkflowAgentExecutorImpl workflowAgentExecutor(
+            ManagerAgent managerAgent,
+            PlannerAgent plannerAgent,
+            DataScientistAgent dataScientistAgent,
+            CodeAssistantAgent codeAssistantAgent,
+            DashboardAssistantAgent dashboardAssistantAgent,
+            ToolAssistantAgent toolAssistantAgent,
+            AgentSseCodec agentSseCodec) {
+        Map<String, Agent> agentMap = new LinkedHashMap<>();
+        registerAgent(agentMap, managerAgent);
+        registerAgent(agentMap, plannerAgent);
+        registerAgent(agentMap, dataScientistAgent);
+        registerAgent(agentMap, codeAssistantAgent);
+        registerAgent(agentMap, dashboardAssistantAgent);
+        registerAgent(agentMap, toolAssistantAgent);
+        return new WorkflowAgentExecutorImpl(agentMap, agentSseCodec);
+    }
+
+    private void registerAgent(Map<String, Agent> map, Agent agent) {
+        if (agent == null) return;
+        // Register by class simple name (e.g. "ManagerAgent")
+        map.put(agent.getClass().getSimpleName(), agent);
+        // Register by profile name (e.g. "Manager")
+        String profileName = agent.name();
+        if (profileName != null && !profileName.isBlank() && !map.containsKey(profileName)) {
+            map.put(profileName, agent);
+        }
     }
 }

@@ -6,14 +6,15 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * Executes a compiled workflow DAG.
  * <p>
  * Iterates through topological levels; nodes within the same level execute in parallel
  * via Virtual Threads. Conditional edges route execution based on node output.
+ * Supports an optional {@link Consumer<NodeEvent>} callback for SSE streaming.
  */
 public class WorkflowEngine {
 
@@ -21,6 +22,56 @@ public class WorkflowEngine {
     private final WorkflowCompiler compiler = new WorkflowCompiler();
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final WorkflowAgentExecutor agentExecutor;
+
+    /**
+     * Event emitted during workflow execution for SSE streaming to the frontend.
+     */
+    public record NodeEvent(
+            String type,
+            String nodeId,
+            String nodeType,
+            String label,
+            String agentName,
+            String output,
+            String error,
+            Map<String, String> nodeOutputs) {
+
+        private static final ObjectMapper MAPPER = new ObjectMapper();
+
+        static NodeEvent started(WorkflowNode node) {
+            return new NodeEvent("NODE_STARTED", node.getId(), node.getType(),
+                    node.getData() != null ? node.getData().getTitle() : null,
+                    node.getData() != null ? node.getData().getAgentName() : null,
+                    null, null, null);
+        }
+
+        static NodeEvent completed(WorkflowNode node, String output) {
+            return new NodeEvent("NODE_COMPLETED", node.getId(), node.getType(),
+                    node.getData() != null ? node.getData().getTitle() : null,
+                    node.getData() != null ? node.getData().getAgentName() : null,
+                    output, null, null);
+        }
+
+        static NodeEvent failed(WorkflowNode node, String error) {
+            return new NodeEvent("NODE_FAILED", node.getId(), node.getType(),
+                    node.getData() != null ? node.getData().getTitle() : null,
+                    node.getData() != null ? node.getData().getAgentName() : null,
+                    null, error, null);
+        }
+
+        static NodeEvent workflowCompleted(Map<String, String> nodeOutputs) {
+            return new NodeEvent("WORKFLOW_COMPLETED", null, null, null, null,
+                    null, null, nodeOutputs);
+        }
+
+        public String toJson() {
+            try {
+                return MAPPER.writeValueAsString(this);
+            } catch (Exception e) {
+                return "{\"type\":\"ERROR\"}";
+            }
+        }
+    }
 
     /**
      * Functional interface for executing a single agent node.
@@ -63,9 +114,19 @@ public class WorkflowEngine {
      */
     public CompletableFuture<WorkflowResult> execute(WorkflowDefinition definition,
                                                        Map<String, Object> inputContext) {
+        return execute(definition, inputContext, null);
+    }
+
+    /**
+     * Execute the workflow definition with the given input context and optional event callback.
+     * @param eventSink optional callback for per-node SSE events (may be null)
+     */
+    public CompletableFuture<WorkflowResult> execute(WorkflowDefinition definition,
+                                                       Map<String, Object> inputContext,
+                                                       Consumer<NodeEvent> eventSink) {
         try {
             WorkflowCompiler.CompiledWorkflow compiled = compiler.compile(definition);
-            return executeLevels(compiled, inputContext);
+            return executeLevels(compiled, inputContext, eventSink);
         } catch (Exception e) {
             log.error("Workflow execution failed", e);
             return CompletableFuture.completedFuture(WorkflowResult.fail(e.getMessage()));
@@ -73,11 +134,12 @@ public class WorkflowEngine {
     }
 
     private CompletableFuture<WorkflowResult> executeLevels(
-            WorkflowCompiler.CompiledWorkflow compiled, Map<String, Object> inputContext) {
+            WorkflowCompiler.CompiledWorkflow compiled, Map<String, Object> inputContext,
+            Consumer<NodeEvent> eventSink) {
         Map<String, String> nodeOutputs = new LinkedHashMap<>();
         AtomicReference<String> currentRoute = new AtomicReference<>(null);
 
-        return executeLevelRecursive(compiled, inputContext, nodeOutputs, 0, currentRoute);
+        return executeLevelRecursive(compiled, inputContext, nodeOutputs, 0, currentRoute, eventSink);
     }
 
     private CompletableFuture<WorkflowResult> executeLevelRecursive(
@@ -85,9 +147,13 @@ public class WorkflowEngine {
             Map<String, Object> inputContext,
             Map<String, String> nodeOutputs,
             int levelIndex,
-            AtomicReference<String> currentRoute) {
+            AtomicReference<String> currentRoute,
+            Consumer<NodeEvent> eventSink) {
 
         if (levelIndex >= compiled.levels().size()) {
+            if (eventSink != null) {
+                eventSink.accept(NodeEvent.workflowCompleted(nodeOutputs));
+            }
             return CompletableFuture.completedFuture(WorkflowResult.success(nodeOutputs));
         }
 
@@ -100,48 +166,61 @@ public class WorkflowEngine {
             currentRoute.set(null);
             nodesToExecute = level.stream()
                     .filter(n -> {
-                        // Find the edge that routes to this node with the current condition
                         for (var entry : compiled.edgeConditions().entrySet()) {
                             String[] parts = entry.getKey().split("→");
                             if (parts.length == 2 && parts[1].equals(n.getId()) && entry.getValue().equals(route)) {
                                 return true;
                             }
                         }
-                        // If no conditional edge points to this node, include it anyway
                         return level.size() == 1 || !compiled.edgeConditions().keySet().stream()
                                 .anyMatch(k -> k.endsWith("→" + n.getId()));
                     }).toList();
-            }
+        }
 
         if (nodesToExecute.isEmpty()) {
-            return executeLevelRecursive(compiled, inputContext, nodeOutputs, levelIndex + 1, currentRoute);
+            return executeLevelRecursive(compiled, inputContext, nodeOutputs, levelIndex + 1, currentRoute, eventSink);
         }
 
         // Execute nodes in parallel within this level
         List<CompletableFuture<Void>> futures = nodesToExecute.stream()
-                .map(node -> executeNode(node, compiled, nodeOutputs, inputContext)
-                        .thenAccept(output -> {
-                            if (output != null) {
-                                nodeOutputs.put(node.getId(), output);
-                                // Check if this is a condition node → set route for next level
-                                if ("condition".equals(node.getType()) && node.getData() != null) {
-                                    String conditionField = (String) node.getData().getInputsValues().get("conditionField");
-                                    if (conditionField != null && output.contains(conditionField)) {
-                                        // Simple: extract condition value from output
-                                        try {
-                                            var tree = objectMapper.readTree(output);
-                                            if (tree.has(conditionField)) {
-                                                currentRoute.set(tree.get(conditionField).asText());
-                                            }
-                                        } catch (Exception ignored) {}
+                .map(node -> {
+                    if (eventSink != null) {
+                        eventSink.accept(NodeEvent.started(node));
+                    }
+                    return executeNode(node, compiled, nodeOutputs, inputContext)
+                            .thenAccept(output -> {
+                                if (output != null) {
+                                    nodeOutputs.put(node.getId(), output);
+                                    if (eventSink != null) {
+                                        eventSink.accept(NodeEvent.completed(node, output));
+                                    }
+                                    // Check if this is a condition node → set route for next level
+                                    if ("condition".equals(node.getType()) && node.getData() != null) {
+                                        String conditionField = (String) node.getData().getInputsValues().get("conditionField");
+                                        if (conditionField != null && output.contains(conditionField)) {
+                                            try {
+                                                var tree = objectMapper.readTree(output);
+                                                if (tree.has(conditionField)) {
+                                                    currentRoute.set(tree.get(conditionField).asText());
+                                                }
+                                            } catch (Exception ignored) {}
+                                        }
                                     }
                                 }
-                            }
-                        }))
+                            })
+                            .exceptionally(e -> {
+                                log.error("Node {} failed: {}", node.getId(), e.getMessage());
+                                nodeOutputs.put(node.getId(), "{\"error\":\"" + e.getMessage() + "\"}");
+                                if (eventSink != null) {
+                                    eventSink.accept(NodeEvent.failed(node, e.getMessage()));
+                                }
+                                return null;
+                            });
+                })
                 .toList();
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenCompose(v -> executeLevelRecursive(compiled, inputContext, nodeOutputs, levelIndex + 1, currentRoute))
+                .thenCompose(v -> executeLevelRecursive(compiled, inputContext, nodeOutputs, levelIndex + 1, currentRoute, eventSink))
                 .exceptionally(e -> WorkflowResult.fail("Level " + levelIndex + " failed: " + e.getMessage()));
     }
 
