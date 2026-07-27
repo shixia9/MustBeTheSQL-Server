@@ -1,5 +1,6 @@
 package com.sql.logic.engine.domain.agentic.workflow;
 
+import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
 import com.sql.logic.engine.domain.agentic.core.Agent;
 import com.sql.logic.engine.domain.agentic.core.AgentMessage;
@@ -23,10 +24,13 @@ public class WorkflowAgentExecutorImpl implements WorkflowEngine.WorkflowAgentEx
     /** Map of agentName → Agent bean, populated at construction time. */
     private final Map<String, Agent> agentMap;
     private final AgentSseCodec codec;
+    private final DatabaseMetaDataService databaseMetaDataService;
 
-    public WorkflowAgentExecutorImpl(Map<String, Agent> agentMap, AgentSseCodec codec) {
+    public WorkflowAgentExecutorImpl(Map<String, Agent> agentMap, AgentSseCodec codec,
+                                      DatabaseMetaDataService databaseMetaDataService) {
         this.agentMap = Map.copyOf(agentMap);
         this.codec = codec;
+        this.databaseMetaDataService = databaseMetaDataService;
         log.info("[WorkflowAgentExecutor] Initialized with {} agents: {}",
                 agentMap.size(), agentMap.keySet());
     }
@@ -114,6 +118,8 @@ public class WorkflowAgentExecutorImpl implements WorkflowEngine.WorkflowAgentEx
         // Build message context with relevant runtime params
         Map<String, Object> msgContext = new LinkedHashMap<>();
         if (inputValues.containsKey("connectionId")) msgContext.put("connectionId", inputValues.get("connectionId"));
+        if (inputValues.containsKey("schemaName")) msgContext.put("schemaName", inputValues.get("schemaName"));
+        if (inputValues.containsKey("tableName")) msgContext.put("tableName", inputValues.get("tableName"));
         if (inputValues.containsKey("userId")) msgContext.put("userId", inputValues.get("userId"));
         if (inputValues.containsKey("llmConfigId")) msgContext.put("llmConfigId", inputValues.get("llmConfigId"));
         if (inputValues.containsKey("threadId")) msgContext.put("threadId", inputValues.get("threadId"));
@@ -166,10 +172,74 @@ public class WorkflowAgentExecutorImpl implements WorkflowEngine.WorkflowAgentEx
     }
 
     private CompletableFuture<String> executeResourceNode(WorkflowNode node, Map<String, Object> inputValues) {
-        // Resource nodes inject context — for now, return schema DDL hints
-        return CompletableFuture.completedFuture(
-                "{\"nodeId\":\"" + node.getId() + "\",\"type\":\"resource\",\"title\":\""
-                        + (node.getData() != null ? node.getData().getTitle() : "") + "\"}");
+        String title = node.getData() != null && node.getData().getTitle() != null
+                ? node.getData().getTitle() : "Database";
+        Long connectionId = toLong(inputValues.get("connectionId"));
+        String schemaName = nullableString(inputValues.get("schemaName"));
+        String tableName = nullableString(inputValues.get("tableName"));
+
+        if (connectionId == null) {
+            return CompletableFuture.completedFuture(
+                    resourceJson(node.getId(), title, "_No database connection configured for this node._"));
+        }
+
+        try {
+            StringBuilder md = new StringBuilder();
+            md.append("**Connection:** #").append(connectionId);
+            if (schemaName != null) md.append(" · **Schema:** ").append(schemaName);
+            if (tableName != null) md.append(" · **Table:** ").append(tableName);
+            md.append("\n\n");
+
+            List<String> tables = databaseMetaDataService.getTableNames(connectionId, schemaName);
+            if (tables == null || tables.isEmpty()) {
+                md.append("_No tables found_.");
+            } else {
+                md.append("**Available tables:** ").append(String.join(", ", tables));
+            }
+
+            // If a specific table is selected, inject its DDL so downstream agents
+            // (e.g. DataScientistAgent) know the exact column structure.
+            if (tableName != null) {
+                try {
+                    String ddl = databaseMetaDataService.getTableDDL(connectionId, schemaName, tableName);
+                    if (ddl != null && !ddl.isBlank()) {
+                        md.append("\n\n**DDL — ").append(tableName).append(":**\n\n```sql\n")
+                          .append(ddl).append("\n```");
+                    }
+                } catch (Exception ignored) {
+                    // DDL is best-effort; table list above is the primary context.
+                }
+            }
+
+            return CompletableFuture.completedFuture(resourceJson(node.getId(), title, md.toString()));
+        } catch (Exception e) {
+            log.warn("[WorkflowAgentExecutor] Resource node {} failed: {}", node.getId(), e.getMessage());
+            return CompletableFuture.completedFuture(resourceJson(node.getId(), title,
+                    "Failed to load database metadata: " + e.getMessage()));
+        }
+    }
+
+    private static String resourceJson(String nodeId, String title, String content) {
+        return "{"
+                + "\"nodeId\":\"" + nodeId + "\","
+                + "\"type\":\"resource\","
+                + "\"title\":" + escapeJson(title) + ","
+                + "\"content\":" + escapeJson(content)
+                + "}";
+    }
+
+    private static Long toLong(Object v) {
+        if (v instanceof Number n) return n.longValue();
+        if (v instanceof String s && !s.isBlank()) {
+            try { return Long.parseLong(s.trim()); } catch (NumberFormatException ignored) {}
+        }
+        return null;
+    }
+
+    private static String nullableString(Object v) {
+        if (v == null) return null;
+        String s = Objects.toString(v, "");
+        return s.isBlank() ? null : s;
     }
 
     private static String escapeJson(String s) {

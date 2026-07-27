@@ -240,6 +240,17 @@ public class WorkflowEngine {
             }
         }
 
+        // Merge the node's own configured inputs (e.g. connectionId / schemaName /
+        // tableName on resource nodes) so they reach the executor. Node-level config
+        // intentionally overrides request-level context for this node.
+        if (node.getData() != null && node.getData().getInputsValues() != null) {
+            for (var entry : node.getData().getInputsValues().entrySet()) {
+                if (entry.getValue() != null) {
+                    nodeInput.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+
         if (agentExecutor != null) {
             return agentExecutor.execute(node, nodeInput);
         }

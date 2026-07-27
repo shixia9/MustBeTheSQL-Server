@@ -1,6 +1,7 @@
 package com.sql.logic.engine.domain.agentic.config;
 
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
+import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.python.SimplePythonExecutor;
@@ -371,7 +372,8 @@ public class AgenticAutoConfiguration {
             CodeAssistantAgent codeAssistantAgent,
             DashboardAssistantAgent dashboardAssistantAgent,
             ToolAssistantAgent toolAssistantAgent,
-            AgentSseCodec agentSseCodec) {
+            AgentSseCodec agentSseCodec,
+            DatabaseMetaDataService databaseMetaDataService) {
         Map<String, Agent> agentMap = new LinkedHashMap<>();
         registerAgent(agentMap, managerAgent);
         registerAgent(agentMap, plannerAgent);
@@ -379,7 +381,7 @@ public class AgenticAutoConfiguration {
         registerAgent(agentMap, codeAssistantAgent);
         registerAgent(agentMap, dashboardAssistantAgent);
         registerAgent(agentMap, toolAssistantAgent);
-        return new WorkflowAgentExecutorImpl(agentMap, agentSseCodec);
+        return new WorkflowAgentExecutorImpl(agentMap, agentSseCodec, databaseMetaDataService);
     }
 
     private void registerAgent(Map<String, Agent> map, Agent agent) {
