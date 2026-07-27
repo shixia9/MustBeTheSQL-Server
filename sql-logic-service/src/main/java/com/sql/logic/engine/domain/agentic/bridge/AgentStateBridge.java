@@ -7,6 +7,7 @@ import com.sql.logic.engine.domain.agentic.core.AgentMessage;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Bidirectional bridge between the existing StateGraph {@link OverAllState}
@@ -74,8 +75,21 @@ public final class AgentStateBridge {
                 // Resource info
                 .putResourceInfo("tableNames", getString(state, SqlAgentSpec.StateKey.TABLE_NAMES));
 
-        // Pre-loaded schema DDL
+        // Schema DDL: prefer async enrichment result when ready, otherwise use
+        // the quick fallback that was placed in state at graph-start time.
         String schemaDdl = getString(state, SqlAgentSpec.StateKey.SCHEMA_DDL);
+        Object futureObj = state.value("_schemaEnrichmentFuture").orElse(null);
+        if (futureObj instanceof CompletableFuture<?> f && f.isDone()) {
+            try {
+                @SuppressWarnings("unchecked")
+                String enriched = ((CompletableFuture<String>) f).get();
+                if (enriched != null && !enriched.isBlank()) {
+                    schemaDdl = enriched;
+                }
+            } catch (Exception ignored) {
+                // Enrichment failed — stick with the quick fallback
+            }
+        }
         if (schemaDdl != null && !schemaDdl.isBlank()) {
             builder.putContext("schemaDdl", schemaDdl);
             String existingInfo = getString(state, SqlAgentSpec.StateKey.TABLE_RELATION);

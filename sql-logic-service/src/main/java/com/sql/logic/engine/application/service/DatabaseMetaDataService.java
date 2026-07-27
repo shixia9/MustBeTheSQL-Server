@@ -15,7 +15,6 @@ import jakarta.annotation.Resource;
 import java.util.concurrent.TimeUnit;
 
 import java.sql.*;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 

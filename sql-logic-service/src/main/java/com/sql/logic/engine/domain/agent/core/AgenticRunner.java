@@ -10,6 +10,7 @@ import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agentic.agent.ManagerAgent;
 import com.sql.logic.engine.domain.agentic.config.AgentOrchestrator;
+import com.sql.logic.engine.domain.agentic.enrichment.SchemaEnrichmentService;
 import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.domain.trace.TraceContextRegistry;
 import org.slf4j.Logger;
@@ -23,6 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 
 /**
  * Streaming executor for the 6-Agent Multi-Agent system (AgentOrchestrator).
@@ -41,6 +44,8 @@ public class AgenticRunner {
     private final AgentEventSinkRegistry eventSinkRegistry;
     private final AgentSseCodec codec;
     private final DatabaseMetaDataService databaseMetaDataService;
+    private final SchemaEnrichmentService schemaEnrichmentService;
+    private final ExecutorService schemaLinkingExecutor;
 
     public AgenticRunner(AgentOrchestrator orchestrator,
                          ManagerAgent managerAgent,
@@ -50,7 +55,9 @@ public class AgenticRunner {
                          NodeStartedSinkRegistry sinkRegistry,
                          AgentEventSinkRegistry eventSinkRegistry,
                          AgentSseCodec codec,
-                         DatabaseMetaDataService databaseMetaDataService) {
+                         DatabaseMetaDataService databaseMetaDataService,
+                         SchemaEnrichmentService schemaEnrichmentService,
+                         ExecutorService schemaLinkingExecutor) {
         this.orchestrator = orchestrator;
         this.managerAgent = managerAgent;
         this.hitlSessionRegistry = hitlSessionRegistry;
@@ -59,6 +66,8 @@ public class AgenticRunner {
         this.eventSinkRegistry = eventSinkRegistry;
         this.codec = codec;
         this.databaseMetaDataService = databaseMetaDataService;
+        this.schemaEnrichmentService = schemaEnrichmentService;
+        this.schemaLinkingExecutor = schemaLinkingExecutor;
         try {
             this.compiledGraph = orchestrator.compile(CompileConfig.builder()
                     .saverConfig(SaverConfig.builder().register(new MemorySaver()).build())
@@ -106,9 +115,11 @@ public class AgenticRunner {
                 conversationHistory != null ? conversationHistory : "");
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
 
-        // Pre-load database schema DDL (DB-GPT pattern: Resource injection at loadThinkingMessages time)
-        String schemaDdl = buildSchemaDdl(connectionId, tableNames, schemaName);
-        initialState.put(SqlAgentSpec.StateKey.SCHEMA_DDL, schemaDdl);
+        // Quick fallback schema (fast, no LLM) — available immediately for ManagerAgent routing.
+        // The enriched (LLM-filtered) version is built on a background thread and becomes
+        // available to downstream agents (DataScientist, etc.) when ready.
+        String quickSchema = schemaEnrichmentService.buildQuickFallback(connectionId, tableNames, schemaName);
+        initialState.put(SqlAgentSpec.StateKey.SCHEMA_DDL, quickSchema);
 
         // Resolve actual database dialect type from connection config
         String dbType = resolveDbType(connectionId);
@@ -120,6 +131,17 @@ public class AgenticRunner {
         TraceContext traceContext = new TraceContext(threadId, userId, workspaceId);
         traceContextRegistry.register(threadId, traceContext);
         initialState.put(SqlAgentSpec.StateKey.TRACE_CONTEXT, traceContext);
+
+        // Launch async schema enrichment (LLM semantic filtering) in the background.
+        // The quick fallback SCHEMA_DDL is already in state — downstream agents will
+        // transparently pick up the enriched version when it completes.
+        String convHistory = (conversationHistory != null) ? conversationHistory : "";
+        CompletableFuture<String> enrichmentFuture = CompletableFuture.supplyAsync(
+                () -> schemaEnrichmentService.enrich(connectionId, tableNames, schemaName,
+                        userInput, convHistory, "",
+                        llmConfigId, userId, traceContext),
+                schemaLinkingExecutor);
+        initialState.put("_schemaEnrichmentFuture", enrichmentFuture);
 
         Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
         Sinks.Many<String> customSink = eventSinkRegistry.register(threadId);
@@ -193,57 +215,6 @@ public class AgenticRunner {
 
     public ManagerAgent getManagerAgent() {
         return managerAgent;
-    }
-
-    /**
-     * Pre-load database schema DDL for the given connection.
-     * Fetches table metadata and builds a structured schema context string
-     * for injection into agent prompts.
-     */
-    private String buildSchemaDdl(Long connectionId, List<String> tableNames, String schemaName) {
-        if (connectionId == null || connectionId <= 0) {
-            log.warn("[AgenticRunner] No connectionId, skipping schema preload");
-            return "";
-        }
-        try {
-            // Auto-discover schema if not specified
-            String effectiveSchema = schemaName;
-            if (effectiveSchema == null || effectiveSchema.isBlank()) {
-                List<String> schemas = databaseMetaDataService.getSchemas(connectionId);
-                if (!schemas.isEmpty()) {
-                    effectiveSchema = schemas.get(0);
-                    log.info("[AgenticRunner] Auto-discovered schema '{}' for connectionId={}", effectiveSchema, connectionId);
-                }
-            }
-
-            List<String> tables = (tableNames != null && !tableNames.isEmpty())
-                    ? tableNames
-                    : databaseMetaDataService.getTableNames(connectionId, effectiveSchema);
-
-            if (tables.isEmpty()) {
-                log.warn("[AgenticRunner] No tables found for connectionId={}", connectionId);
-                return "Database connection #" + connectionId + " — no tables discovered. Ask the user to specify tables.";
-            }
-
-            StringBuilder sb = new StringBuilder();
-            sb.append("Database connection #").append(connectionId).append(":\n\n");
-            for (String table : tables) {
-                try {
-                    String ddl = databaseMetaDataService.getTableDDL(connectionId, effectiveSchema, table);
-                    if (ddl != null && !ddl.isBlank()) {
-                        sb.append(ddl).append("\n");
-                    }
-                } catch (Exception e) {
-                    log.debug("[AgenticRunner] Failed to get DDL for table {}: {}", table, e.getMessage());
-                }
-            }
-            String result = sb.toString();
-            log.info("[AgenticRunner] Built schema DDL: {} tables, {} chars", tables.size(), result.length());
-            return result;
-        } catch (Exception e) {
-            log.warn("[AgenticRunner] Schema preload failed: {}", e.getMessage());
-            return "";
-        }
     }
 
     /**

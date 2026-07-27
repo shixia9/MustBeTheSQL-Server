@@ -22,6 +22,7 @@ import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
 import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
 import com.sql.logic.engine.domain.agentic.routing.ComplexityRouter;
 import com.sql.logic.engine.domain.agentic.skill.SkillRegistry;
+import com.sql.logic.engine.domain.agentic.enrichment.SchemaEnrichmentService;
 import com.sql.logic.engine.domain.agentic.workflow.NodeRegistry;
 import com.sql.logic.engine.domain.agentic.workflow.WorkflowAgentExecutorImpl;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
@@ -34,6 +35,10 @@ import org.springframework.context.annotation.Primary;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 public class AgenticAutoConfiguration {
@@ -393,5 +398,27 @@ public class AgenticAutoConfiguration {
         if (profileName != null && !profileName.isBlank() && !map.containsKey(profileName)) {
             map.put(profileName, agent);
         }
+    }
+
+    // ======================== Schema Enrichment Thread Pool ========================
+
+    /**
+     * Dedicated thread pool for background schema enrichment via LLM semantic filtering.
+     * Bounded pool (1–2 threads) with CallerRunsPolicy — if the queue is full the
+     * calling thread executes the task synchronously, preserving correctness.
+     */
+    @Bean("schemaLinkingExecutor")
+    public ExecutorService schemaLinkingExecutor() {
+        return new ThreadPoolExecutor(
+                1, 2,
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(10),
+                r -> {
+                    Thread t = new Thread(r, "schema-linking-" + System.currentTimeMillis() % 10000);
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
     }
 }
