@@ -21,15 +21,18 @@ public class AdminDataProvider implements AdminDataService {
     private final UserInfoDao userInfoDao;
     private final LlmCallMetricsDao llmCallMetricsDao;
     private final AgentExecutionDao agentExecutionDao;
+    private final AgentExecutionStepDao agentExecutionStepDao;
     private final UserLlmConfigDao userLlmConfigDao;
 
     public AdminDataProvider(UserInfoDao userInfoDao,
                              LlmCallMetricsDao llmCallMetricsDao,
                              AgentExecutionDao agentExecutionDao,
+                             AgentExecutionStepDao agentExecutionStepDao,
                              UserLlmConfigDao userLlmConfigDao) {
         this.userInfoDao = userInfoDao;
         this.llmCallMetricsDao = llmCallMetricsDao;
         this.agentExecutionDao = agentExecutionDao;
+        this.agentExecutionStepDao = agentExecutionStepDao;
         this.userLlmConfigDao = userLlmConfigDao;
     }
 
@@ -253,5 +256,73 @@ public class AdminDataProvider implements AdminDataService {
 
     private Long safeParseLong(String s) {
         try { return Long.parseLong(s.trim()); } catch (Exception e) { return null; }
+    }
+
+    @Override
+    public List<AdminDataDTOs.AgentMetricDTO> getAgentMetrics() {
+        // Aggregate agent_execution_step by node_name (the agent/node label).
+        // NULL node_name is classified as "unknown" per spec.
+        List<AgentExecutionStep> steps = agentExecutionStepDao.selectList(null);
+        Map<String, List<AgentExecutionStep>> grouped = steps.stream()
+                .collect(Collectors.groupingBy(s -> s.getNodeName() != null && !s.getNodeName().isBlank()
+                        ? s.getNodeName() : "unknown"));
+
+        List<AdminDataDTOs.AgentMetricDTO> result = new ArrayList<>();
+        for (Map.Entry<String, List<AgentExecutionStep>> entry : grouped.entrySet()) {
+            List<AgentExecutionStep> group = entry.getValue();
+            AdminDataDTOs.AgentMetricDTO dto = new AdminDataDTOs.AgentMetricDTO();
+            dto.setAgentName(entry.getKey());
+            // nodeType from the first non-null entry in the group
+            String nt = group.stream()
+                    .map(AgentExecutionStep::getNodeType)
+                    .filter(n -> n != null && !n.isBlank())
+                    .findFirst().orElse("unknown");
+            dto.setNodeType(nt);
+            dto.setTotalSteps(group.size());
+            dto.setSuccessSteps((int) group.stream()
+                    .filter(s -> "SUCCESS".equalsIgnoreCase(s.getStatus()) || "COMPLETED".equalsIgnoreCase(s.getStatus()))
+                    .count());
+            long totalDuration = group.stream()
+                    .filter(s -> s.getDurationMs() != null)
+                    .mapToLong(AgentExecutionStep::getDurationMs)
+                    .sum();
+            dto.setAvgDurationMs(group.isEmpty() ? 0 : totalDuration / group.size());
+            dto.setTotalInputTokens(group.stream()
+                    .filter(s -> s.getInputTokens() != null)
+                    .mapToInt(AgentExecutionStep::getInputTokens)
+                    .sum());
+            dto.setTotalOutputTokens(group.stream()
+                    .filter(s -> s.getOutputTokens() != null)
+                    .mapToInt(AgentExecutionStep::getOutputTokens)
+                    .sum());
+            result.add(dto);
+        }
+        result.sort((a, b) -> Integer.compare(b.getTotalSteps(), a.getTotalSteps()));
+        return result;
+    }
+
+    @Override
+    public AdminDataDTOs.PageResult<AdminDataDTOs.WorkflowOverviewDTO> getWorkflowOverview(int page, int size, String keyword) {
+        Page<AgentExecution> p = new Page<>(page, size);
+        QueryWrapper<AgentExecution> qw = new QueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            qw.and(w -> w.like("thread_id", keyword.trim()).or().like("status", keyword.trim()));
+        }
+        qw.orderByDesc("create_time");
+        Page<AgentExecution> result = agentExecutionDao.selectPage(p, qw);
+
+        List<AdminDataDTOs.WorkflowOverviewDTO> dtos = result.getRecords().stream().map(e -> {
+            AdminDataDTOs.WorkflowOverviewDTO dto = new AdminDataDTOs.WorkflowOverviewDTO();
+            dto.setId(e.getId());
+            dto.setUserId(e.getUserId());
+            dto.setThreadId(e.getThreadId());
+            dto.setStatus(e.getStatus());
+            dto.setModelCalls(e.getModelCalls() != null ? String.valueOf(e.getModelCalls()) : "0");
+            dto.setToolCalls(e.getToolCalls() != null ? String.valueOf(e.getToolCalls()) : "0");
+            dto.setTotalTokens(e.getTotalTokens() != null ? String.valueOf(e.getTotalTokens()) : "0");
+            dto.setCreateTime(e.getCreateTime() != null ? e.getCreateTime().toString() : null);
+            return dto;
+        }).collect(Collectors.toList());
+        return new AdminDataDTOs.PageResult<>(dtos, result.getTotal(), result.getCurrent(), result.getSize());
     }
 }

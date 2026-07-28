@@ -28,4 +28,10 @@ public interface AdminDataService {
 
     /** User LLM configs — masked API keys, provider/model details. */
     AdminDataDTOs.PageResult<AdminDataDTOs.UserLlmMetricDTO> getUserLlmMetrics(int page, int size, String keyword);
+
+    /** Per-agent (node) aggregated metrics from agent_execution_step, grouped by node_name. */
+    List<AdminDataDTOs.AgentMetricDTO> getAgentMetrics();
+
+    /** Recent workflow executions overview from agent_execution. */
+    AdminDataDTOs.PageResult<AdminDataDTOs.WorkflowOverviewDTO> getWorkflowOverview(int page, int size, String keyword);
 }

@@ -113,4 +113,24 @@ public class AdminLlmController {
                 new AdminDataDTOs.PageResult<>(rows, result.getTotal(), result.getCurrent(), result.getSize());
         return Result.success(pr);
     }
+
+    /** Per-agent (node) aggregated metrics from agent_execution_step, grouped by node_name. */
+    @GetMapping("/metrics/agents")
+    public Result<List<Map<String, Object>>> getAgentMetrics() {
+        List<AdminDataDTOs.AgentMetricDTO> metrics = adminDataService.getAgentMetrics();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (AdminDataDTOs.AgentMetricDTO m : metrics) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("agentName", m.getAgentName());
+            row.put("nodeType", m.getNodeType());
+            row.put("totalSteps", m.getTotalSteps());
+            row.put("successSteps", m.getSuccessSteps());
+            row.put("successRate", m.getTotalSteps() > 0 ? (double) m.getSuccessSteps() / m.getTotalSteps() : 0);
+            row.put("avgDurationMs", m.getAvgDurationMs());
+            row.put("totalInputTokens", m.getTotalInputTokens());
+            row.put("totalOutputTokens", m.getTotalOutputTokens());
+            rows.add(row);
+        }
+        return Result.success(rows);
+    }
 }
