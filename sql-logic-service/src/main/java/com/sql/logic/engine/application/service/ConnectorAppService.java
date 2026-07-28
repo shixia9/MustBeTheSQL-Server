@@ -3,6 +3,7 @@ package com.sql.logic.engine.application.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sql.logic.engine.common.dto.ActiveConnectorCreateRequest;
 import com.sql.logic.engine.common.dto.ActiveConnectorResponse;
+import com.sql.logic.engine.common.dto.ActiveConnectorUpdateRequest;
 import com.sql.logic.engine.common.dto.ConnectorTemplateCreateRequest;
 import com.sql.logic.engine.common.dto.ConnectorTemplateResponse;
 import com.sql.logic.engine.common.dto.ConnectorTemplateUpdateRequest;
@@ -113,6 +114,22 @@ public class ConnectorAppService {
             throw new IllegalArgumentException("Active connector not found or does not belong to this user");
         }
         activeConnectorDao.deleteById(activeId);
+    }
+
+    public ActiveConnectorResponse updateActive(Long userId, ActiveConnectorUpdateRequest request) {
+        if (request.getId() == null) {
+            throw new IllegalArgumentException("Active connector id is required");
+        }
+        ActiveConnector row = activeConnectorDao.selectById(request.getId());
+        if (row == null || !row.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("Active connector not found or does not belong to this user");
+        }
+        if (request.getName() != null) row.setName(request.getName());
+        if (request.getTemplateId() != null) row.setTemplateId(request.getTemplateId());
+        if (request.getConnectionId() != null) row.setConnectionId(request.getConnectionId());
+        row.setUpdateTime(new Date());
+        activeConnectorDao.updateById(row);
+        return toActiveResponse(row);
     }
 
     // ── Mappers ──────────────────────────────────────────────────────

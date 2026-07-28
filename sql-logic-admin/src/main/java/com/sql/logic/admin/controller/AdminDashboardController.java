@@ -41,8 +41,10 @@ public class AdminDashboardController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String keyword) {
+        // Cap page size to prevent excessive DB load
+        int cappedSize = Math.min(size, 100);
         AdminDataDTOs.PageResult<AdminDataDTOs.WorkflowOverviewDTO> result =
-                adminDataService.getWorkflowOverview(page, size, keyword);
+                adminDataService.getWorkflowOverview(page, cappedSize, keyword);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (AdminDataDTOs.WorkflowOverviewDTO w : result.getRecords()) {
             Map<String, Object> row = new LinkedHashMap<>();

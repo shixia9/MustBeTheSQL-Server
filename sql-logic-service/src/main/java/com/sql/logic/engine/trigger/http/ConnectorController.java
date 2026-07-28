@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.sql.logic.engine.application.service.ConnectorAppService;
 import com.sql.logic.engine.common.dto.ActiveConnectorCreateRequest;
 import com.sql.logic.engine.common.dto.ActiveConnectorResponse;
+import com.sql.logic.engine.common.dto.ActiveConnectorUpdateRequest;
 import com.sql.logic.engine.common.dto.ConnectorTemplateCreateRequest;
 import com.sql.logic.engine.common.dto.ConnectorTemplateResponse;
 import com.sql.logic.engine.common.dto.ConnectorTemplateUpdateRequest;
@@ -66,6 +67,11 @@ public class ConnectorController {
     @PostMapping("/active")
     public Result<ActiveConnectorResponse> createActive(@RequestBody ActiveConnectorCreateRequest request) {
         return Result.success(connectorAppService.createActive(getCurrentUserId(), request));
+    }
+
+    @PutMapping("/active")
+    public Result<ActiveConnectorResponse> updateActive(@RequestBody ActiveConnectorUpdateRequest request) {
+        return Result.success(connectorAppService.updateActive(getCurrentUserId(), request));
     }
 
     @DeleteMapping("/active/{activeId}")

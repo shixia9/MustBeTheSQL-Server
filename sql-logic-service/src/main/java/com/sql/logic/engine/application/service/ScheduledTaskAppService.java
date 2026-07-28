@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * CRUD + toggle for user-managed scheduled tasks.
@@ -18,6 +19,11 @@ import java.util.List;
  */
 @Service
 public class ScheduledTaskAppService {
+
+    private static final Pattern CRON_PATTERN = Pattern.compile(
+            "(@(annually|yearly|monthly|weekly|daily|hourly|reboot))"
+            + "|(@every\\s+\\d+[smhdw])"
+            + "|((((\\d+,)+\\d+|([\\d*?]+)(/|-)\\d+)|\\d+|\\*|\\?) ?){5,7}");
 
     private final ScheduledTaskDao scheduledTaskDao;
 
@@ -37,6 +43,9 @@ public class ScheduledTaskAppService {
         }
         if (request.getCronExpr() == null || request.getCronExpr().isBlank()) {
             throw new IllegalArgumentException("Cron expression is required");
+        }
+        if (!CRON_PATTERN.matcher(request.getCronExpr().trim()).matches()) {
+            throw new IllegalArgumentException("Invalid cron expression: " + request.getCronExpr());
         }
         ScheduledTask row = new ScheduledTask();
         row.setUserId(userId);
@@ -60,7 +69,12 @@ public class ScheduledTaskAppService {
             throw new IllegalArgumentException("Scheduled task not found or does not belong to this user");
         }
         if (request.getName() != null) row.setName(request.getName());
-        if (request.getCronExpr() != null) row.setCronExpr(request.getCronExpr());
+        if (request.getCronExpr() != null) {
+            if (!CRON_PATTERN.matcher(request.getCronExpr().trim()).matches()) {
+                throw new IllegalArgumentException("Invalid cron expression: " + request.getCronExpr());
+            }
+            row.setCronExpr(request.getCronExpr());
+        }
         if (request.getTaskType() != null) row.setTaskType(request.getTaskType());
         if (request.getPayload() != null) row.setPayload(request.getPayload());
         row.setUpdateTime(new Date());

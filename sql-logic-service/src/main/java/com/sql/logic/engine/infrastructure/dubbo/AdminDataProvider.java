@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.time.format.DateTimeFormatter;
 
 @DubboService
 public class AdminDataProvider implements AdminDataService {
@@ -260,44 +261,33 @@ public class AdminDataProvider implements AdminDataService {
 
     @Override
     public List<AdminDataDTOs.AgentMetricDTO> getAgentMetrics() {
-        // Aggregate agent_execution_step by node_name (the agent/node label).
-        // NULL node_name is classified as "unknown" per spec.
-        List<AgentExecutionStep> steps = agentExecutionStepDao.selectList(null);
-        Map<String, List<AgentExecutionStep>> grouped = steps.stream()
-                .collect(Collectors.groupingBy(s -> s.getNodeName() != null && !s.getNodeName().isBlank()
-                        ? s.getNodeName() : "unknown"));
+        // SQL-side aggregation to avoid loading the entire agent_execution_step
+        // table into memory (ISSUE 1 — OOM risk on production systems).
+        QueryWrapper<AgentExecutionStep> qw = new QueryWrapper<>();
+        qw.select("COALESCE(NULLIF(node_name,''), 'unknown') AS node_name",
+                  "COALESCE(NULLIF(node_type,''), 'unknown') AS node_type",
+                  "COUNT(*) AS total_steps",
+                  "SUM(CASE WHEN status IN ('SUCCESS','COMPLETED') THEN 1 ELSE 0 END) AS success_steps",
+                  "AVG(COALESCE(duration_ms, 0)) AS avg_duration_ms",
+                  "SUM(COALESCE(input_tokens, 0)) AS total_input_tokens",
+                  "SUM(COALESCE(output_tokens, 0)) AS total_output_tokens");
+        qw.groupBy("COALESCE(NULLIF(node_name,''), 'unknown')",
+                   "COALESCE(NULLIF(node_type,''), 'unknown')");
+        qw.orderByDesc("total_steps");
 
+        List<Map<String, Object>> rows = agentExecutionStepDao.selectMaps(qw);
         List<AdminDataDTOs.AgentMetricDTO> result = new ArrayList<>();
-        for (Map.Entry<String, List<AgentExecutionStep>> entry : grouped.entrySet()) {
-            List<AgentExecutionStep> group = entry.getValue();
+        for (Map<String, Object> row : rows) {
             AdminDataDTOs.AgentMetricDTO dto = new AdminDataDTOs.AgentMetricDTO();
-            dto.setAgentName(entry.getKey());
-            // nodeType from the first non-null entry in the group
-            String nt = group.stream()
-                    .map(AgentExecutionStep::getNodeType)
-                    .filter(n -> n != null && !n.isBlank())
-                    .findFirst().orElse("unknown");
-            dto.setNodeType(nt);
-            dto.setTotalSteps(group.size());
-            dto.setSuccessSteps((int) group.stream()
-                    .filter(s -> "SUCCESS".equalsIgnoreCase(s.getStatus()) || "COMPLETED".equalsIgnoreCase(s.getStatus()))
-                    .count());
-            long totalDuration = group.stream()
-                    .filter(s -> s.getDurationMs() != null)
-                    .mapToLong(AgentExecutionStep::getDurationMs)
-                    .sum();
-            dto.setAvgDurationMs(group.isEmpty() ? 0 : totalDuration / group.size());
-            dto.setTotalInputTokens(group.stream()
-                    .filter(s -> s.getInputTokens() != null)
-                    .mapToInt(AgentExecutionStep::getInputTokens)
-                    .sum());
-            dto.setTotalOutputTokens(group.stream()
-                    .filter(s -> s.getOutputTokens() != null)
-                    .mapToInt(AgentExecutionStep::getOutputTokens)
-                    .sum());
+            dto.setAgentName((String) row.get("node_name"));
+            dto.setNodeType((String) row.get("node_type"));
+            dto.setTotalSteps(((Number) row.get("total_steps")).intValue());
+            dto.setSuccessSteps(((Number) row.get("success_steps")).intValue());
+            dto.setAvgDurationMs(((Number) row.get("avg_duration_ms")).longValue());
+            dto.setTotalInputTokens(((Number) row.get("total_input_tokens")).intValue());
+            dto.setTotalOutputTokens(((Number) row.get("total_output_tokens")).intValue());
             result.add(dto);
         }
-        result.sort((a, b) -> Integer.compare(b.getTotalSteps(), a.getTotalSteps()));
         return result;
     }
 
@@ -311,6 +301,7 @@ public class AdminDataProvider implements AdminDataService {
         qw.orderByDesc("create_time");
         Page<AgentExecution> result = agentExecutionDao.selectPage(p, qw);
 
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
         List<AdminDataDTOs.WorkflowOverviewDTO> dtos = result.getRecords().stream().map(e -> {
             AdminDataDTOs.WorkflowOverviewDTO dto = new AdminDataDTOs.WorkflowOverviewDTO();
             dto.setId(e.getId());
@@ -320,7 +311,7 @@ public class AdminDataProvider implements AdminDataService {
             dto.setModelCalls(e.getModelCalls() != null ? String.valueOf(e.getModelCalls()) : "0");
             dto.setToolCalls(e.getToolCalls() != null ? String.valueOf(e.getToolCalls()) : "0");
             dto.setTotalTokens(e.getTotalTokens() != null ? String.valueOf(e.getTotalTokens()) : "0");
-            dto.setCreateTime(e.getCreateTime() != null ? e.getCreateTime().toString() : null);
+            dto.setCreateTime(e.getCreateTime() != null ? e.getCreateTime().format(dtf) : null);
             return dto;
         }).collect(Collectors.toList());
         return new AdminDataDTOs.PageResult<>(dtos, result.getTotal(), result.getCurrent(), result.getSize());
