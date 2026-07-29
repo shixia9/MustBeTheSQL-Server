@@ -11,6 +11,8 @@ import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agentic.action.*;
 import com.sql.logic.engine.domain.agentic.agent.*;
+import com.sql.logic.engine.domain.agentic.vis.VisChart;
+import com.sql.logic.engine.domain.agentic.vis.VisDashboard;
 import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
 import com.sql.logic.engine.domain.agentic.context.ContextManager;
 import com.sql.logic.engine.domain.agentic.core.Agent;
@@ -187,10 +189,35 @@ public class AgenticAutoConfiguration {
         return new PythonAnalyzeAction(promptManager);
     }
 
+    // ======================== Phase 6: Vis Protocol ========================
+
+    @Bean
+    public VisChart visChart() {
+        return new VisChart();
+    }
+
+    @Bean
+    public VisDashboard visDashboard() {
+        return new VisDashboard();
+    }
+
+    // ======================== Phase 6: Chart Action ========================
+
+    @Bean
+    @ConditionalOnClass(SqlExecutionService.class)
+    public ChartAction chartAction(SqlExecutionService sqlExecutionService, VisChart visChart) {
+        return new ChartAction(sqlExecutionService, visChart);
+    }
+
+    // ======================== Phase 2/6: Dashboard Action ========================
+
     @Bean
     @ConditionalOnClass(PromptManager.class)
-    public DashboardAction dashboardAction(PromptManager promptManager) {
-        return new DashboardAction(promptManager);
+    public DashboardAction dashboardAction(PromptManager promptManager, VisDashboard visDashboard,
+                                           SqlExecutionService sqlExecutionService) {
+        DashboardAction action = new DashboardAction(promptManager, visDashboard);
+        action.setSqlExecutionService(sqlExecutionService);
+        return action;
     }
 
     @Bean
@@ -213,6 +240,7 @@ public class AgenticAutoConfiguration {
             SqlExecutionAction sqlExecutionAction,
             SqlFixAction sqlFixAction,
             MultiCandidateSqlAction multiCandidateSqlAction,
+            ChartAction chartAction,
             ProfileRenderer profileRenderer,
             ContextManager contextManager,
             TaskProgressPersistenceService persistenceService,
@@ -220,8 +248,8 @@ public class AgenticAutoConfiguration {
             LlmClientManager llmClientManager) {
         DataScientistAgent agent = new DataScientistAgent();
         agent.bind(agentMemory);
-        agent.bind(List.of(multiCandidateSqlAction, sqlGenerationAction,
-                sqlExecutionAction, sqlFixAction));
+        agent.bind(List.of(multiCandidateSqlAction, chartAction,
+                sqlGenerationAction, sqlExecutionAction, sqlFixAction));
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
         agent.bindContextManager(contextManager);

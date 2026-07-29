@@ -29,5 +29,23 @@ public class ChatCompletionStreamResponse {
     public static class Delta {
         private String role;
         private String content;
+        @JsonProperty("tool_calls")
+        private List<ToolCallDelta> toolCalls;
+    }
+
+    @Data
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class ToolCallDelta {
+        private Integer index;
+        private String id;
+        private String type;
+        private FunctionCallDelta function;
+    }
+
+    @Data
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class FunctionCallDelta {
+        private String name;
+        private String arguments;
     }
 }

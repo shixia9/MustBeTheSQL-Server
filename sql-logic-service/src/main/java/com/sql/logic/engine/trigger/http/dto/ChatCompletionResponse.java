@@ -30,6 +30,23 @@ public class ChatCompletionResponse {
     public static class Message {
         private String role;
         private String content;
+        @JsonProperty("tool_calls")
+        private List<ToolCall> toolCalls;
+    }
+
+    @Data
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class ToolCall {
+        private String id;
+        private String type;
+        private FunctionCall function;
+    }
+
+    @Data
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class FunctionCall {
+        private String name;
+        private String arguments;
     }
 
     @Data

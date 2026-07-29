@@ -230,6 +230,10 @@ public class DataScientistAgent extends ConversableAgent {
     //  Prompt building
     // ========================================================================
 
+    /**
+     * Build the system prompt with chart type injection.
+     * Phase 6: injects display_type chart context (DB-GPT ChartAction pattern).
+     */
     @Override
     protected String buildSystemPrompt(String observation, String memoryContext,
                                         String resourceContext, Map<String, Object> context) {
@@ -247,6 +251,16 @@ public class DataScientistAgent extends ConversableAgent {
             sb.append("and efficiency - use table aliases, proper JOINs, and clear structure.\n");
             sb.append("\n");
         }
+
+        // Phase 6: Chart type context injection (DB-GPT ChartAction pattern)
+        sb.append("\n### Output Format Requirement\n");
+        sb.append(com.sql.logic.engine.domain.agentic.vis.ChartType.buildChartTypePrompt());
+        sb.append("\n");
+        sb.append("IMPORTANT: Your output MUST be a JSON object with three fields:\n");
+        sb.append("  - \"display_type\": one of the chart type codes above\n");
+        sb.append("  - \"sql\": the executable SQL query\n");
+        sb.append("  - \"thought\": a brief description of what this query does\n");
+        sb.append("\n");
 
         // Resource context (schema DDL, FK, column samples)
         if (resourceContext != null && !resourceContext.isBlank()) {
