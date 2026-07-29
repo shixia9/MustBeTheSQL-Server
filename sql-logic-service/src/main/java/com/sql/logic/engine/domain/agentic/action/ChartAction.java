@@ -71,7 +71,10 @@ public class ChartAction implements AgentAction {
                     SqlExecutionResult result = sqlExecutionService.execute(ctxUserId, ctxConnectionId, input.sql);
                     if (result.hasError()) {
                         log.warn("[ChartAction] SQL execution error: {}", result.getErrorMsg());
-                        return ActionOutput.fail("Chart SQL execution failed: " + result.getErrorMsg());
+                        return new ActionOutput(false,
+                                "Chart SQL execution failed: " + result.getErrorMsg(),
+                                Map.of("sql", input.sql, "error", result.getErrorMsg()),
+                                List.of(), true);
                     }
                     execResult = new LinkedHashMap<>();
                     execResult.put("rows", result.getRows());
@@ -82,7 +85,10 @@ public class ChartAction implements AgentAction {
                     execResult.put("columns", colMaps);
                 } catch (Exception e) {
                     log.warn("[ChartAction] SQL execution failed: {}", e.getMessage());
-                    return ActionOutput.fail("Chart SQL execution failed: " + e.getMessage());
+                    return new ActionOutput(false,
+                            "Chart SQL execution failed: " + e.getMessage(),
+                            Map.of("sql", input.sql, "error", e.getMessage()),
+                            List.of(), true);
                 }
 
                 @SuppressWarnings("unchecked")

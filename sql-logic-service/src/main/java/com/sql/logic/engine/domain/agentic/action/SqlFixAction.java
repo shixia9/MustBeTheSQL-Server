@@ -40,9 +40,21 @@ public class SqlFixAction implements AgentAction {
             try {
                 ConversableAgent ca = (ConversableAgent) agent;
 
-                // Get the failed SQL and error from context
-                String originalSql = (String) context.context().getOrDefault("originalSql", context.content());
-                String errorMsg = (String) context.context().getOrDefault("errorMessage", "");
+                // Get the failed SQL and error — first from previous action report data,
+                // then from message context, then fall back to message content.
+                ActionOutput prevReport = context.actionReport();
+                String originalSql = null;
+                String errorMsg = "";
+                if (prevReport != null && prevReport.data() != null) {
+                    originalSql = (String) prevReport.data().get("sql");
+                    errorMsg = (String) prevReport.data().getOrDefault("error", "");
+                }
+                if (originalSql == null || originalSql.isBlank()) {
+                    originalSql = (String) context.context().getOrDefault("originalSql", context.content());
+                }
+                if (errorMsg.isBlank() && prevReport != null) {
+                    errorMsg = prevReport.content();
+                }
                 String schemaInfo = (String) context.context().getOrDefault("schemaInfo", "");
                 String dialect = (String) context.context().getOrDefault("dialect", "MySQL");
 
