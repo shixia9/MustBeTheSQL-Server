@@ -109,6 +109,16 @@ public class DataScientistAgent extends ConversableAgent {
             }
         }
 
+        // If the LLM response contains display_type chart context,
+        // route to ChartAction for SQL execution + vis-db-chart rendering.
+        if (message.content() != null && message.content().contains("display_type")) {
+            for (AgentAction action : actions) {
+                if ("chart".equals(action.name())) {
+                    return action.execute(message, this);
+                }
+            }
+        }
+
         // Default: first registered action (typically SqlGenerationAction)
         return actions.get(0).execute(message, this);
     }

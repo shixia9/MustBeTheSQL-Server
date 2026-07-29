@@ -35,6 +35,12 @@ public class PythonGenerationAction implements AgentAction {
                 vars.put("question", context.content());
                 vars.put("schema_info", context.context().getOrDefault("schemaInfo", ""));
                 vars.put("data_summary", context.context().getOrDefault("dataSummary", ""));
+                vars.put("python_timeout", context.context().getOrDefault("pythonTimeout", "30"));
+                vars.put("python_memory", context.context().getOrDefault("pythonMemory", "256"));
+                vars.put("sample_input", context.context().getOrDefault("sampleInput", ""));
+                vars.put("database_schema", context.context().getOrDefault("schemaInfo", ""));
+                vars.put("plan_description", context.context().getOrDefault("planDescription",
+                        context.currentGoal() != null ? context.currentGoal() : ""));
 
                 String prompt = promptManager.render("python-generator", vars);
                 String rawCode = ca.resolveLlmStrategy().generateSql(prompt, null);
