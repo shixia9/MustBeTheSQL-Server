@@ -100,17 +100,9 @@ public class DataScientistAgent extends ConversableAgent {
             }
         }
 
-        // Multi-candidate mode: find MultiCandidateSqlAction
-        if (multiCandidateMode) {
-            for (AgentAction action : actions) {
-                if ("multi_candidate_sql".equals(action.name())) {
-                    return action.execute(message, this);
-                }
-            }
-        }
-
         // If the LLM response contains display_type chart context,
         // route to ChartAction for SQL execution + vis-db-chart rendering.
+        // Check BEFORE multi-candidate — chart queries want a direct chart path.
         if (message.content() != null && message.content().contains("display_type")) {
             for (AgentAction action : actions) {
                 if ("chart".equals(action.name())) {
@@ -119,7 +111,16 @@ public class DataScientistAgent extends ConversableAgent {
             }
         }
 
-        // Default: first registered action (typically SqlGenerationAction)
+        // Multi-candidate mode: find MultiCandidateSqlAction (non-chart complex queries)
+        if (multiCandidateMode) {
+            for (AgentAction action : actions) {
+                if ("multi_candidate_sql".equals(action.name())) {
+                    return action.execute(message, this);
+                }
+            }
+        }
+
+        // Default: first registered action
         return actions.get(0).execute(message, this);
     }
 

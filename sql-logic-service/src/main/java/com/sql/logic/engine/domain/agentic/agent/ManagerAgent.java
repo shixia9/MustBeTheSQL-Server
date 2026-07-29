@@ -438,6 +438,10 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 data.putAll(ao.data());
             }
             if (ao.content() != null && !ao.content().isBlank()) {
+                // Always include content as a generic field — carries vis-db-chart,
+                // vis-dashboard code fences and other text the frontend needs.
+                data.put("content", ao.content());
+                // Backward-compatible special keys
                 if ("DataScientist".equals(name)) {
                     data.putIfAbsent("sql", ao.content());
                 } else if ("CodeAssistant".equals(name)) {
