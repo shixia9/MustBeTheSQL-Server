@@ -65,6 +65,8 @@ public class SchemaEnrichmentService {
      * Returns a compact table-name listing suitable as a fallback while
      * async enrichment is still in progress.
      */
+    private static final int QUICK_FALLBACK_DDL_MAX_TABLES = 200;
+
     public String buildQuickFallback(Long connectionId, List<String> tableNames, String schemaName) {
         if (connectionId == null || connectionId <= 0) return "";
 
@@ -78,8 +80,29 @@ public class SchemaEnrichmentService {
             StringBuilder sb = new StringBuilder();
             sb.append("Database connection #").append(connectionId);
             if (effectiveSchema != null) sb.append(" · Schema: ").append(effectiveSchema);
-            sb.append("\n\n**Available tables:** ").append(String.join(", ", tables));
-            sb.append("\n_(").append(tables.size()).append(" tables total — schema enrichment in progress)_");
+            sb.append("\n\n");
+
+            // Fetch column-level DDL for the resolved tables so the LLM knows
+            // actual column names/types immediately (avoids "Unknown column" errors).
+            int ddlCount = Math.min(tables.size(), QUICK_FALLBACK_DDL_MAX_TABLES);
+            for (int i = 0; i < ddlCount; i++) {
+                try {
+                    String ddl = databaseMetaDataService.getTableDDL(connectionId, effectiveSchema, tables.get(i));
+                    if (ddl != null && !ddl.isBlank()) {
+                        sb.append(ddl).append("\n");
+                    } else {
+                        sb.append("-- ").append(tables.get(i)).append(" (no DDL available)\n");
+                    }
+                } catch (Exception ignored) {
+                    sb.append("-- ").append(tables.get(i)).append(" (DDL fetch failed)\n");
+                }
+            }
+
+            if (tables.size() > QUICK_FALLBACK_DDL_MAX_TABLES) {
+                sb.append("\n_(").append(tables.size()).append(" tables total — ")
+                        .append(tables.size() - QUICK_FALLBACK_DDL_MAX_TABLES)
+                        .append(" omitted; full schema enrichment in progress)_\n");
+            }
             return sb.toString();
         } catch (Exception e) {
             log.warn("[SchemaEnrichment] Quick fallback failed: {}", e.getMessage());
