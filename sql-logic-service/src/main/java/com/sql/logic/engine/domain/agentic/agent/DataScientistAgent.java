@@ -17,7 +17,7 @@ import java.util.concurrent.CompletableFuture;
  *   <li>Multi-candidate SQL generation for MEDIUM/COMPLEX queries (via
  *       {@link MultiCandidateSqlAction})</li>
  *   <li>Enhanced {@code correctnessCheck()} with execution-based row-count
- *       validation (DB-GPT pattern)</li>
+ *       validation</li>
  *   <li>Simple queries use single-path {@code SqlGenerationAction}</li>
  * </ul>
  * <p>
@@ -143,15 +143,6 @@ public class DataScientistAgent extends ConversableAgent {
 
     /**
      * Validate the SQL result for correctness.
-     * <p>
-     * Phase 4 enhanced checks (DB-GPT {@code correctness_check} pattern):
-     * <ul>
-     *   <li>SQL text is not blank</li>
-     *   <li>SQL passes basic syntax validation (JSQLParser)</li>
-     *   <li>SQL is read-only (SELECT/WITH/SHOW/EXPLAIN)</li>
-     *   <li>If execution result data contains row count, verify rows > 0</li>
-     *   <li>If execution result contains error, fail with the error</li>
-     * </ul>
      */
     protected VerifyResult correctnessCheck(AgentMessage message, ActionOutput actionOutput) {
         String sql = extractSql(actionOutput);
@@ -177,7 +168,7 @@ public class DataScientistAgent extends ConversableAgent {
             return VerifyResult.fail("SQL 语法错误: " + e.getMessage());
         }
 
-        // Execution-based validation (DB-GPT pattern)
+        // Execution-based validation
         if (actionOutput.data() != null) {
             // Check for execution errors
             Object errorObj = actionOutput.data().get("error");
@@ -243,7 +234,7 @@ public class DataScientistAgent extends ConversableAgent {
 
     /**
      * Build the system prompt with chart type injection.
-     * Phase 6: injects display_type chart context (DB-GPT ChartAction pattern).
+     * Phase 6: injects display_type chart context.
      */
     @Override
     protected String buildSystemPrompt(String observation, String memoryContext,
@@ -263,7 +254,7 @@ public class DataScientistAgent extends ConversableAgent {
             sb.append("\n");
         }
 
-        // Phase 6: Chart type context injection (DB-GPT ChartAction pattern)
+        // Phase 6: Chart type context injection
         sb.append("\n### Output Format Requirement\n");
         sb.append(com.sql.logic.engine.domain.agentic.vis.ChartType.buildChartTypePrompt());
         sb.append("\n");
