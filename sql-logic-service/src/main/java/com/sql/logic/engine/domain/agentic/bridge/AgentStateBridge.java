@@ -72,6 +72,9 @@ public final class AgentStateBridge {
                 .putContext("currentStep", getInt(state, SqlAgentSpec.StateKey.CURRENT_STEP))
                 .putContext("repairCount", getInt(state, SqlAgentSpec.StateKey.REPAIR_COUNT))
 
+                // Report mode
+                .putContext("htmlReport", getBoolean(state, "htmlReport"))
+
                 // Resource info
                 .putResourceInfo("tableNames", getString(state, SqlAgentSpec.StateKey.TABLE_NAMES));
 
@@ -163,6 +166,13 @@ public final class AgentStateBridge {
             if (v instanceof Number n) return n.intValue();
             try { return Integer.parseInt(v.toString()); } catch (NumberFormatException e) { return 1; }
         }).orElse(1);
+    }
+
+    private static boolean getBoolean(OverAllState state, String key) {
+        return state.value(key).map(v -> {
+            if (v instanceof Boolean b) return b;
+            return Boolean.parseBoolean(v.toString());
+        }).orElse(false);
     }
 
     private static String extractCurrentStepInstruction(String planJson, int currentStep) {
