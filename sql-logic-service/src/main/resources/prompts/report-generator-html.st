@@ -6,7 +6,12 @@
 ## 第一部分：图表数据JSON
 以JSON数组列出从分析结果中提取的图表定义：
 ```json
-[{"title": "...", "display_type": "response_bar_chart", "sql": "...", "thought": "..."}]
+[\{
+    "title": "...",
+    "display_type": "response_bar_chart",
+    "sql": "...",
+    "thought": "..."
+\}]
 ```
 每个图表对象的字段说明：
 - title: 图表标题
