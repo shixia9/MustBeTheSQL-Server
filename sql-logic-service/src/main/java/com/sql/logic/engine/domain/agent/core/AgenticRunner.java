@@ -87,7 +87,7 @@ public class AgenticRunner {
                                    Long llmConfigId, Long workspaceId, List<String> tableNames,
                                    String schemaName, boolean autoConfirm) {
         return execute(connectionId, userInput, userId, llmConfigId, workspaceId,
-                tableNames, schemaName, autoConfirm, null, "");
+                tableNames, schemaName, autoConfirm, null, "", false);
     }
 
     /**
@@ -96,7 +96,8 @@ public class AgenticRunner {
     public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
                                    Long llmConfigId, Long workspaceId, List<String> tableNames,
                                    String schemaName, boolean autoConfirm,
-                                   Long conversationId, String conversationHistory) {
+                                   Long conversationId, String conversationHistory,
+                                   boolean htmlReport) {
         String threadId = UUID.randomUUID().toString();
         RunnableConfig rc = RunnableConfig.builder().threadId(threadId).build();
 
@@ -114,6 +115,7 @@ public class AgenticRunner {
         initialState.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY,
                 conversationHistory != null ? conversationHistory : "");
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
+        initialState.put("htmlReport", htmlReport);
 
         // Quick fallback schema (fast, no LLM) — available immediately for ManagerAgent routing.
         // The enriched (LLM-filtered) version is built on a background thread and becomes

@@ -498,7 +498,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             "schemaDdl", "schemaInfo", "dialect", "schemaName",
             "evidence", "conversationHistory", "userMemory",
             "agentSystemPrompt", "executionDescription",
-            "threadId", "sessionId"
+            "threadId", "sessionId", "htmlReport"
     );
 
     private void forwardAllContext(AgentMessage source, AgentMessage.Builder target) {

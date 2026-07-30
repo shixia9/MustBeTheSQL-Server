@@ -113,7 +113,8 @@ public class AgenticController {
                 request.getSchemaContext(),
                 autoConfirm,
                 conversationId,
-                historySection
+                historySection,
+                request.getHtmlReport() != null && request.getHtmlReport()
         );
 
         String threadId = handle.getThreadId();
