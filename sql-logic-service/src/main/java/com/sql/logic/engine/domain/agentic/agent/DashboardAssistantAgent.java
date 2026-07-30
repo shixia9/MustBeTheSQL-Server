@@ -37,11 +37,6 @@ public class DashboardAssistantAgent extends ConversableAgent {
                     {constraints}
 
                     """ + ChartType.buildChartTypePrompt() + """
-
-                    从历史消息中提取每条分析SQL，为每条SQL选择合适的display_type，
-                    然后以JSON数组格式输出: [{"title": "...", "display_type": "...", "sql": "...", "thought": "..."}]
-
-                    不要生成新的分析SQL，仅收集和整理已存在的SQL。
                     """)
             .build();
 
@@ -55,6 +50,8 @@ public class DashboardAssistantAgent extends ConversableAgent {
         StringBuilder sb = new StringBuilder();
         sb.append(renderProfilePrompt());
         sb.append("\n");
+
+        boolean htmlReport = Boolean.TRUE.equals(context.getOrDefault("htmlReport", false));
 
         // Inject all step results from context
         @SuppressWarnings("unchecked")
@@ -70,6 +67,31 @@ public class DashboardAssistantAgent extends ConversableAgent {
                         .append("\n");
             }
             sb.append("\n");
+        }
+
+        if (htmlReport) {
+            sb.append("### 输出格式（HTML报告模式）\n\n");
+            sb.append("你需要生成一个完整的分析报告，输出分为三个部分：\n\n");
+            sb.append("**第一部分：图表数据JSON（用于后端解析）**\n");
+            sb.append("以JSON数组格式列出从历史步骤中提取的图表：\n");
+            sb.append("[{\"title\": \"...\", \"display_type\": \"...\", \"sql\": \"...\", \"thought\": \"...\"}]\n\n");
+            sb.append("**第二部分：Markdown过程总结**\n");
+            sb.append("一份完整的分析报告文字摘要，展示在主对话面板。\n\n");
+            sb.append("**第三部分：HTML可视化报告**\n");
+            sb.append("在 ```html 代码块中输出自包含的HTML文档。要求：\n");
+            sb.append("- 完整的HTML文档（DOCTYPE + html + head + body）\n");
+            sb.append("- 所有CSS内嵌在<style>标签中，不引用外部资源\n");
+            sb.append("- 专业Dashboard风格：指标卡片 + 数据表格 + 分析洞察\n");
+            sb.append("- 配色：主色#5b7fd9，成功#3b8c5e，警告#f0a040\n");
+            sb.append("- 不包含JavaScript\n");
+            sb.append("- 可打印、响应式\n\n");
+            sb.append("请按顺序输出：先JSON数组，再Markdown摘要，最后```html代码块。\n");
+        } else {
+            sb.append("### 输出格式\n\n");
+            sb.append("从历史消息中提取每条分析SQL，为每条SQL选择合适的display_type，\n");
+            sb.append("然后以JSON数组格式输出: ");
+            sb.append("[{\"title\": \"...\", \"display_type\": \"...\", \"sql\": \"...\", \"thought\": \"...\"}]\n\n");
+            sb.append("不要生成新的分析SQL，仅收集和整理已存在的SQL。\n");
         }
 
         if (resourceContext != null && !resourceContext.isBlank()) {
