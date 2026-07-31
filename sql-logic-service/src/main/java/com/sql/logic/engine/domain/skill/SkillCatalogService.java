@@ -102,6 +102,23 @@ public class SkillCatalogService {
         return Optional.ofNullable(skillDao.selectById(id));
     }
 
+    /**
+     * Find an active skill by name visible to {@code userId} (the caller's own
+     * private skill or any public skill). Returns {@code null} if no active
+     * skill with that name is accessible. Used by the "/" palette's
+     * {@code inject_prompt} path to resolve a {@code /skillName <task>} input
+     * submitted through the agentic stream.
+     */
+    public Skill findByName(Long userId, String name) {
+        if (name == null || name.isBlank()) return null;
+        LambdaQueryWrapper<Skill> wrapper = new LambdaQueryWrapper<Skill>()
+                .eq(Skill::getStatus, 1)
+                .eq(Skill::getName, name)
+                .and(w -> w.eq(Skill::getUserId, userId).or().eq(Skill::getVisibility, "public"));
+        List<Skill> hits = skillDao.selectList(wrapper);
+        return hits == null || hits.isEmpty() ? null : hits.get(0);
+    }
+
     private Skill loadOwnedOrThrow(Long userId, Long id) {
         Skill existing = skillDao.selectById(id);
         if (existing == null) {

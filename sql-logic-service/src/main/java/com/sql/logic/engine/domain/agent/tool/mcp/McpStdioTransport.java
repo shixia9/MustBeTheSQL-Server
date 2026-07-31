@@ -112,8 +112,13 @@ public class McpStdioTransport implements McpTransport {
             log.info("[McpStdioTransport] Connected to '{}' — initialized: {}", command,
                     initResp != null ? initResp.substring(0, Math.min(80, initResp.length())) : "null");
         } catch (McpException e) {
+            // Clean up the partially-started process/threads so this transport
+            // never leaks a dangling child when initialization fails. close()
+            // is null-safe and idempotent; the caller may also call it again.
+            close();
             throw e;
         } catch (Exception e) {
+            close();
             throw new McpException("Failed to start MCP stdio process '" + command + "': " + e.getMessage(), e);
         }
     }

@@ -12,6 +12,7 @@ import com.sql.logic.engine.domain.agentic.agent.ManagerAgent;
 import com.sql.logic.engine.domain.agentic.config.AgentOrchestrator;
 import com.sql.logic.engine.domain.agentic.enrichment.SchemaEnrichmentService;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
+import com.sql.logic.engine.domain.skill.SkillInvocationResolver;
 import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.domain.trace.TraceContextRegistry;
 import org.slf4j.Logger;
@@ -48,6 +49,7 @@ public class AgenticRunner {
     private final SchemaEnrichmentService schemaEnrichmentService;
     private final ExecutorService schemaLinkingExecutor;
     private final MemoryDomainService memoryDomainService;
+    private final SkillInvocationResolver skillInvocationResolver;
 
     public AgenticRunner(AgentOrchestrator orchestrator,
                          ManagerAgent managerAgent,
@@ -60,7 +62,8 @@ public class AgenticRunner {
                          DatabaseMetaDataService databaseMetaDataService,
                          SchemaEnrichmentService schemaEnrichmentService,
                          ExecutorService schemaLinkingExecutor,
-                         MemoryDomainService memoryDomainService) {
+                         MemoryDomainService memoryDomainService,
+                         SkillInvocationResolver skillInvocationResolver) {
         this.orchestrator = orchestrator;
         this.managerAgent = managerAgent;
         this.hitlSessionRegistry = hitlSessionRegistry;
@@ -72,6 +75,7 @@ public class AgenticRunner {
         this.schemaEnrichmentService = schemaEnrichmentService;
         this.schemaLinkingExecutor = schemaLinkingExecutor;
         this.memoryDomainService = memoryDomainService;
+        this.skillInvocationResolver = skillInvocationResolver;
         try {
             this.compiledGraph = orchestrator.compile(CompileConfig.builder()
                     .saverConfig(SaverConfig.builder().register(new MemorySaver()).build())
@@ -119,8 +123,23 @@ public class AgenticRunner {
         String threadId = UUID.randomUUID().toString();
         RunnableConfig rc = RunnableConfig.builder().threadId(threadId).build();
 
+        // Resolve a "/" skill invocation (e.g. "/skillName <task>" submitted via
+        // the command palette's inject_prompt path) into the skill's rendered
+        // prompt before entering the graph. Skipped for direct toolInvocation
+        // (palette call_tool selections) which take the MCP short-circuit path.
+        // `input` is kept effectively final so it can be captured by the
+        // background enrichment lambda below.
+        SkillInvocationResolver.Result skillResult = (toolInvocation == null && skillInvocationResolver != null)
+                ? skillInvocationResolver.resolve(userId, userInput)
+                : SkillInvocationResolver.Result.notResolved();
+        final String input = skillResult.resolved() ? skillResult.resolvedInput() : userInput;
+        if (skillResult.resolved()) {
+            log.info("[AgenticRunner] '/' skill invocation resolved: skill={}, userId={}",
+                    skillResult.skillName(), userId);
+        }
+
         Map<String, Object> initialState = new LinkedHashMap<>();
-        initialState.put(SqlAgentSpec.StateKey.INPUT, userInput);
+        initialState.put(SqlAgentSpec.StateKey.INPUT, input);
         initialState.put(SqlAgentSpec.StateKey.USER_ID, userId);
         initialState.put(SqlAgentSpec.StateKey.CONNECTION_ID, connectionId);
         initialState.put(SqlAgentSpec.StateKey.LLM_CONFIG_ID, llmConfigId);
@@ -145,7 +164,7 @@ public class AgenticRunner {
 
         // Recall cross-session long-term memories
         List<Map<String, Object>> recalledMemories = (memoryDomainService != null && userId != null)
-                ? memoryDomainService.searchRelevant(userId, null, userInput, 5)
+                ? memoryDomainService.searchRelevant(userId, null, input, 5)
                 : List.of();
         String userMemorySection = formatRecalledMemories(recalledMemories);
         initialState.put(SqlAgentSpec.StateKey.USER_MEMORY, userMemorySection);
@@ -161,7 +180,7 @@ public class AgenticRunner {
         initialState.put(SqlAgentSpec.StateKey.DB_TYPE, dbType);
 
         log.info("[AgenticRunner] Starting 6-Agent graph: threadId={}, autoConfirm={}, connectionId={}, userId={}, llmConfigId={}, input='{}'",
-                threadId, autoConfirm, connectionId, userId, llmConfigId, userInput);
+                threadId, autoConfirm, connectionId, userId, llmConfigId, input);
 
         TraceContext traceContext = new TraceContext(threadId, userId, workspaceId);
         traceContextRegistry.register(threadId, traceContext);
@@ -173,7 +192,7 @@ public class AgenticRunner {
         String convHistory = (conversationHistory != null) ? conversationHistory : "";
         CompletableFuture<String> enrichmentFuture = CompletableFuture.supplyAsync(
                 () -> schemaEnrichmentService.enrich(connectionId, tableNames, schemaName,
-                        userInput, convHistory, "",
+                        input, convHistory, "",
                         llmConfigId, userId, traceContext),
                 schemaLinkingExecutor);
         initialState.put("_schemaEnrichmentFuture", enrichmentFuture);

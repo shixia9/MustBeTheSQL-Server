@@ -221,20 +221,34 @@ public class McpServerManager {
      *                      the user does not own the tool, or the call fails
      */
     public String callTool(String toolName, Map<String, Object> arguments, Long userId) {
-        Long serverId = toolToServer.get(toolName);
-        if (serverId == null) {
-            throw new McpException("MCP tool not found: " + toolName);
-        }
-        McpTransport transport = activeTransports.get(serverId);
-        if (transport == null || !transport.isConnected()) {
-            throw new McpException("MCP server not connected: " + serverId);
-        }
-        // Verify user-scope ownership (skip for anonymous/public calls).
+        // Resolve the owning server. For user-scoped calls, the user's own
+        // ToolDefinition is the authoritative source of serverId — this avoids
+        // the global {@link #toolToServer} map colliding when two users (or two
+        // of a user's servers) expose a tool with the same name, which would
+        // otherwise route the call to the last-registered server. For anonymous
+        // calls (single-agent path, userId=null) we fall back to toolToServer
+        // since there is no user scope to consult.
+        Long serverId;
         if (userId != null) {
             ToolDefinition def = toolRegistry.getTool(userId, toolName);
             if (def == null) {
                 throw new McpException("MCP tool not found in user scope: " + toolName);
             }
+            serverId = def.serverId();
+            if (serverId == null) {
+                // The tool exists in the user's scope but is not an MCP tool
+                // (e.g. a BUILTIN tool). It cannot be routed to an MCP server.
+                throw new McpException("Tool is not an MCP tool: " + toolName);
+            }
+        } else {
+            serverId = toolToServer.get(toolName);
+            if (serverId == null) {
+                throw new McpException("MCP tool not found: " + toolName);
+            }
+        }
+        McpTransport transport = activeTransports.get(serverId);
+        if (transport == null || !transport.isConnected()) {
+            throw new McpException("MCP server not connected: " + serverId);
         }
         try {
             String result = transport.sendRequest("tools/call", Map.of(
