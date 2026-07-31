@@ -1,5 +1,7 @@
 package com.sql.logic.engine.domain.agentic.agent;
 
+import com.sql.logic.engine.domain.agentic.action.McpToolAction;
+import com.sql.logic.engine.domain.agentic.action.McpToolFixAction;
 import com.sql.logic.engine.domain.agentic.core.*;
 import com.sql.logic.engine.domain.agentic.profile.ProfileConfig;
 
@@ -10,6 +12,11 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Tool Assistant Agent — executes and fixes MCP (Model Context Protocol) tool calls.
  * Consolidates MCP_TOOL_EXECUTOR + MCP_TOOL_FIXER nodes into a single Agent.
+ * <p>
+ * The owning {@code userId} is carried in {@link AgentMessage#context()} (key
+ * {@code "userId"}) by {@code ManagerAgent.forwardAllContext} and is read
+ * directly by {@link McpToolAction} / {@link McpToolFixAction}, so this agent
+ * only needs to dispatch to the right action by name.
  */
 public class ToolAssistantAgent extends ConversableAgent {
 
@@ -39,9 +46,15 @@ public class ToolAssistantAgent extends ConversableAgent {
         ActionOutput previousReport = message.actionReport();
         if (previousReport != null && !previousReport.isExeSuccess() && previousReport.hasRetry()) {
             for (AgentAction action : actions) {
-                if ("mcp_tool_fix".equals(action.name())) {
+                if (McpToolFixAction.NAME.equals(action.name())) {
                     return action.execute(message, this);
                 }
+            }
+        }
+        // Default: dispatch to the primary MCP tool execution action.
+        for (AgentAction action : actions) {
+            if (McpToolAction.NAME.equals(action.name())) {
+                return action.execute(message, this);
             }
         }
         return actions.get(0).execute(message, this);

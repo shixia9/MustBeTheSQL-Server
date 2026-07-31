@@ -111,6 +111,15 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                     "originalUserInput", message.content());
             List<Map<String, String>> allStepResults = new ArrayList<>();
 
+            // Direct tool invocation shortcut — when the user picked a tool
+            // from the "/" command palette, the request carries a non-empty
+            // toolInvocation payload (toolName + optional args). Route directly
+            // to ToolAssistantAgent, skipping complexity assessment and Planner.
+            if (hasDirectToolInvocation(message)) {
+                log.info("[Manager] Direct toolInvocation detected → short-circuit to ToolAssistant");
+                return handleToolInvocationPath(threadId, userInput, message, allStepResults);
+            }
+
             // Phase 4: Assess complexity and route
             ComplexityAssessment assessment = assessComplexity(message);
             log.info("[Manager] Complexity assessment: {} → {}", userInput, assessment.level());
@@ -205,6 +214,82 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             planMemory.removeByConvId(threadId);
             return handleFullOrchestration(threadId, userInput, message, allStepResults);
         }
+    }
+
+    // ========================================================================
+    //  Direct tool invocation path — skip Planner, route straight to
+    //  ToolAssistantAgent. The toolInvocation payload (toolName + args) was
+    //  placed in context by AgentStateBridge and forwarded to the sub-agent
+    //  message via CONTEXT_FORWARD_KEYS; McpToolAction reads it as the source
+    //  of truth.
+    // ========================================================================
+
+    private ActionOutput handleToolInvocationPath(String threadId, String userInput,
+                                                  AgentMessage message,
+                                                  List<Map<String, String>> allStepResults) {
+        log.info("[Manager] TOOL_INVOCATION → direct path to ToolAssistant");
+        Agent speaker = agentByName("ToolAssistant");
+        if (speaker == null) {
+            // No ToolAssistant registered — fall back to full orchestration so
+            // the request still produces a meaningful response.
+            log.warn("[Manager] ToolAssistant not registered, falling back to full orchestration");
+            return handleFullOrchestration(threadId, userInput, message, allStepResults);
+        }
+
+        String nodeName = toNodeName(speaker.name());
+        emitSse(threadId, nodeName, "STARTED", null);
+
+        // Create a one-step plan for progress tracking.
+        PlanStep toolStep = new PlanStep(1, "ToolAssistant", userInput, "");
+        toolStep.setStatus(PlanStatus.RUNNING);
+        planMemory.removeByConvId(threadId);
+        planMemory.savePlan(threadId, List.of(toolStep));
+
+        AgentMessage.Builder goalBuilder = AgentMessage.builder()
+                .content(userInput)
+                .currentGoal(userInput)
+                .putContext("plan_task_num", 1)
+                .rounds(message.rounds() + 1);
+        forwardAllContext(message, goalBuilder);
+        AgentMessage goalMessage = goalBuilder.build();
+
+        try {
+            send(goalMessage, speaker).join();
+            AgentMessage reply = speaker.generateReply(goalMessage, this, null, null).join();
+
+            Map<String, Object> eventData = extractSubAgentData(speaker, reply);
+            eventData.put("agentSuccess", reply.success());
+            eventData.put("route", "tool_invocation");
+            emitSse(threadId, nodeName, "FINISHED", eventData);
+
+            if (reply.success()) {
+                String result = reply.actionReport() != null
+                        ? reply.actionReport().content() : reply.content();
+                planMemory.completeTask(threadId, 1, result);
+                allStepResults.add(Map.of("content", userInput, "agent", "ToolAssistant",
+                        "result", result));
+                return ActionOutput.success(result,
+                        Map.of("route", "tool_invocation"));
+            }
+            // Failure: surface the error directly (no escalation — the user
+            // explicitly asked for a tool call, so retrying via Planner would
+            // be confusing).
+            return ActionOutput.fail(reply.content(), true);
+        } catch (Exception e) {
+            log.warn("[Manager] Tool invocation path error: {}", e.getMessage());
+            return ActionOutput.fail("Tool invocation failed: " + e.getMessage(), true);
+        }
+    }
+
+    /**
+     * Whether the current message carries a direct tool invocation payload
+     * (T8.1). The payload is a non-empty Map placed in context under
+     * {@code toolInvocation} by AgentStateBridge.
+     */
+    private boolean hasDirectToolInvocation(AgentMessage message) {
+        if (message == null || message.context() == null) return false;
+        Object v = message.context().get("toolInvocation");
+        return v instanceof Map<?, ?> m && !m.isEmpty();
     }
 
     // ========================================================================
@@ -498,7 +583,10 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             "schemaDdl", "schemaInfo", "dialect", "schemaName",
             "evidence", "conversationHistory", "userMemory",
             "agentSystemPrompt", "executionDescription",
-            "threadId", "sessionId", "htmlReport"
+            "threadId", "sessionId", "htmlReport",
+            // T8.3: forward the direct tool-invocation payload so McpToolAction
+            // can read toolName/args as the source of truth.
+            "toolInvocation"
     );
 
     private void forwardAllContext(AgentMessage source, AgentMessage.Builder target) {

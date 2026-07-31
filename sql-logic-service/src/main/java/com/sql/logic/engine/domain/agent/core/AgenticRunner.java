@@ -102,6 +102,20 @@ public class AgenticRunner {
                                    String schemaName, boolean autoConfirm,
                                    Long conversationId, String conversationHistory,
                                    boolean htmlReport) {
+        return execute(connectionId, userInput, userId, llmConfigId, workspaceId,
+                tableNames, schemaName, autoConfirm, conversationId, conversationHistory,
+                htmlReport, null);
+    }
+
+    /**
+     * Full overload with multi-turn conversation support and an optional direct
+     * tool invocation payload.
+     */
+    public AgentRunHandle execute(Long connectionId, String userInput, Long userId,
+                                   Long llmConfigId, Long workspaceId, List<String> tableNames,
+                                   String schemaName, boolean autoConfirm,
+                                   Long conversationId, String conversationHistory,
+                                   boolean htmlReport, Map<String, Object> toolInvocation) {
         String threadId = UUID.randomUUID().toString();
         RunnableConfig rc = RunnableConfig.builder().threadId(threadId).build();
 
@@ -120,6 +134,14 @@ public class AgenticRunner {
                 conversationHistory != null ? conversationHistory : "");
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
         initialState.put("htmlReport", htmlReport);
+
+        // propagate a direct tool invocation (from the "/" command palette) into state.
+        if (toolInvocation != null && !toolInvocation.isEmpty()) {
+            initialState.put(SqlAgentSpec.StateKey.TOOL_INVOCATION, toolInvocation);
+            log.info("[AgenticRunner] Direct toolInvocation present (toolName={}), "
+                    + "ManagerAgent will short-circuit to ToolAssistantAgent",
+                    toolInvocation.get("toolName"));
+        }
 
         // Recall cross-session long-term memories
         List<Map<String, Object>> recalledMemories = (memoryDomainService != null && userId != null)

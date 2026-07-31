@@ -53,6 +53,10 @@ public final class AgentStateBridge {
                 .putContext("userMemory", getString(state, SqlAgentSpec.StateKey.USER_MEMORY))
                 .putContext("conversationHistory", getString(state, SqlAgentSpec.StateKey.CONVERSATION_HISTORY))
 
+                // Direct tool invocation
+                .putContext(SqlAgentSpec.StateKey.TOOL_INVOCATION,
+                        state.value(SqlAgentSpec.StateKey.TOOL_INVOCATION).orElse(null))
+
                 // Identity
                 .putContext("userId", toLong(state, SqlAgentSpec.StateKey.USER_ID))
                 .putContext("connectionId", toLong(state, SqlAgentSpec.StateKey.CONNECTION_ID))

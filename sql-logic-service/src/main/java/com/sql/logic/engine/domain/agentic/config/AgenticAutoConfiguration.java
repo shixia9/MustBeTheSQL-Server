@@ -5,6 +5,8 @@ import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.python.SimplePythonExecutor;
+import com.sql.logic.engine.domain.agent.tool.ToolInvocationGuard;
+import com.sql.logic.engine.domain.agent.tool.mcp.McpServerManager;
 import com.sql.logic.engine.domain.agent.service.SqlExecutionService;
 import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
 import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
@@ -222,14 +224,17 @@ public class AgenticAutoConfiguration {
     }
 
     @Bean
-    public McpToolAction mcpToolAction() {
-        return new McpToolAction();
+    @ConditionalOnClass(McpServerManager.class)
+    public McpToolAction mcpToolAction(McpServerManager mcpServerManager,
+                                        ToolInvocationGuard toolInvocationGuard) {
+        return new McpToolAction(mcpServerManager, toolInvocationGuard);
     }
 
     @Bean
-    @ConditionalOnClass(PromptManager.class)
-    public McpToolFixAction mcpToolFixAction(PromptManager promptManager) {
-        return new McpToolFixAction(promptManager);
+    @ConditionalOnClass({PromptManager.class, McpServerManager.class})
+    public McpToolFixAction mcpToolFixAction(PromptManager promptManager,
+                                              McpServerManager mcpServerManager) {
+        return new McpToolFixAction(mcpServerManager, promptManager);
     }
 
     // ======================== Agents ========================

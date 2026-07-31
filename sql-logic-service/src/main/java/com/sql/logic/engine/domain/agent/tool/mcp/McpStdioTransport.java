@@ -5,13 +5,20 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.OutputStream;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Scanner;
-import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * MCP transport over stdio (spawn a local MCP server process).
@@ -30,15 +37,24 @@ public class McpStdioTransport implements McpTransport {
 
     private static final Logger log = LoggerFactory.getLogger(McpStdioTransport.class);
 
+    private static final long REQUEST_TIMEOUT_MS = 30000L;
+
     private final String command;
+    private final Map<String, String> envVars;
     private final ObjectMapper objectMapper;
     private final AtomicBoolean connected = new AtomicBoolean(false);
-    private Process process;
-    private Scanner stdout;
-    private OutputStream stdin;
+    private final AtomicLong nextId = new AtomicLong(1);
+    private final ConcurrentHashMap<Long, CompletableFuture<String>> pending = new ConcurrentHashMap<>();
+    private final Object stdinLock = new Object();
 
-    public McpStdioTransport(String command, ObjectMapper objectMapper) {
+    private Process process;
+    private BufferedWriter stdin;
+    private Thread readerThread;
+    private volatile boolean closing = false;
+
+    public McpStdioTransport(String command, Map<String, String> envVars, ObjectMapper objectMapper) {
         this.command = command;
+        this.envVars = envVars;
         this.objectMapper = objectMapper;
     }
 
@@ -58,21 +74,35 @@ public class McpStdioTransport implements McpTransport {
                 pb = new ProcessBuilder(parts[0]);
             }
             pb.redirectErrorStream(false);
+            if (envVars != null && !envVars.isEmpty()) {
+                pb.environment().putAll(envVars);
+            }
             process = pb.start();
-            stdout = new Scanner(process.getInputStream(), StandardCharsets.UTF_8);
-            stdin = process.getOutputStream();
+            stdin = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
+
+            // Start a SINGLE dedicated daemon reader thread that dispatches
+            // responses to the matching pending request by JSON-RPC id.
+            String threadName = "mcp-stdout-" + command.substring(0, Math.min(20, command.length()));
+            readerThread = new Thread(this::readerLoop, threadName);
+            readerThread.setDaemon(true);
+            readerThread.start();
+
             // Capture stderr in a background thread for diagnostics
             Thread stderrReader = new Thread(() -> {
-                try (Scanner err = new Scanner(process.getErrorStream(), StandardCharsets.UTF_8)) {
-                    while (err.hasNextLine()) {
-                        log.debug("[McpStdioTransport stderr] {}", err.nextLine());
+                try (BufferedReader err = new BufferedReader(
+                        new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = err.readLine()) != null) {
+                        log.debug("[McpStdioTransport stderr] {}", line);
                     }
+                } catch (Exception ignored) {
+                    // stream closed on process exit
                 }
             }, "mcp-stderr-" + command.substring(0, Math.min(20, command.length())));
             stderrReader.setDaemon(true);
             stderrReader.start();
 
-            // Send initialize request and read response
+            // Send initialize request and wait for its response (dispatched by reader thread)
             String initResp = sendRequest("initialize", Map.of(
                     "protocolVersion", "0.1.0",
                     "capabilities", Map.of(),
@@ -88,6 +118,75 @@ public class McpStdioTransport implements McpTransport {
         }
     }
 
+    /**
+     * Reader loop: continuously reads lines from the child process stdout,
+     * parses each as a JSON-RPC response, extracts the {@code id} field, and
+     * completes the matching pending {@link CompletableFuture}. Lines without
+     * an {@code id} (notifications) or that fail to parse are logged and skipped.
+     * When stdout closes (process exit), any still-pending requests are failed.
+     */
+    private void readerLoop() {
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while (!closing && (line = br.readLine()) != null) {
+                if (line.isBlank()) continue;
+                dispatchResponse(line);
+            }
+        } catch (Exception e) {
+            if (!closing) {
+                log.warn("[McpStdioTransport] stdout reader terminated: {}", e.getMessage());
+            }
+        } finally {
+            // Fail any still-pending requests so callers don't hang forever
+            McpException closed = new McpException("MCP stdio process closed before response");
+            for (CompletableFuture<String> f : pending.values()) {
+                f.completeExceptionally(closed);
+            }
+            pending.clear();
+        }
+    }
+
+    private void dispatchResponse(String line) {
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(line);
+        } catch (Exception e) {
+            log.debug("[McpStdioTransport] Unparsable stdout line (skipped): {} ({})", line, e.getMessage());
+            return;
+        }
+        JsonNode idNode = root.get("id");
+        if (idNode == null || idNode.isNull()) {
+            // Notification (no id) — log and skip
+            log.debug("[McpStdioTransport] ← notification: {}", line);
+            return;
+        }
+        long id;
+        if (idNode.isNumber()) {
+            id = idNode.asLong();
+        } else {
+            try {
+                id = Long.parseLong(idNode.asText());
+            } catch (NumberFormatException nfe) {
+                log.warn("[McpStdioTransport] Cannot parse id from response (skipped): {}", line);
+                return;
+            }
+        }
+        CompletableFuture<String> future = pending.remove(id);
+        if (future == null) {
+            log.warn("[McpStdioTransport] No pending request for id={} (response: {})", id, line);
+            return;
+        }
+        if (root.has("error")) {
+            JsonNode err = root.get("error");
+            String msg = err.has("message") ? err.get("message").asText() : err.toString();
+            future.completeExceptionally(new McpException("MCP JSON-RPC error: " + msg));
+        } else {
+            JsonNode result = root.get("result");
+            future.complete(result != null ? result.toString() : null);
+        }
+    }
+
     @Override
     public boolean isConnected() {
         return connected.get() && process != null && process.isAlive();
@@ -98,51 +197,71 @@ public class McpStdioTransport implements McpTransport {
         if (process == null || !process.isAlive()) {
             throw new McpException("MCP stdio transport is not connected");
         }
+        long id = nextId.getAndIncrement();
+        CompletableFuture<String> future = new CompletableFuture<>();
+        pending.put(id, future);
         try {
-            String requestId = UUID.randomUUID().toString().substring(0, 8);
-            Map<String, Object> rpc = new java.util.LinkedHashMap<>();
+            Map<String, Object> rpc = new LinkedHashMap<>();
             rpc.put("jsonrpc", "2.0");
             rpc.put("method", method);
             rpc.put("params", params);
-            rpc.put("id", requestId);
+            rpc.put("id", id);
             String requestJson = objectMapper.writeValueAsString(rpc);
 
-            log.debug("[McpStdioTransport] → {} {}", method, params.keySet());
-            stdin.write((requestJson + "\n").getBytes(StandardCharsets.UTF_8));
-            stdin.flush();
-
-            // Read response line (with timeout)
-            String line = null;
-            long deadline = System.currentTimeMillis() + 30000;
-            while (System.currentTimeMillis() < deadline) {
-                if (stdout.hasNextLine()) {
-                    line = stdout.nextLine();
-                    break;
+            log.debug("[McpStdioTransport] → {} (id={}) {}", method, id, params.keySet());
+            synchronized (stdinLock) {
+                if (stdin == null) {
+                    throw new McpException("MCP stdio transport stdin is closed");
                 }
-                try { Thread.sleep(10); } catch (InterruptedException ignored) {}
-            }
-            if (line == null || line.isBlank()) {
-                throw new McpException("No response from MCP stdio process for " + method + " within 30s");
+                stdin.write(requestJson);
+                stdin.write("\n");
+                stdin.flush();
             }
 
-            JsonNode root = objectMapper.readTree(line);
-            if (root.has("error")) {
-                JsonNode err = root.get("error");
-                String msg = err.has("message") ? err.get("message").asText() : err.toString();
-                throw new McpException("MCP JSON-RPC error for " + method + ": " + msg);
+            try {
+                return future.get(REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                pending.remove(id);
+                future.cancel(true);
+                throw new McpException("No response from MCP stdio process for " + method + " within 30s");
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof McpException) {
+                    throw (McpException) cause;
+                }
+                throw new McpException("MCP stdio request '" + method + "' failed: "
+                        + (cause != null ? cause.getMessage() : e.getMessage()),
+                        cause != null ? cause : e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                pending.remove(id);
+                future.cancel(true);
+                throw new McpException("MCP stdio request '" + method + "' interrupted", e);
             }
-            JsonNode result = root.get("result");
-            return result != null ? objectMapper.writeValueAsString(result) : null;
         } catch (McpException e) {
+            pending.remove(id);
             throw e;
         } catch (Exception e) {
+            pending.remove(id);
             throw new McpException("MCP stdio request '" + method + "' failed: " + e.getMessage(), e);
         }
     }
 
     @Override
     public void close() {
+        closing = true;
         connected.set(false);
+        // Fail any pending requests so waiting callers don't hang
+        McpException closed = new McpException("MCP stdio transport closed");
+        for (CompletableFuture<String> f : pending.values()) {
+            f.completeExceptionally(closed);
+        }
+        pending.clear();
+        synchronized (stdinLock) {
+            if (stdin != null) {
+                try { stdin.close(); } catch (Exception ignored) {}
+            }
+        }
         if (process != null) {
             try {
                 process.destroyForcibly().waitFor(5, TimeUnit.SECONDS);
@@ -150,6 +269,9 @@ public class McpStdioTransport implements McpTransport {
                 Thread.currentThread().interrupt();
             }
             log.info("[McpStdioTransport] Process terminated: {}", command);
+        }
+        if (readerThread != null) {
+            readerThread.interrupt();
         }
     }
 }
