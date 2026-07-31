@@ -234,6 +234,8 @@ public abstract class ConversableAgent implements Agent {
                     try { this.currentRequestLlmConfigId = Long.parseLong(s); } catch (NumberFormatException ignored) {}
                 }
             }
+            String threadId = extractContextString(
+                    receivedMessage != null ? receivedMessage.context() : Map.of(), "threadId");
 
             for (int retry = 0; retry < maxRetryCount; retry++) {
                 try {
@@ -248,7 +250,7 @@ public abstract class ConversableAgent implements Agent {
                     if (contextManager != null) {
                         String taskProgress = memory != null ? memory.getTaskProgressSummary() : null;
                         thinkingMessages = contextManager.manageContext(
-                                thinkingMessages, retry, taskProgress);
+                                thinkingMessages, retry, taskProgress, threadId);
                     }
 
                     // Step 2: Thinking (LLM inference)
@@ -310,7 +312,7 @@ public abstract class ConversableAgent implements Agent {
                                     relyMessages, historicalDialogues,
                                     replyMessage.context()
                             );
-                            var compacted = contextManager.reactiveCompact(messages);
+                            var compacted = contextManager.reactiveCompact(messages, threadId);
                             // Retry with compacted context
                             String llmOutput = thinking(compacted);
                             replyMessage = replyMessage.withContent(llmOutput);
@@ -388,6 +390,16 @@ public abstract class ConversableAgent implements Agent {
         String systemPrompt = buildSystemPrompt(observation, memoryContext, resourceContext, context);
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             messages.add(AgentMessage.system(systemPrompt));
+        }
+
+        // Inject recalled cross-session user memory
+        String userMemory = extractContextString(context, "userMemory");
+        if (userMemory != null && !userMemory.isBlank()) {
+            messages.add(AgentMessage.system(userMemory));
+        }
+        String conversationHistory = extractContextString(context, "conversationHistory");
+        if (conversationHistory != null && !conversationHistory.isBlank()) {
+            messages.add(AgentMessage.system("### 对话历史\n" + conversationHistory));
         }
 
         // 3b. Skill injection

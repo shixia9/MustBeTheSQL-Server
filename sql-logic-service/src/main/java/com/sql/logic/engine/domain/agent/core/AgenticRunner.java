@@ -11,6 +11,7 @@ import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agentic.agent.ManagerAgent;
 import com.sql.logic.engine.domain.agentic.config.AgentOrchestrator;
 import com.sql.logic.engine.domain.agentic.enrichment.SchemaEnrichmentService;
+import com.sql.logic.engine.domain.memory.MemoryDomainService;
 import com.sql.logic.engine.domain.trace.TraceContext;
 import com.sql.logic.engine.domain.trace.TraceContextRegistry;
 import org.slf4j.Logger;
@@ -46,6 +47,7 @@ public class AgenticRunner {
     private final DatabaseMetaDataService databaseMetaDataService;
     private final SchemaEnrichmentService schemaEnrichmentService;
     private final ExecutorService schemaLinkingExecutor;
+    private final MemoryDomainService memoryDomainService;
 
     public AgenticRunner(AgentOrchestrator orchestrator,
                          ManagerAgent managerAgent,
@@ -57,7 +59,8 @@ public class AgenticRunner {
                          AgentSseCodec codec,
                          DatabaseMetaDataService databaseMetaDataService,
                          SchemaEnrichmentService schemaEnrichmentService,
-                         ExecutorService schemaLinkingExecutor) {
+                         ExecutorService schemaLinkingExecutor,
+                         MemoryDomainService memoryDomainService) {
         this.orchestrator = orchestrator;
         this.managerAgent = managerAgent;
         this.hitlSessionRegistry = hitlSessionRegistry;
@@ -68,6 +71,7 @@ public class AgenticRunner {
         this.databaseMetaDataService = databaseMetaDataService;
         this.schemaEnrichmentService = schemaEnrichmentService;
         this.schemaLinkingExecutor = schemaLinkingExecutor;
+        this.memoryDomainService = memoryDomainService;
         try {
             this.compiledGraph = orchestrator.compile(CompileConfig.builder()
                     .saverConfig(SaverConfig.builder().register(new MemorySaver()).build())
@@ -114,6 +118,13 @@ public class AgenticRunner {
         initialState.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY,
                 conversationHistory != null ? conversationHistory : "");
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
+
+        // Recall cross-session long-term memories
+        List<Map<String, Object>> recalledMemories = (memoryDomainService != null && userId != null)
+                ? memoryDomainService.searchRelevant(userId, null, userInput, 5)
+                : List.of();
+        String userMemorySection = formatRecalledMemories(recalledMemories);
+        initialState.put(SqlAgentSpec.StateKey.USER_MEMORY, userMemorySection);
 
         // Quick fallback schema (fast, no LLM) — available immediately for ManagerAgent routing.
         // The enriched (LLM-filtered) version is built on a background thread and becomes
@@ -228,6 +239,26 @@ public class AgenticRunner {
             log.debug("[AgenticRunner] Failed to resolve dbType: {}", e.getMessage());
         }
         return "mysql";
+    }
+
+    /**
+     * Format recalled long-term memories into a compact section for the system prompt.
+     */
+    private String formatRecalledMemories(List<Map<String, Object>> memories) {
+        if (memories == null || memories.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder("## 用户偏好与历史洞察\n");
+        for (Map<String, Object> m : memories) {
+            Object content = m.get("content");
+            if (content == null || content.toString().isBlank()) continue;
+            Object type = m.get("type");
+            String tag = (type != null && !type.toString().isBlank())
+                    ? ("[" + type + "] ") : "";
+            sb.append("- ").append(tag).append(content).append("\n");
+        }
+        String result = sb.toString().trim();
+        if (result.equals("## 用户偏好与历史洞察")) return "";
+        log.debug("[AgenticRunner] Recalled {} user memories for prompt injection", memories.size());
+        return result;
     }
 
     /**

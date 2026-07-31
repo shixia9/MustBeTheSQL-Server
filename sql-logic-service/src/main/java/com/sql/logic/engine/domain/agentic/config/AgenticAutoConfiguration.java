@@ -82,8 +82,9 @@ public class AgenticAutoConfiguration {
 
     @Bean
     public ContextManager contextManager(ContextBudgetConfig config,
-                                         LlmClientManager llmClientManager) {
-        return new ContextManager(config, llmClientManager);
+                                         LlmClientManager llmClientManager,
+                                         AgentEventSinkRegistry eventSinkRegistry) {
+        return new ContextManager(config, llmClientManager, eventSinkRegistry);
     }
 
     @Bean

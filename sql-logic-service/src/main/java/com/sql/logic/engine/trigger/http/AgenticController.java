@@ -314,8 +314,10 @@ public class AgenticController {
             Long workspaceId = handle.getContext().getWorkspaceId();
             Long llmConfigId = handle.getContext().getLlmConfigId();
             Long agentId = readLongState(handle, SqlAgentSpec.StateKey.AGENT_ID);
+            String report = readStateValue(handle, SqlAgentSpec.StateKey.REPORT_RESULT, "");
+            String sessionSummary = (report != null && !report.isBlank()) ? report : userInput;
             memoryExtractorService.extractAndPersistAsync(
-                    userId, workspaceId, agentId, handle.getThreadId(), userInput, userInput, llmConfigId);
+                    userId, workspaceId, agentId, handle.getThreadId(), userInput, sessionSummary, llmConfigId);
         } catch (Exception e) {
             log.debug("[AgenticController] Memory extraction safe trigger skipped: {}", e.getMessage());
         }
