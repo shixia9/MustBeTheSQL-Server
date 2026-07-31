@@ -91,11 +91,17 @@ public class ComplexityRouter {
         return """
                 You are a complexity classifier for SQL query analysis pipelines.
 
+                Core principle: judge by the user's OUTPUT INTENT, not just technical steps.
+                If the user explicitly asks for a report, chart, dashboard, or structured
+                analysis summary, classify as COMPLEX regardless of SQL count — because
+                these require the full orchestration pipeline (analyze → execute → report).
+
                 Classify the user question as one of:
-                1. SIMPLE — answerable with a single SQL query (direct lookup, count, aggregation, simple JOIN)
-                2. MEDIUM — requires 2-3 SQL steps or one SQL + light analysis
-                3. COMPLEX — requires multi-step analysis, Python computation, or report generation
-                4. CLARIFY — question is ambiguous or missing critical information
+                1. SIMPLE — user only wants raw data, no report or chart needed.
+                   A single SQL is sufficient to satisfy the request.
+                2. COMPLEX — user wants a report, chart, dashboard, multi-dimensional
+                   analysis with recommendations, or requires multi-step processing.
+                3. CLARIFY — question is ambiguous or missing critical information.
 
                 User question: %s
 
@@ -103,7 +109,7 @@ public class ComplexityRouter {
 
                 Evidence summary: %s
 
-                Output only a JSON object: {"complexity": "SIMPLE|MEDIUM|COMPLEX|CLARIFY", "reason": "..."}
+                Output only a JSON object: {"complexity": "SIMPLE|COMPLEX|CLARIFY", "reason": "..."}
                 """.formatted(userQuery, schemaSummary, evidenceSummary);
     }
 

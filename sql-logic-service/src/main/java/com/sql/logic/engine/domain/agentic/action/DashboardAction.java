@@ -78,7 +78,22 @@ public class DashboardAction implements AgentAction {
                 vars.put("history_summary", historySummary.toString());
                 vars.put("additional_notes", context.context().getOrDefault("additionalNotes", ""));
 
-                String templateName = "report-generator-plain";
+                // Populate all template variables from forwarded context for rich report quality
+                vars.put("system_prompt_section",
+                        context.context().getOrDefault("agentSystemPrompt", ""));
+                vars.put("user_requirements_and_plan",
+                        "用户问题: " + context.context().getOrDefault("question", ""));
+                vars.put("conversation_history_section",
+                        context.context().getOrDefault("conversationHistory", ""));
+                vars.put("user_memory_section",
+                        context.context().getOrDefault("userMemory", ""));
+                vars.put("analysis_steps_and_data", historySummary.toString());
+                vars.put("summary_and_recommendations", "请基于以上数据给出总结与建议");
+                vars.put("json_example", "{}");
+
+                boolean htmlReport = Boolean.TRUE.equals(
+                        context.context().getOrDefault("htmlReport", false));
+                String templateName = htmlReport ? "report-generator-html" : "report-generator-plain";
                 String prompt = promptManager.render(templateName, vars);
                 String llmOutput = ca.resolveLlmStrategy().generateSql(prompt, null);
 

@@ -19,4 +19,7 @@ public class SqlGenerateRequest {
     private Long workspaceId;
     
     private Long conversationId;
+
+    /** Request HTML report format from DashboardAction. */
+    private Boolean htmlReport;
 }
