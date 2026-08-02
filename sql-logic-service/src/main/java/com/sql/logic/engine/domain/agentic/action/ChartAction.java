@@ -64,11 +64,12 @@ public class ChartAction implements AgentAction {
                 // Extract identity fields from message context
                 Long ctxUserId = toLong(context.context().get("userId"));
                 Long ctxConnectionId = toLong(context.context().get("connectionId"));
+                String schemaName = (String) context.context().get("schemaName");
 
                 // Execute the SQL
                 Map<String, Object> execResult;
                 try {
-                    SqlExecutionResult result = sqlExecutionService.execute(ctxUserId, ctxConnectionId, input.sql);
+                    SqlExecutionResult result = sqlExecutionService.execute(ctxUserId, ctxConnectionId, input.sql, schemaName);
                     if (result.hasError()) {
                         log.warn("[ChartAction] SQL execution error: {}", result.getErrorMsg());
                         return new ActionOutput(false,

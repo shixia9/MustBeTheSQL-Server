@@ -104,13 +104,14 @@ public class DashboardAction implements AgentAction {
                     // Extract identity fields from message context
                     Long ctxUserId = toLong(context.context().get("userId"));
                     Long ctxConnectionId = toLong(context.context().get("connectionId"));
+                    String schemaName = (String) context.context().get("schemaName");
 
                     // Re-execute each SQL to get fresh data
                     List<ChartItem> withData = new ArrayList<>();
                     for (ChartItem item : chartItems) {
                         try {
                             SqlExecutionResult result =
-                                    sqlExecutionService.execute(ctxUserId, ctxConnectionId, item.sql());
+                                    sqlExecutionService.execute(ctxUserId, ctxConnectionId, item.sql(), schemaName);
                             List<Map<String, Object>> rows = result.getRows();
                             if (result.hasError()) {
                                 withData.add(item.withError(result.getErrorMsg()));

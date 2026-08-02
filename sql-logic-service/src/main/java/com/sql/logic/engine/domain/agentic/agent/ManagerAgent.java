@@ -18,6 +18,8 @@ import reactor.core.publisher.Sinks;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Orchestration Manager Agent — the core scheduler that coordinates
@@ -72,6 +74,10 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             "ToolAssistant", "TOOL_ASSISTANT",
             "Planner", "PLANNER"
     );
+
+    /** Extracts the content inside a {@code ```html ... ```} code fence. */
+    private static final Pattern HTML_FENCE_RE =
+            Pattern.compile("```html\\s*\\n?(.*?)```", Pattern.DOTALL);
 
     private static String toNodeName(String agentName) {
         return NODE_NAME_MAP.getOrDefault(agentName, agentName.toUpperCase());
@@ -198,6 +204,34 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 planMemory.completeTask(threadId, 1, result);
                 allStepResults.add(Map.of("content", userInput, "agent", "DataScientist",
                         "result", result));
+
+                // Generate a text summary for the left-panel timeline.
+                if (dashboardAgent != null && !allStepResults.isEmpty()) {
+                    try {
+                        emitSse(threadId, "DASHBOARD", "STARTED", null);
+                        AgentMessage.Builder summaryBuilder = AgentMessage.builder()
+                                .content("请基于以下单步分析结果，用2-4句话生成一个简洁的分析总结，"
+                                        + "包括关键数据发现和洞察。不要生成JSON或图表定义，只输出纯文本总结。")
+                                .putContext("stepResults", allStepResults)
+                                .putContext("question", userInput)
+                                .putContext("htmlReport", false)
+                                .rounds(message.rounds() + 1);
+                        forwardAllContext(message, summaryBuilder);
+                        AgentMessage summaryMessage = summaryBuilder.build();
+                        AgentMessage report = dashboardAgent.generateReply(
+                                summaryMessage, this, null, null).join();
+
+                        Map<String, Object> reportData = new LinkedHashMap<>();
+                        reportData.put("content", report.content());
+                        reportData.put("agentSuccess", report.success());
+                        reportData.put("route", "fast_path");
+                        emitSse(threadId, "DASHBOARD", "FINISHED", reportData);
+                    } catch (Exception e) {
+                        log.warn("[Manager] SIMPLE path summary failed, continuing: {}",
+                                e.getMessage());
+                    }
+                }
+
                 return ActionOutput.success(result,
                         Map.of("route", "fast_path", "complexity", "SIMPLE"));
             } else {
@@ -448,9 +482,16 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                     summaryMessage, this, null, null).join();
 
             Map<String, Object> reportData = new LinkedHashMap<>();
-            reportData.put("report", report.content());
             reportData.put("agentSuccess", report.success());
             reportData.put("route", "full_orchestration");
+            String fullReport = report.content();
+            String htmlBlock = extractHtmlFence(fullReport);
+            if (htmlBlock != null && !htmlBlock.isBlank()) {
+                reportData.put("htmlContent", htmlBlock);
+                reportData.put("report", HTML_FENCE_RE.matcher(fullReport).replaceAll("").trim());
+            } else {
+                reportData.put("report", fullReport);
+            }
             emitSse(threadId, "DASHBOARD", "FINISHED", reportData);
 
             return ActionOutput.success(report.content(),
@@ -568,6 +609,20 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     }
 
     public String getPendingThreadId() { return pendingThreadId; }
+
+    // ========================================================================
+    //  HTML fence extraction
+    // ========================================================================
+
+    /**
+     * Extract the content inside a {@code ```html ... ```} code fence from a
+     * dashboard report. Returns {@code null} when no HTML block is present.
+     */
+    static String extractHtmlFence(String text) {
+        if (text == null) return null;
+        Matcher m = HTML_FENCE_RE.matcher(text);
+        return m.find() ? m.group(1).trim() : null;
+    }
 
     // ========================================================================
     //  Helpers
