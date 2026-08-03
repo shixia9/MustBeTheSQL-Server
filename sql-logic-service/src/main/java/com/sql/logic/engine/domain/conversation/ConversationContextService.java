@@ -63,18 +63,6 @@ public class ConversationContextService {
                 return existing;
             }
         }
-        if (userId != null) {
-            Date twoHoursAgo = new Date(System.currentTimeMillis() - 2 * 60 * 60 * 1000);
-            var wrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Conversation>()
-                    .eq("user_id", userId)
-                    .ge("update_time", twoHoursAgo)
-                    .orderByDesc("update_time")
-                    .last("LIMIT 1");
-            List<Conversation> recent = conversationDao.selectList(wrapper);
-            if (recent != null && !recent.isEmpty()) {
-                return recent.get(0);
-            }
-        }
         Conversation conv = new Conversation();
         conv.setUserId(userId);
         conv.setTitle(truncateForTitle(userInput));
