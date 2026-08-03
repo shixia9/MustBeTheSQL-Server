@@ -224,34 +224,23 @@ CREATE TABLE IF NOT EXISTS workflow_definition (
     INDEX idx_wf_workspace (workspace_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Workflow DSL definitions';
 
-CREATE TABLE IF NOT EXISTS skill_definition (
+-- skill_definition and skill_embedding (Phase E) have been superseded by the
+-- `skill` table (V015) and dropped by V016. The 3 built-in seed skills were
+-- migrated into `skill` as public system skills (see INSERT below).
+
+CREATE TABLE IF NOT EXISTS skill (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
-    description VARCHAR(500) NOT NULL,
-    category VARCHAR(50) NOT NULL DEFAULT 'general',
-    version VARCHAR(20) NOT NULL DEFAULT '1.0.0',
-    prompt_template MEDIUMTEXT NOT NULL,
-    required_tools TEXT DEFAULT NULL,
-    required_knowledge TEXT DEFAULT NULL,
-    tags TEXT DEFAULT NULL,
-    config_json MEDIUMTEXT DEFAULT NULL,
-    is_public TINYINT(1) DEFAULT 0,
-    author_id BIGINT DEFAULT NULL,
-    workspace_id BIGINT DEFAULT NULL,
+    user_id BIGINT NOT NULL COMMENT 'Owner of the skill (0 = system/public)',
+    name VARCHAR(255) NOT NULL COMMENT 'Skill name shown in the "/" palette',
+    description VARCHAR(512) DEFAULT NULL COMMENT 'Short human-readable summary',
+    prompt_template TEXT NOT NULL COMMENT 'Prompt template with ${var} placeholders',
+    bind_tools JSON DEFAULT NULL COMMENT 'JSON array of bound tool names, e.g. ["sql_generation"]',
+    visibility VARCHAR(32) NOT NULL DEFAULT 'private' COMMENT 'public | private',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=active, 0=archived (soft delete)',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_skill_public (is_public),
-    INDEX idx_skill_author (author_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='User-created skills for Skill Hub';
-
-CREATE TABLE IF NOT EXISTS skill_embedding (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    skill_name VARCHAR(100) NOT NULL,
-    embedding_vector JSON NOT NULL,
-    model_name VARCHAR(50) DEFAULT 'ngram-hash',
-    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_skill_embedding_name (skill_name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Skill embeddings for semantic matching';
+    INDEX idx_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Lightweight skill = packaged prompt template optionally bound to tools';
 
 CREATE TABLE IF NOT EXISTS evaluation_task (
     id VARCHAR(32) PRIMARY KEY,
@@ -271,17 +260,20 @@ CREATE TABLE IF NOT EXISTS evaluation_task (
     INDEX idx_eval_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='BIRD/Spider evaluation tasks';
 
-INSERT IGNORE INTO skill_definition (name, description, category, version, prompt_template, required_tools, required_knowledge, tags, is_public, author_id)
+-- Built-in seed skills (migrated from the dropped skill_definition table by V016).
+-- user_id=0 denotes the system/public owner; visibility='public' makes them
+-- surface in every user's "/" command palette.
+INSERT IGNORE INTO skill (user_id, name, description, prompt_template, bind_tools, visibility, status)
 VALUES
-('sales-analysis', '销售数据分析: 分析销售额、订单量、客单价等核心指标', 'analysis', '1.0.0',
+(0, 'sales-analysis', '销售数据分析: 分析销售额、订单量、客单价等核心指标',
  'When analyzing sales data:\n1. Start with overall metrics (total revenue, order count, average order value)\n2. Break down by dimensions (time, region, product category, channel)\n3. Compare against previous period for trend analysis\n4. Identify top/bottom performers\n5. Use appropriate aggregations (SUM, AVG, COUNT DISTINCT)',
- '["sql_generation", "sql_execution"]', '["sales_schema", "revenue_metrics"]', '["sales", "revenue", "gmv"]', 1, NULL),
-('user-retention', '用户留存分析: 分析用户留存率、流失点、留存曲线', 'analysis', '1.0.0',
+ '["sql_generation", "sql_execution"]', 'public', 1),
+(0, 'user-retention', '用户留存分析: 分析用户留存率、流失点、留存曲线',
  'When analyzing user retention:\n1. Define the cohort by first action date\n2. Calculate Day-N retention (N=1,3,7,14,30)\n3. Identify drop-off points in the user journey\n4. Segment by acquisition channel or user attributes\n5. Use window functions for cohort analysis (LAG, LEAD, ROW_NUMBER)',
- '["sql_generation", "sql_execution", "python_analysis"]', '["user_schema", "retention_metrics"]', '["retention", "cohort", "user"]', 1, NULL),
-('anomaly-detection', '异常检测: 识别数据中的异常值、突变点和异常模式', 'analysis', '1.0.0',
+ '["sql_generation", "sql_execution", "python_analysis"]', 'public', 1),
+(0, 'anomaly-detection', '异常检测: 识别数据中的异常值、突变点和异常模式',
  'When detecting anomalies:\n1. Calculate baseline statistics (mean, stddev, percentiles)\n2. Use z-score or IQR methods for outlier detection\n3. Compare current vs historical trends\n4. Flag values exceeding 2 standard deviations\n5. Provide context on why flagged values are anomalous',
- '["sql_generation", "sql_execution", "python_analysis"]', '["statistical_functions"]', '["anomaly", "outlier", "statistics"]', 1, NULL);
+ '["sql_generation", "sql_execution", "python_analysis"]', 'public', 1);
 
 -- ===================================================================
 -- App Builder
