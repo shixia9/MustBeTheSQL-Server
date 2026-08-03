@@ -41,3 +41,12 @@ dubbo:
   provider:
     retries: 0
     timeout: 5000
+
+# ─────────────────────────────────────────────────────────────
+# Schedule module (scheduled_task execution engine)
+# Defaults are embedded in code; override here or via Nacos.
+# ─────────────────────────────────────────────────────────────
+schedule:
+  poll-interval-ms: 60000      # cron poller fixed-delay (ms)
+  run-timeout-default-s: 600   # default per-run timeout (seconds)
+  executor-pool-size: 4        # runner dispatch thread pool size

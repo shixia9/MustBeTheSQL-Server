@@ -8,4 +8,9 @@ public class ScheduledTaskCreateRequest {
     private String cronExpr;
     private String taskType;
     private String payload;
+    private String description;
+    private String timeZone;
+    private Integer timeoutSeconds;
+    private Integer maxRetries;
+    private Integer payloadVersion;
 }

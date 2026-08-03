@@ -14,4 +14,11 @@ public class ScheduledTaskResponse {
     private String nextRunTime;
     private String createTime;
     private String updateTime;
+    private String description;
+    private String timeZone;
+    private Integer timeoutSeconds;
+    private Integer maxRetries;
+    private String lastRunStatus;
+    private Long lastRunId;
+    private Integer payloadVersion;
 }

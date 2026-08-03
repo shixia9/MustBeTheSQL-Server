@@ -9,4 +9,8 @@ public class ScheduledTaskUpdateRequest {
     private String cronExpr;
     private String taskType;
     private String payload;
+    private String description;
+    private String timeZone;
+    private Integer timeoutSeconds;
+    private Integer maxRetries;
 }

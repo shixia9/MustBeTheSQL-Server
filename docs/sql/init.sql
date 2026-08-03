@@ -412,3 +412,47 @@ CREATE TABLE IF NOT EXISTS task_progress_snapshot (
     INDEX idx_conv_id (conv_id),
     INDEX idx_conv_step (conv_id, step_number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Persisted task progress snapshots for agent workflows';
+
+-- ============================================================
+-- Schedule module
+-- scheduled_task: cron-based recurring tasks per user.
+-- scheduled_run: execution history — one row per task trigger.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS scheduled_task (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description VARCHAR(512) NULL COMMENT 'Task description',
+    cron_expr VARCHAR(128) NOT NULL,
+    time_zone VARCHAR(64) NULL COMMENT 'JVM ZoneId, e.g. Asia/Shanghai; null = server default',
+    timeout_seconds INT NULL COMMENT 'Per-run timeout; null = use default 600',
+    max_retries INT NULL DEFAULT 0 COMMENT 'Retry attempts on failure (reserved)',
+    task_type VARCHAR(64) NULL COMMENT 'e.g. SQL_EXPORT, REPORT, SYNC',
+    payload TEXT NULL COMMENT 'JSON task parameters',
+    payload_version INT NULL DEFAULT 1 COMMENT 'Payload schema version',
+    status INT DEFAULT 1 COMMENT '0=paused, 1=running',
+    last_run_status VARCHAR(16) NULL COMMENT 'success/failed/timeout',
+    last_run_id BIGINT NULL COMMENT 'FK to scheduled_run.id of last execution',
+    last_run_time DATETIME NULL,
+    next_run_time DATETIME NULL,
+    create_time DATETIME,
+    update_time DATETIME,
+    INDEX idx_sched_task_user (user_id),
+    INDEX idx_sched_due (status, next_run_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Cron-based recurring task owned by a user';
+
+CREATE TABLE IF NOT EXISTS scheduled_run (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_id BIGINT NOT NULL COMMENT 'FK to scheduled_task.id',
+    started_at DATETIME NOT NULL COMMENT 'Run start time',
+    finished_at DATETIME NULL COMMENT 'Run finish time',
+    status VARCHAR(16) NOT NULL COMMENT 'running / success / failed / timeout',
+    result_summary TEXT NULL COMMENT 'Result summary (final text + artifact count)',
+    error_message TEXT NULL COMMENT 'Error message if failed/timeout',
+    output_conversation_id VARCHAR(64) NULL COMMENT 'Conversation id produced by this run',
+    attempt INT NOT NULL DEFAULT 1 COMMENT 'Attempt number (for future retry support)',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_run_task_started (task_id, started_at),
+    INDEX idx_run_status (status),
+    CONSTRAINT fk_run_task FOREIGN KEY (task_id) REFERENCES scheduled_task(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Scheduled task execution history (one row per trigger)';
