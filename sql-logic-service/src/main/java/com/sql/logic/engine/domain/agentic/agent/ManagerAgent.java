@@ -209,13 +209,15 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 allStepResults.add(Map.of("content", userInput, "agent", "DataScientist",
                         "result", result));
 
-                // Generate a text summary for the left-panel timeline.
+                // Generate a summary for the left-panel timeline via DashboardAgent.
+                // The agent outputs JSON chart items + Markdown + optional HTML;
+                // the frontend StepTimeline is responsible for folding JSON/HTML
+                // sections and showing only the Markdown text in the left panel.
                 if (dashboardAgent != null && !allStepResults.isEmpty()) {
                     try {
                         emitSse(threadId, "DASHBOARD", "STARTED", null);
                         AgentMessage.Builder summaryBuilder = AgentMessage.builder()
-                                .content("请基于以下单步分析结果，用2-4句话生成一个简洁的分析总结，"
-                                        + "包括关键数据发现和洞察。不要生成JSON或图表定义，只输出纯文本总结。")
+                                .content("请汇总以下分析结果生成报告")
                                 .putContext("stepResults", allStepResults)
                                 .putContext("question", userInput)
                                 .putContext("htmlReport", false)
@@ -231,8 +233,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                         reportData.put("route", "fast_path");
                         emitSse(threadId, "DASHBOARD", "FINISHED", reportData);
                     } catch (Exception e) {
-                        log.warn("[Manager] SIMPLE path summary failed, continuing: {}",
-                                e.getMessage());
+                        log.warn("[Manager] SIMPLE summary failed: {}", e.getMessage());
                     }
                 }
 
@@ -533,6 +534,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                     .content("请汇总以下分析结果生成报告")
                     .putContext("stepResults", allStepResults)
                     .putContext("question", userInput)
+                    .putContext("htmlReport", true)
                     .rounds(message.rounds() + 1);
             forwardAllContext(message, summaryBuilder);
             AgentMessage summaryMessage = summaryBuilder.build();
@@ -696,10 +698,12 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             "schemaDdl", "schemaInfo", "dialect", "schemaName",
             "evidence", "conversationHistory", "userMemory",
             "agentSystemPrompt", "executionDescription",
-            "threadId", "sessionId", "htmlReport",
+            "threadId", "sessionId",
             // T8.3: forward the direct tool-invocation payload so McpToolAction
             // can read toolName/args as the source of truth.
             "toolInvocation"
+            // htmlReport is intentionally NOT forwarded — each path decides:
+            //   SIMPLE → false, MEDIUM/COMPLEX → true
     );
 
     private void forwardAllContext(AgentMessage source, AgentMessage.Builder target) {
