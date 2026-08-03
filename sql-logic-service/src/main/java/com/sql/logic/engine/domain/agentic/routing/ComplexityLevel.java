@@ -15,5 +15,11 @@ public enum ComplexityLevel {
     /** Complex multi-step requiring full pipeline. */
     COMPLEX,
     /** Question is ambiguous, HITL clarification needed. */
-    CLARIFY
+    CLARIFY,
+    /**
+     * Chitchat / greeting / general-knowledge question that does not involve data
+     * query or analysis. ManagerAgent answers directly via LLM — no SQL pipeline,
+     * no Dashboard summary. Produces a natural-language conversational response.
+     */
+    CHITCHAT
 }

@@ -134,6 +134,10 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 return handleClarification(threadId, assessment, message);
             }
 
+            if (assessment.level() == ComplexityLevel.CHITCHAT) {
+                return handleChitchatPath(threadId, userInput, message);
+            }
+
             if (assessment.level() == ComplexityLevel.SIMPLE) {
                 return handleSimplePath(threadId, userInput, message, allStepResults);
             }
@@ -344,6 +348,60 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             }
         }
         return ActionOutput.fail("问题不够明确，请提供更多细节: " + assessment.reason(), false);
+    }
+
+    // ========================================================================
+    //  CHITCHAT path: ManagerAgent answers directly via LLM (no SQL pipeline,
+    //  no Dashboard summary). Produces a natural-language conversational
+    //  response — mirrors the mewcode Coordinator pattern where the entry
+    //  agent "answers questions directly when possible — don't delegate work
+    //  you can handle without tools".
+    // ========================================================================
+
+    private ActionOutput handleChitchatPath(String threadId, String userInput,
+                                             AgentMessage message) {
+        log.info("[Manager] CHITCHAT → direct LLM answer (no pipeline)");
+        var strategy = resolveLlmStrategy();
+        if (strategy == null) {
+            return ActionOutput.fail("No LLM available for chitchat reply", true);
+        }
+
+        String systemPrompt = """
+                你是一个数据分析平台的 AI 助手。请用自然语言直接回答用户的问题。
+                注意事项：
+                - 不要生成 SQL、代码、JSON 或报告结构
+                - 不要使用"总结"、"分析报告"等措辞，保持对话式回答
+                - 如果用户问候，自然回应即可
+                - 如果用户询问能力，简要介绍你能帮助进行数据查询、分析、生成报告和图表
+                - 回答简洁明了，不要过度展开
+                """;
+        String conversationHistory = (String) message.context().getOrDefault(
+                "conversationHistory", "");
+        String prompt = systemPrompt
+                + (conversationHistory.isBlank() ? "" : "\n### 对话历史\n" + conversationHistory + "\n")
+                + "\n用户问题: " + userInput;
+
+        String answer;
+        try {
+            answer = strategy.chat(prompt);
+        } catch (Exception e) {
+            log.warn("[Manager] Chitchat LLM call failed: {}", e.getMessage());
+            return ActionOutput.fail("回答生成失败: " + e.getMessage(), true);
+        }
+        if (answer == null || answer.isBlank()) {
+            answer = "你好，我是数据分析助手，可以帮你查询数据、分析问题和生成报告。请问有什么可以帮您的？";
+        }
+
+        // No MANAGER STARTED emitted — frontend filters MANAGER cards and shows
+        // "thinking..." while steps are empty. Emit only the DASHBOARD FINISHED
+        // event so the existing lastDashboardStep renderer picks up the answer.
+        Map<String, Object> eventData = new LinkedHashMap<>();
+        eventData.put("content", answer);
+        eventData.put("route", "chitchat");
+        eventData.put("agentSuccess", true);
+        emitSse(threadId, "DASHBOARD", "FINISHED", eventData);
+
+        return ActionOutput.success(answer, Map.of("route", "chitchat"));
     }
 
     // ========================================================================

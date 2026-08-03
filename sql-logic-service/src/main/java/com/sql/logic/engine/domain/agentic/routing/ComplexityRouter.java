@@ -14,9 +14,10 @@ import java.util.Map;
  * LLM-based query complexity analyzer for adaptive routing.
  * <p>
  * Uses the {@code complexity-analyzer.st} prompt template to classify user queries
- * as SIMPLE, MEDIUM, COMPLEX, or CLARIFY. The ManagerAgent uses this assessment
- * to decide whether to go through the full PlannerAgent → Workers pipeline or
- * route directly to DataScientistAgent for simple queries.
+ * as SIMPLE, MEDIUM, COMPLEX, CLARIFY, or CHITCHAT. The ManagerAgent uses this
+ * assessment to decide whether to go through the full PlannerAgent → Workers
+ * pipeline, route directly to DataScientistAgent for simple queries, or answer
+ * chitchat/greeting/general-knowledge questions directly via LLM.
  * <p>
  * Managed by ManagerAgent per Q3 decision: LLM-driven, ManagerAgent-owned.
  */
@@ -102,6 +103,11 @@ public class ComplexityRouter {
                 2. COMPLEX — user wants a report, chart, dashboard, multi-dimensional
                    analysis with recommendations, or requires multi-step processing.
                 3. CLARIFY — question is ambiguous or missing critical information.
+                4. CHITCHAT — conversation that does not involve data query or analysis:
+                   greetings ("hi", "hello"), general-knowledge questions ("what is a
+                   transaction", "SQL vs NoSQL"), capability questions ("what can you do"),
+                   or any chat unrelated to the database schema. The MANAGER should answer
+                   directly in natural language — no SQL pipeline, no report.
 
                 User question: %s
 
@@ -109,7 +115,7 @@ public class ComplexityRouter {
 
                 Evidence summary: %s
 
-                Output only a JSON object: {"complexity": "SIMPLE|COMPLEX|CLARIFY", "reason": "..."}
+                Output only a JSON object: {"complexity": "SIMPLE|COMPLEX|CLARIFY|CHITCHAT", "reason": "..."}
                 """.formatted(userQuery, schemaSummary, evidenceSummary);
     }
 
@@ -127,6 +133,7 @@ public class ComplexityRouter {
                 case "SIMPLE" -> ComplexityLevel.SIMPLE;
                 case "COMPLEX" -> ComplexityLevel.COMPLEX;
                 case "CLARIFY" -> ComplexityLevel.CLARIFY;
+                case "CHITCHAT" -> ComplexityLevel.CHITCHAT;
                 default -> ComplexityLevel.MEDIUM;
             };
             String reason = node.has("reason") ? node.get("reason").asText() : "";
