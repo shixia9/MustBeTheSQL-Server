@@ -205,6 +205,8 @@ public class AgenticChatRunner implements ScheduledTaskRunner {
                 String report = textOrNull(data, "report");
                 if (report != null && !report.isBlank()) {
                     out.report = report; // highest priority — overwrite
+                    // Try to extract chart data from vis-db-chart JSON blocks
+                    extractChartSummary(report, out);
                 }
                 String analysis = textOrNull(data, "analysis");
                 if (analysis != null && !analysis.isBlank()) {
@@ -231,7 +233,8 @@ public class AgenticChatRunner implements ScheduledTaskRunner {
     }
 
     private String buildSummary(CollectedOut out, int max) {
-        String answer = firstNonBlank(out.report, out.analysis, out.sqlExecResult, out.lastText);
+        // Prefer chart data summary over raw report text
+        String answer = firstNonBlank(out.chartSummary, out.report, out.analysis, out.sqlExecResult, out.lastText);
         StringBuilder sb = new StringBuilder();
         if (answer != null && !answer.isBlank()) {
             sb.append(answer.strip());
@@ -241,9 +244,50 @@ public class AgenticChatRunner implements ScheduledTaskRunner {
             sb.append("[artifacts: ").append(out.artifacts).append(']');
         }
         if (sb.length() == 0) {
-            return null; // no summary — engine will record an empty result_summary
+            return null;
         }
         return truncate(sb.toString(), max);
+    }
+
+    /**
+     * Parse vis-db-chart JSON blocks from report text and extract a human-readable
+     * summary of the data values (e.g. "order_count: 30, total_sales: 308267.00").
+     */
+    private void extractChartSummary(String text, CollectedOut out) {
+        if (text == null || text.isBlank()) return;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("```vis-db-chart\\s*\\n(\\{[\\s\\S]*?\\})\\s*```")
+                .matcher(text);
+        while (m.find()) {
+            try {
+                JsonNode chart = objectMapper.readTree(m.group(1));
+                JsonNode dataArr = chart.get("data");
+                if (dataArr != null && dataArr.isArray() && dataArr.size() > 0) {
+                    JsonNode row = dataArr.get(0);
+                    StringBuilder sb = new StringBuilder();
+                    var fields = row.fields();
+                    while (fields.hasNext()) {
+                        var entry = fields.next();
+                        if (sb.length() > 0) sb.append(", ");
+                        sb.append(entry.getKey()).append(": ");
+                        JsonNode val = entry.getValue();
+                        if (val.isNumber()) {
+                            double d = val.asDouble();
+                            if (d == Math.floor(d) && !Double.isInfinite(d)) {
+                                sb.append((long) d);
+                            } else {
+                                sb.append(String.format("%.2f", d));
+                            }
+                        } else {
+                            sb.append(val.asText());
+                        }
+                    }
+                    out.chartSummary = sb.toString();
+                }
+            } catch (Exception ignored) {
+                // Not valid chart JSON — skip
+            }
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -365,6 +409,7 @@ public class AgenticChatRunner implements ScheduledTaskRunner {
         String analysis;      // PYTHON_ANALYSIS
         String sqlExecResult; // SQL_EXECUTION / DATA_SCIENTIST
         String lastText;      // last non-empty text-bearing field (fallback)
+        String chartSummary;  // human-readable summary extracted from vis-db-chart data
         int artifacts;        // count of TOOL_CALL / TOOL_RESULT / REPORT FINISHED events
     }
 }
