@@ -13,8 +13,9 @@ import java.util.regex.Pattern;
  * match actual import statements with word boundaries. This reduces false positives
  * (e.g. a string literal containing "import os" won't trigger a false alarm).
  *
- * <p>Blacklisted modules: {@code os}, {@code subprocess}, {@code sys}, {@code socket},
- * {@code urllib}, {@code requests}, {@code pickle}. Plus dynamic execution:
+ * <p>Blacklisted modules: {@code os}, {@code subprocess}, {@code socket},
+ * {@code urllib}, {@code requests}, {@code pickle}. ({@code sys} is allowed — the
+ * stdin/stdout execution protocol depends on it.) Plus dynamic execution:
  * {@code __import__}, {@code eval(}, {@code exec(}.
  */
 public final class PythonAstValidator {
@@ -22,9 +23,15 @@ public final class PythonAstValidator {
     private PythonAstValidator() {
     }
 
-    /** Modules that must not be imported in sandboxed Python code. */
+    /**
+     * Modules that must not be imported in sandboxed Python code.
+     * {@code sys} is deliberately NOT blacklisted — the sandbox stdin/stdout
+     * protocol requires {@code json.load(sys.stdin)} and
+     * {@code traceback.print_exc(file=sys.stderr)}, and {@code sys} exposes no
+     * subprocess/file/network capabilities itself.
+     */
     private static final String[] BLACKLISTED_MODULES = {
-            "os", "subprocess", "sys", "socket", "urllib", "requests", "pickle",
+            "os", "subprocess", "socket", "urllib", "requests", "pickle",
             "ctypes", "multiprocessing", "shutil", "tempfile"
     };
 

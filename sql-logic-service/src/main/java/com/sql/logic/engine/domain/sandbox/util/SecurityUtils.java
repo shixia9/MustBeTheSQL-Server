@@ -46,10 +46,11 @@ public final class SecurityUtils {
     };
 
     // ---- Python / general dangerous patterns ----
+    // "import sys" is deliberately omitted — the sandbox stdin/stdout protocol
+    // requires sys.stdin / sys.stderr and sys exposes no dangerous capabilities.
     private static final String[] PYTHON_PATTERNS = {
             "import os",
             "import subprocess",
-            "import sys",
             "__import__",
             "eval(",
             "exec(",

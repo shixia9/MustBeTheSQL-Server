@@ -30,8 +30,19 @@ class PythonAstValidatorTest {
 
     @Test
     void shouldDetectMultipleBlacklistedImports() {
-        List<String> v = PythonAstValidator.validate("import os\nimport sys\nimport pickle");
+        List<String> v = PythonAstValidator.validate("import os\nimport subprocess\nimport pickle");
         assertEquals(3, v.size());
+    }
+
+    @Test
+    void shouldAllowImportSys() {
+        // sys is required by the sandbox stdin/stdout protocol (json.load(sys.stdin),
+        // traceback.print_exc(file=sys.stderr)) — it must pass validation.
+        String code = "import sys\n"
+                + "import json\n"
+                + "data = json.load(sys.stdin)\n"
+                + "print(json.dumps(data))\n";
+        assertTrue(PythonAstValidator.validate(code).isEmpty());
     }
 
     @Test
