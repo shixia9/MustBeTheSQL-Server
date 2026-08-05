@@ -1,5 +1,6 @@
 package com.sql.logic.engine.domain.agentic.agent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
 import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
 import com.sql.logic.engine.domain.agentic.core.*;
@@ -74,6 +75,9 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             "ToolAssistant", "TOOL_ASSISTANT",
             "Planner", "PLANNER"
     );
+
+    /** Serializes structured step results (e.g. SQL rows) into python stdin JSON. */
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** Extracts the content inside a {@code ```html ... ```} code fence. */
     private static final Pattern HTML_FENCE_RE =
@@ -417,6 +421,9 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             dataScientistAgent.setMultiCandidateMode(true);
         }
 
+        // serialNumber → SQL result rows JSON (fed as python stdin to dependent steps).
+        Map<Integer, String> stepRowsJson = new HashMap<>();
+
         for (int round = 0; round < maxRound; round++) {
             List<PlanStep> todoPlans = planMemory.getTodoPlans(threadId);
             List<PlanStep> allPlans = planMemory.getByConvId(threadId);
@@ -486,6 +493,12 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                     .putContext("plan_task_num", currentPlan.getSerialNumber())
                     .rounds(message.rounds() + 1);
             forwardAllContext(message, goalBuilder);
+            // Feed the upstream SQL result rows as python stdin for dependent
+            // code steps (CodeAssistant reads context "inputJson").
+            String stepInputJson = resolveStepInputJson(currentPlan, stepRowsJson);
+            if (stepInputJson != null) {
+                goalBuilder.putContext("inputJson", stepInputJson);
+            }
             AgentMessage goalMessage = goalBuilder.build();
 
             String speakerNodeName = toNodeName(speaker.name());
@@ -509,6 +522,18 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                             "agent", currentPlan.getAgent(),
                             "result", result
                     ));
+                    // Preserve structured SQL rows so dependent python/code steps can
+                    // receive them as stdin (inputJson) during sandbox execution.
+                    Map<String, Object> aData = reply.actionReport() != null
+                            ? reply.actionReport().data() : null;
+                    if (aData != null && aData.get("rows") instanceof List<?> rows && !rows.isEmpty()) {
+                        try {
+                            stepRowsJson.put(currentPlan.getSerialNumber(),
+                                    MAPPER.writeValueAsString(rows));
+                        } catch (Exception ignored) {
+                            // non-serializable rows — skip; execution degrades to empty input
+                        }
+                    }
                 } else {
                     if (currentPlan.getRetryTimes() < currentPlan.getMaxRetryTimes()) {
                         planMemory.updateTask(threadId, currentPlan.getSerialNumber(),
@@ -610,7 +635,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             if (data != null && !data.isEmpty()) {
                 event.put("data", data);
             }
-            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(event);
+            String json = MAPPER.writeValueAsString(event);
             sink.tryEmitNext(json);
         } catch (Exception ignored) {}
     }
@@ -714,6 +739,29 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 target.putContext(key, value);
             }
         }
+    }
+
+    /**
+     * Resolve the rows JSON of the first completed dependency step (per
+     * {@link PlanStep#getRely()}) — used as python stdin for code steps.
+     * Returns {@code null} when the step has no dependencies or no rows were captured.
+     */
+    private String resolveStepInputJson(PlanStep plan, Map<Integer, String> stepRowsJson) {
+        if (plan == null || plan.getRely() == null || plan.getRely().isBlank()
+                || stepRowsJson.isEmpty()) {
+            return null;
+        }
+        for (String p : plan.getRely().split(",")) {
+            try {
+                String rows = stepRowsJson.get(Integer.parseInt(p.trim()));
+                if (rows != null) {
+                    return rows;
+                }
+            } catch (NumberFormatException ignored) {
+                // non-numeric dependency — skip
+            }
+        }
+        return null;
     }
 
     private List<String> buildAgentDescriptions() {

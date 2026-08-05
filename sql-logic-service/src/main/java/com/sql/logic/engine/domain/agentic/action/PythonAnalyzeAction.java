@@ -32,8 +32,9 @@ public class PythonAnalyzeAction implements AgentAction {
                 ConversableAgent ca = (ConversableAgent) agent;
 
                 Map<String, Object> vars = new HashMap<>();
-                vars.put("question", context.context().getOrDefault("question", ""));
-                vars.put("python_result", context.content());
+                // Template python-analyze.st expects {user_query}/{python_output}.
+                vars.put("user_query", context.context().getOrDefault("question", ""));
+                vars.put("python_output", context.content() != null ? context.content() : "");
 
                 String prompt = promptManager.render("python-analyze", vars);
                 String analysis = ca.resolveLlmStrategy().generateSql(prompt, null);

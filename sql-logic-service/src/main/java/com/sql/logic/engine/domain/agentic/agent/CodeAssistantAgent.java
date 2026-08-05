@@ -3,6 +3,7 @@ package com.sql.logic.engine.domain.agentic.agent;
 import com.sql.logic.engine.domain.agentic.core.*;
 import com.sql.logic.engine.domain.agentic.profile.ProfileConfig;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -50,13 +51,74 @@ public class CodeAssistantAgent extends ConversableAgent {
                     ActionOutput.fail("No actions registered on CodeAssistantAgent"));
         }
 
-        ActionOutput previousReport = message.actionReport();
-        // If generation failed, try fix; if execution failed, retry; if analysis failed, re-generate
-        if (previousReport != null && !previousReport.isExeSuccess() && previousReport.hasRetry()) {
-            // Retry: go back to generation
-            return actions.get(0).execute(message, this);
-        }
-        return actions.get(0).execute(message, this);
+        // Run the full generate → execute → analyze pipeline in a single turn.
+        // A failed stage stops the chain and returns the failure so the outer
+        // generateReply retry loop regenerates on the next round.
+        return runGenerateExecuteAnalyze(message);
+    }
+
+    /**
+     * Internal generate → execute → analyze pipeline (javadoc contract).
+     *
+     * <ol>
+     *   <li>{@code python_generation} — LLM produces the analysis script.</li>
+     *   <li>{@code python_execution} — sandbox runs the script, fed the upstream SQL
+     *       rows (context {@code inputJson}) on stdin.</li>
+     *   <li>{@code python_analysis} — LLM turns the execution stdout into a natural
+     *       language summary.</li>
+     * </ol>
+     *
+     * <p>The returned {@link ActionOutput} carries the analysis text as content and
+     * {@code pythonCode}/{@code pythonResult}/{@code exitCode}/{@code durationMs} in
+     * data so the Manager's CODE_ASSISTANT SSE event can render the code block and the
+     * execution outcome. The sandbox itself streams {@code SANDBOX} terminal events
+     * (STARTED → stream → FINISHED) via {@code SandboxExecutionService}.
+     */
+    private CompletableFuture<ActionOutput> runGenerateExecuteAnalyze(AgentMessage message) {
+        AgentAction generation = actions.get(0);
+        AgentAction execution = actions.get(1);
+        AgentAction analysis = actions.get(2);
+
+        return generation.execute(message, this)
+                .thenCompose(genOut -> {
+                    if (!genOut.isExeSuccess()) {
+                        return CompletableFuture.completedFuture(genOut);
+                    }
+                    String code = genOut.content();
+                    String inputJson = (String) message.context().getOrDefault("inputJson", "[]");
+                    AgentMessage execMsg = message
+                            .withContent(code)
+                            .withContext("code", code)
+                            .withContext("inputJson", inputJson);
+                    return execution.execute(execMsg, this)
+                            .thenCompose(execOut -> {
+                                if (!execOut.isExeSuccess()) {
+                                    return CompletableFuture.completedFuture(execOut);
+                                }
+                                String stdout = execOut.content() != null ? execOut.content() : "";
+                                String question = (String) message.context()
+                                        .getOrDefault("originalUserInput", message.content());
+                                AgentMessage analyzeMsg = execMsg
+                                        .withContent(stdout)
+                                        .withContext("python_result", stdout)
+                                        .withContext("question", question);
+                                return analysis.execute(analyzeMsg, this)
+                                        .thenApply(analyzeOut -> {
+                                            // Preserve code + execution details for the
+                                            // CODE_ASSISTANT SSE event / terminal rendering.
+                                            Map<String, Object> data = new LinkedHashMap<>();
+                                            data.put("pythonCode", code);
+                                            data.put("pythonResult", stdout);
+                                            data.putAll(execOut.data());
+                                            if (analyzeOut.isExeSuccess()) {
+                                                return ActionOutput.success(analyzeOut.content(), data);
+                                            }
+                                            // Analysis failed — surface the raw execution output.
+                                            return ActionOutput.success(
+                                                    stdout.isBlank() ? analyzeOut.content() : stdout, data);
+                                        });
+                            });
+                });
     }
 
     @Override
