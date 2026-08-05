@@ -50,3 +50,26 @@ schedule:
   poll-interval-ms: 60000      # cron poller fixed-delay (ms)
   run-timeout-default-s: 600   # default per-run timeout (seconds)
   executor-pool-size: 4        # runner dispatch thread pool size
+
+# ─────────────────────────────────────────────────────────────
+# Sandbox module (sandboxed code execution)
+# Security defaults are FAIL-CLOSED: local runtime is disabled by default.
+# Set allow-local-runtime=true to opt into host execution. There is no implicit host fallback.
+# ─────────────────────────────────────────────────────────────
+sandbox:
+  docker-image: ""              # override image for default language (empty = per-language)
+  memory-limit: "256m"          # Docker --memory limit
+  cpus: 1.0                     # Docker --cpus limit
+  timeout: 30                   # default per-execution timeout (seconds)
+  default-language: "python"    # language used when a session does not specify one
+  allow-local-runtime: false    # opt-in to LocalSandboxRuntime (host execution, fail-closed by default)
+  seccomp-profile-path: ""      # custom seccomp profile path (--security-opt seccomp=)
+  working-dir: "/workspace"     # working directory inside the sandbox
+  session-idle-timeout: 3600    # idle session cleanup threshold (seconds)
+  docker-binary: ""             # docker binary path (empty = auto-detect on PATH)
+  podman-binary: ""             # podman binary path (empty = auto-detect on PATH)
+  nerdctl-binary: ""            # nerdctl binary path (empty = auto-detect on PATH)
+  # VNC / GUI sandbox support (aligns with DB-GPT python-vnc runtime)
+  vnc-enabled: false            # opt-in to VNC sessions (requires vnc-gui-browser image)
+  vnc-image: "vnc-gui-browser:latest"  # VNC image
+  vnc-host-port: ""             # fixed host port for noVNC web (empty = dynamic via inspect)

@@ -4,24 +4,29 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
-import com.sql.logic.engine.domain.agent.python.PythonExecutionResult;
-import com.sql.logic.engine.domain.agent.python.SimplePythonExecutor;
+import com.sql.logic.engine.domain.sandbox.SandboxExecutionService;
+import com.sql.logic.engine.domain.sandbox.execution.ExecutionResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Python Execute Node (Phase 4) — pure control node (no LLM).
  * <p>
  * Runs the script produced by {@link PythonGeneratorNode} inside the sandbox, feeding
  * the rows of the most recent {@code SQL_EXECUTION_RESULT} as JSON on stdin. Writes the
- * {@link PythonExecutionResult} (serialized as JSON: {success, output, error}) to
- * {@code PYTHON_RESULT}. The graph does NOT branch on failure — the flow continues to
- * {@link PythonAnalyzeNode}, which renders a clean "分析过程中出现错误" message when the
- * result is unsuccessful, preserving the end-to-end report.
+ * result (serialized as JSON: {success, output, error}) to {@code PYTHON_RESULT}. The
+ * graph does NOT branch on failure — the flow continues to {@link PythonAnalyzeNode},
+ * which renders a clean "分析过程中出现错误" message when the result is unsuccessful,
+ * preserving the end-to-end report.
+ *
+ * <p>Executes via {@link SandboxExecutionService} (DB-GPT-aligned sandbox module). Each
+ * invocation uses a unique ephemeral thread id and destroys the session afterwards so
+ * no container leaks between graph runs.
  */
 @Component
 public class PythonExecuteNode implements NodeAction {
@@ -29,11 +34,11 @@ public class PythonExecuteNode implements NodeAction {
     private static final Logger log = LoggerFactory.getLogger(PythonExecuteNode.class);
     private static final long TIMEOUT_SECONDS = 60;
 
-    private final SimplePythonExecutor pythonExecutor;
+    private final SandboxExecutionService sandboxService;
     private final ObjectMapper objectMapper;
 
-    public PythonExecuteNode(SimplePythonExecutor pythonExecutor, ObjectMapper objectMapper) {
-        this.pythonExecutor = pythonExecutor;
+    public PythonExecuteNode(SandboxExecutionService sandboxService, ObjectMapper objectMapper) {
+        this.sandboxService = sandboxService;
         this.objectMapper = objectMapper;
     }
 
@@ -44,22 +49,29 @@ public class PythonExecuteNode implements NodeAction {
         int currentStep = readInt(state, SqlAgentSpec.StateKey.CURRENT_STEP, 1);
 
         String inputJson = extractRowsJson(sqlResultJson);
+        String threadId = "graph-python-" + UUID.randomUUID().toString().substring(0, 8);
 
         log.info("[PythonExecuteNode] step={} running sandbox Python ({}, stdin={} chars)",
                 currentStep, pythonCode == null ? 0 : pythonCode.length(), inputJson.length());
 
-        PythonExecutionResult result = pythonExecutor.execute(pythonCode, inputJson, TIMEOUT_SECONDS);
+        ExecutionResult result;
+        try {
+            result = sandboxService.executePython(threadId, pythonCode, inputJson, TIMEOUT_SECONDS, null);
+        } finally {
+            // Ephemeral session — destroy after each graph run so containers don't leak.
+            sandboxService.destroyThreadSession(threadId);
+        }
 
         String resultJson = objectMapper.writeValueAsString(Map.of(
-                "success", result.success(),
-                "output", result.output() == null ? "" : result.output(),
-                "error", result.error() == null ? "" : result.error()
+                "success", result.isSuccess(),
+                "output", result.stdout() == null ? "" : result.stdout(),
+                "error", result.stderr() == null ? "" : result.stderr()
         ));
 
         log.info("[PythonExecuteNode] step={} success={} outputLen={} errorLen={}",
-                currentStep, result.success(),
-                result.output() == null ? 0 : result.output().length(),
-                result.error() == null ? 0 : result.error().length());
+                currentStep, result.isSuccess(),
+                result.stdout() == null ? 0 : result.stdout().length(),
+                result.stderr() == null ? 0 : result.stderr().length());
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put(SqlAgentSpec.StateKey.PYTHON_RESULT, resultJson);

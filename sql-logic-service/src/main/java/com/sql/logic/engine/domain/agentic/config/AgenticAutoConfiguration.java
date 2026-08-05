@@ -4,8 +4,8 @@ import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
-import com.sql.logic.engine.domain.agent.python.SimplePythonExecutor;
 import com.sql.logic.engine.domain.agent.tool.ToolInvocationGuard;
+import com.sql.logic.engine.domain.sandbox.SandboxExecutionService;
 import com.sql.logic.engine.domain.agent.tool.mcp.McpServerManager;
 import com.sql.logic.engine.domain.agent.service.SqlExecutionService;
 import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
@@ -181,9 +181,15 @@ public class AgenticAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnClass(SimplePythonExecutor.class)
-    public PythonExecutionAction pythonExecutionAction(SimplePythonExecutor executor) {
-        return new PythonExecutionAction(executor);
+    @ConditionalOnClass(SandboxExecutionService.class)
+    public PythonExecutionAction pythonExecutionAction(SandboxExecutionService sandboxService) {
+        return new PythonExecutionAction(sandboxService);
+    }
+
+    @Bean
+    @ConditionalOnClass(SandboxExecutionService.class)
+    public ShellExecutionAction shellExecutionAction(SandboxExecutionService sandboxService) {
+        return new ShellExecutionAction(sandboxService);
     }
 
     @Bean

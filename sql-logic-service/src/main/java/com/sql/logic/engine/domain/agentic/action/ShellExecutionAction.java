@@ -11,29 +11,31 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Executes Python code in the sandbox via {@link SandboxExecutionService}.
+ * Executes shell/bash commands in the sandbox via {@link SandboxExecutionService}.
  *
- * <p>The service transparently selects the best available runtime and manages per-thread
- * stateful sessions. Execution is fail-closed — when no runtime is available the
- * call returns an error rather than falling back to host execution. The
- * {@code pythonTimeout} from the agent context is forwarded to the sandbox.
+ * <p>New action complementing {@link PythonExecutionAction} — enables the agent
+ * system to run shell commands (e.g. file operations, data processing pipelines)
+ * in the same isolated sandbox environment. Shell execution always uses the new
+ * sandbox runtime (no legacy fallback); if no runtime is available, it returns
+ * an error.
  *
- * <p>An optional {@link StreamCallback} can be injected (e.g. for SSE streaming
- * in Task 7) by setting {@code "sandboxStreamCallback"} in the message context.
+ * <p>Security: shell commands are validated by {@code SecurityUtils} (bash
+ * blacklist) inside {@code LocalSandboxSession}, and isolated by container
+ * hardening inside {@code DockerSandboxSession}.
  */
-public class PythonExecutionAction implements AgentAction {
+public class ShellExecutionAction implements AgentAction {
 
     private final SandboxExecutionService sandboxService;
 
-    public PythonExecutionAction(SandboxExecutionService sandboxService) {
+    public ShellExecutionAction(SandboxExecutionService sandboxService) {
         this.sandboxService = sandboxService;
     }
 
     @Override
-    public String name() { return "python_execution"; }
+    public String name() { return "shell_execution"; }
 
     @Override
-    public String description() { return "在沙箱中执行 Python 代码"; }
+    public String description() { return "在沙箱中执行 Shell/Bash 命令"; }
 
     @Override
     public CompletableFuture<ActionOutput> execute(AgentMessage context, Agent agent) {
@@ -41,28 +43,25 @@ public class PythonExecutionAction implements AgentAction {
             try {
                 String code = context.content();
                 if (code == null || code.isBlank()) {
-                    code = (String) context.context().getOrDefault("code", "");
+                    code = (String) context.context().getOrDefault("command", "");
                 }
                 if (code == null || code.isBlank()) {
-                    return ActionOutput.fail("No Python code to execute");
+                    return ActionOutput.fail("No shell command to execute");
                 }
 
-                String inputJson = (String) context.context().getOrDefault("inputJson", "{}");
                 String threadId = (String) context.context().getOrDefault("threadId",
                         "agent-" + UUID.randomUUID().toString().substring(0, 8));
 
-                // Forward pythonTimeout (previously ignored by the legacy executor).
                 Long timeoutSec = null;
-                Object timeoutObj = context.context().get("pythonTimeout");
+                Object timeoutObj = context.context().get("shellTimeout");
                 if (timeoutObj instanceof Number n) {
                     timeoutSec = n.longValue();
                 }
 
-                // Optional streaming callback (set by the SSE layer in Task 7).
                 StreamCallback callback = (StreamCallback) context.context().get("sandboxStreamCallback");
 
-                ExecutionResult result = sandboxService.executePython(
-                        threadId, code, inputJson, timeoutSec, callback);
+                ExecutionResult result = sandboxService.executeShell(
+                        threadId, code, timeoutSec, callback);
 
                 if (result.isSuccess()) {
                     Map<String, Object> data = new LinkedHashMap<>();
@@ -70,17 +69,16 @@ public class PythonExecutionAction implements AgentAction {
                     data.put("stderr", result.stderr());
                     data.put("exitCode", result.exitCode());
                     data.put("durationMs", result.durationMs());
-                    data.put("sandboxRuntime", sandboxService.isSandboxAvailable() ? "sandbox" : "unavailable");
                     return ActionOutput.success(result.stdout(), data);
                 } else {
                     String errorMsg = result.stderr();
                     if (errorMsg == null || errorMsg.isBlank()) {
-                        errorMsg = result.displayResult() != null ? result.displayResult().error() : "Unknown error";
+                        errorMsg = "Shell execution failed (exit " + result.exitCode() + ")";
                     }
-                    return ActionOutput.fail("Python execution failed: " + errorMsg, true);
+                    return ActionOutput.fail("Shell execution failed: " + errorMsg, true);
                 }
             } catch (Exception e) {
-                return ActionOutput.fail("Python execution error: " + e.getMessage(), true);
+                return ActionOutput.fail("Shell execution error: " + e.getMessage(), true);
             }
         });
     }

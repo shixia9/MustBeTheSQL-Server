@@ -61,7 +61,9 @@ public class AgentSseCodec {
             Map.entry("DATA_SCIENTIST", "TOOL_CALL"),
             Map.entry("CODE_ASSISTANT", "TOOL_CALL"),
             Map.entry("DASHBOARD", "REPORT"),
-            Map.entry("TOOL_ASSISTANT", "TOOL_CALL")
+            Map.entry("TOOL_ASSISTANT", "TOOL_CALL"),
+            // Sandbox execution node
+            Map.entry("SANDBOX", "TOOL_CALL")
     );
 
     public AgentSseCodec(ObjectMapper objectMapper) {
