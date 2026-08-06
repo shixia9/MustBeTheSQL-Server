@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
 import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
 import com.sql.logic.engine.domain.agentic.core.*;
+import com.sql.logic.engine.domain.agentic.core.bus.AgentDispatcher;
+import com.sql.logic.engine.domain.agentic.core.bus.BusOrchestrationMode;
 import com.sql.logic.engine.domain.agentic.plan.PlanMemory;
 import com.sql.logic.engine.domain.agentic.plan.PlanStep;
 import com.sql.logic.engine.domain.agentic.plan.PlanStatus;
@@ -68,6 +70,11 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     private AgentEventSinkRegistry eventSinkRegistry;
     private AgentSseCodec codec;
 
+    // Message-bus integration. When null, dispatch falls back to the
+    // legacy direct generateReply call (preserves existing ManagerAgentTest
+    // wiring that does not set a dispatcher).
+    private AgentDispatcher dispatcher;
+
     private static final Map<String, String> NODE_NAME_MAP = Map.of(
             "DataScientist", "DATA_SCIENTIST",
             "CodeAssistant", "CODE_ASSISTANT",
@@ -100,11 +107,42 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     public void setEventSinkRegistry(AgentEventSinkRegistry registry) { this.eventSinkRegistry = registry; }
     public void setCodec(AgentSseCodec codec) { this.codec = codec; }
 
+    /**
+     * Message-bus integration. When unset, {@link #dispatchToWorker} falls back to a direct
+     * {@code generateReply} so existing test wiring (no dispatcher) keeps working unchanged.
+     */
+    public void setDispatcher(AgentDispatcher dispatcher) { this.dispatcher = dispatcher; }
+
+    /** The active bus-orchestration mode, or {@code null} when no dispatcher is bound. */
+    public BusOrchestrationMode busOrchestrationMode() {
+        return dispatcher != null ? dispatcher.mode() : null;
+    }
+
     @Override
     public List<Agent> getAgents() { return agents; }
 
     @Override
     public PlanMemory getPlanMemory() { return planMemory; }
+
+    // ========================================================================
+    //  Message-bus integration — routes the goal to a worker via the
+    //  configured AgentDispatcher (OFF/BYPASS/SWITCH), or falls back to a direct
+    //  generateReply when no dispatcher is bound. Every worker invocation in the
+    //  orchestration paths below goes through this single chokepoint so the bus
+    //  integration is localised and reversible.
+    // ========================================================================
+
+    private CompletableFuture<AgentMessage> dispatchToWorker(Agent worker, AgentMessage goal,
+                                                              List<AgentMessage> relyMessages) {
+        if (worker == null) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("dispatch target agent is null"));
+        }
+        if (dispatcher == null) {
+            return worker.generateReply(goal, this, relyMessages, null);
+        }
+        return dispatcher.dispatch(this, worker, goal, relyMessages);
+    }
 
     // ========================================================================
     //  act() — Phase 4: complexity-aware orchestration loop
@@ -199,7 +237,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
         try {
             send(goalMessage, speaker).join();
-            AgentMessage reply = speaker.generateReply(goalMessage, this, null, null).join();
+            AgentMessage reply = dispatchToWorker(speaker, goalMessage, null).join();
 
             Map<String, Object> eventData = extractSubAgentData(speaker, reply);
             eventData.put("agentSuccess", reply.success());
@@ -228,8 +266,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                                 .rounds(message.rounds() + 1);
                         forwardAllContext(message, summaryBuilder);
                         AgentMessage summaryMessage = summaryBuilder.build();
-                        AgentMessage report = dashboardAgent.generateReply(
-                                summaryMessage, this, null, null).join();
+                        AgentMessage report = dispatchToWorker(dashboardAgent, summaryMessage, null).join();
 
                         Map<String, Object> reportData = new LinkedHashMap<>();
                         reportData.put("content", report.content());
@@ -298,7 +335,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
         try {
             send(goalMessage, speaker).join();
-            AgentMessage reply = speaker.generateReply(goalMessage, this, null, null).join();
+            AgentMessage reply = dispatchToWorker(speaker, goalMessage, null).join();
 
             Map<String, Object> eventData = extractSubAgentData(speaker, reply);
             eventData.put("agentSuccess", reply.success());
@@ -451,8 +488,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                         .rounds(message.rounds() + 1);
                 forwardAllContext(message, planBuilder);
                 AgentMessage planInput = planBuilder.build();
-                AgentMessage planResult = plannerAgent.generateReply(
-                        planInput, this, null, null).join();
+                AgentMessage planResult = dispatchToWorker(plannerAgent, planInput, null).join();
 
                 Map<String, Object> planData = new LinkedHashMap<>();
                 planData.put("agentSuccess", planResult.success());
@@ -506,8 +542,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
             try {
                 send(goalMessage, speaker).join();
-                AgentMessage reply = speaker.generateReply(
-                        goalMessage, this, relyMessages, null).join();
+                AgentMessage reply = dispatchToWorker(speaker, goalMessage, relyMessages).join();
 
                 Map<String, Object> eventData = extractSubAgentData(speaker, reply);
                 eventData.put("agentSuccess", reply.success());
@@ -563,8 +598,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                     .rounds(message.rounds() + 1);
             forwardAllContext(message, summaryBuilder);
             AgentMessage summaryMessage = summaryBuilder.build();
-            AgentMessage report = dashboardAgent.generateReply(
-                    summaryMessage, this, null, null).join();
+            AgentMessage report = dispatchToWorker(dashboardAgent, summaryMessage, null).join();
 
             Map<String, Object> reportData = new LinkedHashMap<>();
             reportData.put("agentSuccess", report.success());

@@ -19,6 +19,14 @@ import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
 import com.sql.logic.engine.domain.agentic.context.ContextManager;
 import com.sql.logic.engine.domain.agentic.core.Agent;
 import com.sql.logic.engine.domain.agentic.core.AgentMemory;
+import com.sql.logic.engine.domain.agentic.core.bus.AgentDispatcher;
+import com.sql.logic.engine.domain.agentic.core.bus.AgentMessageBus;
+import com.sql.logic.engine.domain.agentic.core.bus.BusAgentDispatcher;
+import com.sql.logic.engine.domain.agentic.core.bus.BusOrchestrationProperties;
+import com.sql.logic.engine.domain.agentic.core.bus.BusWorkerEndpointRegistrar;
+import com.sql.logic.engine.domain.agentic.core.bus.BypassAgentDispatcher;
+import com.sql.logic.engine.domain.agentic.core.bus.DirectAgentDispatcher;
+import com.sql.logic.engine.domain.agentic.core.bus.InMemoryMessageBus;
 import com.sql.logic.engine.domain.agentic.memory.*;
 import com.sql.logic.engine.domain.agentic.plan.InMemoryPlanMemory;
 import com.sql.logic.engine.domain.agentic.plan.PlanMemory;
@@ -140,6 +148,61 @@ public class AgenticAutoConfiguration {
         SkillRegistry registry = new SkillRegistry();
         registry.registerBuiltinSkills();
         return registry;
+    }
+
+    // ======================== Message Bus Orchestration ========================
+
+    /**
+     * In-JVM message bus.
+     */
+    @Bean
+    public AgentMessageBus agentMessageBus() {
+        return new InMemoryMessageBus();
+    }
+
+    /**
+     * Select the dispatch strategy from {@code bus-orc.mode}:
+     * {@code OFF} → direct call (default, zero behaviour change),
+     * {@code BYPASS} → direct call + bus mirror (M9a),
+     * {@code SWITCH} → bus-mediated request/reply (M9b).
+     *
+     * <p>In {@code SWITCH} mode the {@link BusWorkerEndpointRegistrar} bean is
+     * also created (conditional on the same property); it subscribes every
+     * worker before any request can fire, so the dispatcher's replies always
+     * find a live worker endpoint.
+     */
+    @Bean
+    public AgentDispatcher agentDispatcher(BusOrchestrationProperties props,
+                                           AgentMessageBus bus) {
+        return switch (props.getMode()) {
+            case OFF -> new DirectAgentDispatcher();
+            case BYPASS -> new BypassAgentDispatcher(bus, new DirectAgentDispatcher());
+            case SWITCH -> new BusAgentDispatcher(bus, "Manager", props.getDispatcherTimeoutSeconds());
+        };
+    }
+
+    /**
+     * SWITCH-mode only: register a {@link com.sql.logic.engine.domain.agentic.core.bus.BusWorkerEndpoint}
+     * for each worker so bus-dispatched tasks reach a real {@code generateReply}.
+     * Eager singleton — created at startup, subscribing all workers before the
+     * first orchestration request.
+     */
+    @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+            name = "bus-orc.mode", havingValue = "switch")
+    public BusWorkerEndpointRegistrar busWorkerEndpointRegistrar(AgentMessageBus bus,
+            PlannerAgent plannerAgent,
+            DataScientistAgent dataScientistAgent,
+            CodeAssistantAgent codeAssistantAgent,
+            ToolAssistantAgent toolAssistantAgent,
+            DashboardAssistantAgent dashboardAssistantAgent) {
+        BusWorkerEndpointRegistrar registrar = new BusWorkerEndpointRegistrar(bus, "Manager");
+        registrar.register(plannerAgent);
+        registrar.register(dataScientistAgent);
+        registrar.register(codeAssistantAgent);
+        registrar.register(toolAssistantAgent);
+        registrar.register(dashboardAssistantAgent);
+        return registrar;
     }
 
     // ======================== Phase 1 Actions ========================
@@ -355,7 +418,8 @@ public class AgenticAutoConfiguration {
                                       SkillRegistry skillRegistry,
                                       LlmClientManager llmClientManager,
                                       AgentEventSinkRegistry eventSinkRegistry,
-                                      AgentSseCodec agentSseCodec) {
+                                      AgentSseCodec agentSseCodec,
+                                      AgentDispatcher agentDispatcher) {
         ManagerAgent agent = new ManagerAgent();
         agent.setPlanMemory(planMemory);
         agent.setPlannerAgent(plannerAgent);
@@ -364,6 +428,7 @@ public class AgenticAutoConfiguration {
         agent.setComplexityRouter(complexityRouter);
         agent.setEventSinkRegistry(eventSinkRegistry);
         agent.setCodec(agentSseCodec);
+        agent.setDispatcher(agentDispatcher);
         agent.bind(agentMemory);
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
