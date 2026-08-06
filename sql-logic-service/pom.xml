@@ -14,10 +14,14 @@
     <description>SQL Logic Engine - Business Service</description>
 
     <dependencies>
-        <!-- Internal module -->
+        <!-- Internal modules -->
         <dependency>
             <groupId>com.sql.logic</groupId>
             <artifactId>sql-logic-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.sql.logic</groupId>
+            <artifactId>sql-logic-sandbox</artifactId>
         </dependency>
 
         <!-- Spring Boot -->

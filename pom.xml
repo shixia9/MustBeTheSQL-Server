@@ -19,6 +19,7 @@
 
     <modules>
         <module>sql-logic-common</module>
+        <module>sql-logic-sandbox</module>
         <module>sql-logic-service</module>
         <module>sql-logic-gateway</module>
         <module>sql-logic-admin</module>
@@ -60,6 +61,11 @@
             <dependency>
                 <groupId>com.sql.logic</groupId>
                 <artifactId>sql-logic-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.sql.logic</groupId>
+                <artifactId>sql-logic-sandbox</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
