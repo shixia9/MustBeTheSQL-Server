@@ -1,8 +1,6 @@
 package com.sql.logic.engine.domain.sandbox;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
-import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
+import com.sql.logic.engine.common.sink.SandboxEventSink;
 import com.sql.logic.engine.domain.sandbox.audit.SandboxAuditService;
 import com.sql.logic.engine.domain.sandbox.config.SandboxProperties;
 import com.sql.logic.engine.domain.sandbox.control.SandboxControlService;
@@ -12,7 +10,6 @@ import com.sql.logic.engine.domain.sandbox.execution.StreamCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Sinks;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -40,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li><b>SSE streaming</b> — Each execution emits {@code SANDBOX STARTED}
  *       → multiple {@code output_type: stream} chunks (stdout/stderr line-by-line,
  *       chunked at 800 chars to {@code chunk_text}) → {@code SANDBOX FINISHED}.
- *       Streaming is driven internally by this service via {@link AgentEventSinkRegistry}; 
+ *       Streaming is driven internally by this service via {@link SandboxEventSink};
  *       actions no longer need to supply a callback.</li>
  * </ul>
  */
@@ -58,9 +55,7 @@ public class SandboxExecutionService {
     private final RuntimeFactory runtimeFactory;
     private final SandboxControlService controlService;
     private final SandboxProperties properties;
-    private final AgentEventSinkRegistry eventSinkRegistry;
-    private final AgentSseCodec codec;
-    private final ObjectMapper objectMapper;
+    private final SandboxEventSink eventSink;
     private final SandboxAuditService auditService;
 
     /** threadId → sandbox sessionId (stateful per-conversation sessions). */
@@ -69,16 +64,12 @@ public class SandboxExecutionService {
     public SandboxExecutionService(RuntimeFactory runtimeFactory,
                                    SandboxControlService controlService,
                                    SandboxProperties properties,
-                                   AgentEventSinkRegistry eventSinkRegistry,
-                                   AgentSseCodec codec,
-                                   ObjectMapper objectMapper,
+                                   SandboxEventSink eventSink,
                                    SandboxAuditService auditService) {
         this.runtimeFactory = runtimeFactory;
         this.controlService = controlService;
         this.properties = properties;
-        this.eventSinkRegistry = eventSinkRegistry;
-        this.codec = codec;
-        this.objectMapper = objectMapper;
+        this.eventSink = eventSink;
         this.auditService = auditService;
     }
 
@@ -291,33 +282,18 @@ public class SandboxExecutionService {
     // ========================================================================
 
     /**
-     * Emit a {@code SANDBOX} SSE event of the given output type. Mirrors
-     * {@code ManagerAgent.emitSse()}: builds the canonical event JSON
-     * ({@code nodeName / outputType / messageType / sequenceNo / data}) and pushes
-     * it to the per-thread reactor sink registered in {@link AgentEventSinkRegistry}.
+     * Emit a {@code SANDBOX} SSE event of the given output type via the
+     * {@link SandboxEventSink} abstraction. The sink implementation (provided by
+     * the service module) handles the canonical event JSON construction
+     * ({@code nodeName / outputType / messageType / sequenceNo / data}) and
+     * pushes it to the per-thread reactor sink.
      * No-op when no sink is registered for the thread (e.g. REST manual execute path).
      */
     private void emitSandboxEvent(String threadId, String outputType, Map<String, Object> data) {
-        if (eventSinkRegistry == null || codec == null || objectMapper == null) {
+        if (eventSink == null) {
             return;
         }
-        Sinks.Many<String> sink = eventSinkRegistry.get(threadId);
-        if (sink == null) {
-            return;
-        }
-        try {
-            Map<String, Object> event = new LinkedHashMap<>();
-            event.put("nodeName", "SANDBOX");
-            event.put("outputType", outputType);
-            event.put("messageType", codec.messageTypeForNode("SANDBOX"));
-            event.put("sequenceNo", 0);
-            if (data != null && !data.isEmpty()) {
-                event.put("data", data);
-            }
-            sink.tryEmitNext(objectMapper.writeValueAsString(event));
-        } catch (Exception e) {
-            log.debug("[SandboxExec] SSE emit failed ({}): {}", outputType, e.getMessage());
-        }
+        eventSink.emit(threadId, outputType, data);
     }
 
     /**

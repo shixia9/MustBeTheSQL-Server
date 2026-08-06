@@ -1,8 +1,6 @@
 package com.sql.logic.engine.domain.sandbox;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
-import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
+import com.sql.logic.engine.common.sink.SandboxEventSink;
 import com.sql.logic.engine.domain.sandbox.audit.SandboxAuditService;
 import com.sql.logic.engine.domain.sandbox.config.SandboxProperties;
 import com.sql.logic.engine.domain.sandbox.control.SandboxControlService;
@@ -12,9 +10,9 @@ import com.sql.logic.engine.domain.sandbox.execution.RuntimeFactory;
 import com.sql.logic.engine.domain.sandbox.execution.StreamCallback;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Sinks;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -23,16 +21,15 @@ import static org.mockito.Mockito.*;
 /**
  * Mock-based unit tests for {@link SandboxExecutionService} — covers the
  * agent-facing service's fail-closed semantics, AST validation gate, SSE event
- * emission, audit recording, and session lifecycle.
+ * emission (via the {@link SandboxEventSink} abstraction), audit recording, and
+ * session lifecycle.
  */
 class SandboxExecutionServiceTest {
 
     private RuntimeFactory runtimeFactory;
     private SandboxControlService controlService;
     private SandboxProperties properties;
-    private AgentEventSinkRegistry eventSinkRegistry;
-    private AgentSseCodec codec;
-    private ObjectMapper objectMapper;
+    private SandboxEventSink eventSink;
     private SandboxAuditService auditService;
     private SandboxExecutionService execService;
 
@@ -41,18 +38,15 @@ class SandboxExecutionServiceTest {
         runtimeFactory = mock(RuntimeFactory.class);
         controlService = mock(SandboxControlService.class);
         properties = new SandboxProperties();
-        eventSinkRegistry = mock(AgentEventSinkRegistry.class);
-        codec = mock(AgentSseCodec.class);
-        objectMapper = new ObjectMapper();
+        eventSink = mock(SandboxEventSink.class);
         auditService = mock(SandboxAuditService.class);
 
         execService = new SandboxExecutionService(runtimeFactory, controlService,
-                properties, eventSinkRegistry, codec, objectMapper, auditService);
+                properties, eventSink, auditService);
 
         when(runtimeFactory.isAvailable()).thenReturn(true);
         when(runtimeFactory.selectedRuntimeId()).thenReturn("docker");
         when(runtimeFactory.selectionReason()).thenReturn("Docker daemon available");
-        when(codec.messageTypeForNode("SANDBOX")).thenReturn("TOOL_CALL");
     }
 
     // ---- executePython: input validation ----
@@ -132,12 +126,10 @@ class SandboxExecutionServiceTest {
         verify(controlService, times(2)).execute(eq("sbx-reuse"), anyString(), any(), any());
     }
 
-    // ---- executePython: SSE emission ----
+    // ---- executePython: SSE emission via SandboxEventSink ----
 
     @Test
-    void executePythonShouldEmitSseEventsWhenSinkRegistered() {
-        Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
-        when(eventSinkRegistry.get("thread-1")).thenReturn(sink);
+    void executePythonShouldEmitSseEventsViaSink() {
         when(controlService.connect(anyString(), anyInt())).thenReturn("sbx-sse");
         when(controlService.execute(anyString(), anyString(), any(), any())).thenAnswer(invocation -> {
             StreamCallback callback = invocation.getArgument(3);
@@ -147,34 +139,17 @@ class SandboxExecutionServiceTest {
             return ExecutionResult.success("hello world", "", 0, 10, "python", List.of(), List.of());
         });
 
-        java.util.List<String> emitted = new java.util.concurrent.CopyOnWriteArrayList<>();
-        sink.asFlux().subscribe(emitted::add);
-
         execService.executePython("thread-1", "print('hello world')", null, 30L, null);
 
-        // Should have emitted at least STARTED + stream chunk(s) + FINISHED
-        assertFalse(emitted.isEmpty());
-        // Verify STARTED event
-        assertTrue(emitted.stream().anyMatch(e -> e.contains("STARTED")));
-        // Verify FINISHED event
-        assertTrue(emitted.stream().anyMatch(e -> e.contains("FINISHED")));
-        // Verify stream chunk
-        assertTrue(emitted.stream().anyMatch(e -> e.contains("stream")));
-    }
-
-    @Test
-    void executePythonShouldNotEmitSseWhenNoSinkRegistered() {
-        when(eventSinkRegistry.get("thread-1")).thenReturn(null);
-        when(controlService.connect(anyString(), anyInt())).thenReturn("sbx-nosink");
-        when(controlService.execute(anyString(), anyString(), any(), any())).thenReturn(
-                ExecutionResult.success("ok", "", 0, 1, "python", List.of(), List.of()));
-
-        ExecutionResult result = execService.executePython("thread-1", "print(1)", null, 30L, null);
-
-        assertTrue(result.isSuccess());
-        // No sink → emitSandboxEvent probes the registry for each event (STARTED,
-        // FINISHED) but returns early without emitting. Verify it was probed.
-        verify(eventSinkRegistry, atLeastOnce()).get("thread-1");
+        // Verify STARTED event was emitted with language + code
+        verify(eventSink).emit(eq("thread-1"), eq("STARTED"), argThat(data ->
+                data != null && "python".equals(data.get("language"))));
+        // Verify stream chunk was emitted
+        verify(eventSink).emit(eq("thread-1"), eq("stream"), argThat(data ->
+                data != null && "hello world".equals(data.get("chunk"))));
+        // Verify FINISHED event was emitted with stdout
+        verify(eventSink).emit(eq("thread-1"), eq("FINISHED"), argThat(data ->
+                data != null && "hello world".equals(data.get("output"))));
     }
 
     // ---- executePython: audit ----

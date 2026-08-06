@@ -132,4 +132,40 @@ class AgentMessageTest {
         assertEquals("b", copy.context().get("a"));
         assertNotSame(original, copy);
     }
+
+    // --- REQ-01 identity fields (additive) ---
+
+    @Test
+    void builderShouldAutoFillMessageIdAndTimestampWhenUnset() {
+        AgentMessage msg = AgentMessage.builder().content("hi").build();
+
+        assertNotNull(msg.messageId(), "messageId must be auto-generated");
+        assertNotNull(msg.timestamp(), "timestamp must be auto-generated");
+        assertNull(msg.correlationId(), "correlationId is intentionally nullable");
+    }
+
+    @Test
+    void builderShouldPreserveExplicitIdentityFields() {
+        java.time.Instant fixed = java.time.Instant.parse("2026-08-06T10:00:00Z");
+        AgentMessage msg = AgentMessage.builder()
+                .content("hi")
+                .messageId("m-1")
+                .correlationId("c-1")
+                .timestamp(fixed)
+                .build();
+
+        assertEquals("m-1", msg.messageId());
+        assertEquals("c-1", msg.correlationId());
+        assertEquals(fixed, msg.timestamp());
+    }
+
+    @Test
+    void builderFromExistingMessageShouldCopyIdentityFields() {
+        AgentMessage original = AgentMessage.builder()
+                .content("o").messageId("m-1").correlationId("c-1").build();
+        AgentMessage copy = new AgentMessage.Builder(original).content("modified").build();
+
+        assertEquals("m-1", copy.messageId());
+        assertEquals("c-1", copy.correlationId());
+    }
 }

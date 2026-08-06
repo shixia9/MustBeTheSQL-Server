@@ -1,14 +1,16 @@
 package com.sql.logic.engine.domain.agentic.core;
 
+import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Structured message envelope for inter-Agent communication.
  * Replaces bare {@code Map<String,Object>} state passing with typed fields.
  * Immutable — use {@link #withContent}, {@link #withActionReport}, etc. for modified copies.
- */
+  */
 public class AgentMessage {
 
     public enum MessageType {
@@ -28,6 +30,10 @@ public class AgentMessage {
     private final Map<String, Object> resourceInfo;
     private final MessageType messageType;
 
+    private final String messageId;
+    private final String correlationId;   // nullable; links a reply to its originating request
+    private final Instant timestamp;
+
     private AgentMessage(Builder builder) {
         this.content = builder.content;
         this.currentGoal = builder.currentGoal;
@@ -41,6 +47,9 @@ public class AgentMessage {
         this.context = Collections.unmodifiableMap(new HashMap<>(builder.context));
         this.resourceInfo = Collections.unmodifiableMap(new HashMap<>(builder.resourceInfo));
         this.messageType = builder.messageType;
+        this.messageId = builder.messageId != null ? builder.messageId : UUID.randomUUID().toString();
+        this.correlationId = builder.correlationId;
+        this.timestamp = builder.timestamp != null ? builder.timestamp : Instant.now();
     }
 
     // --- Getters ---
@@ -57,6 +66,15 @@ public class AgentMessage {
     public Map<String, Object> context() { return context; }
     public Map<String, Object> resourceInfo() { return resourceInfo; }
     public MessageType messageType() { return messageType; }
+
+    /** unique message id (never null; auto-generated UUID when unset). */
+    public String messageId() { return messageId; }
+
+    /** correlation id linking a reply to its originating request (nullable). */
+    public String correlationId() { return correlationId; }
+
+    /** message creation timestamp (never null; auto-set to now() when unset). */
+    public Instant timestamp() { return timestamp; }
 
     // --- Immutable "with" copy methods ---
 
@@ -115,6 +133,10 @@ public class AgentMessage {
         private Map<String, Object> context = new HashMap<>();
         private Map<String, Object> resourceInfo = new HashMap<>();
         private MessageType messageType = MessageType.AI;
+        // identity (auto-populated in build() when left null)
+        private String messageId;
+        private String correlationId;
+        private Instant timestamp;
 
         public Builder() {}
 
@@ -131,6 +153,9 @@ public class AgentMessage {
             this.context = new HashMap<>(source.context);
             this.resourceInfo = new HashMap<>(source.resourceInfo);
             this.messageType = source.messageType;
+            this.messageId = source.messageId;
+            this.correlationId = source.correlationId;
+            this.timestamp = source.timestamp;
         }
 
         public Builder content(String v) { this.content = v; return this; }
@@ -145,6 +170,9 @@ public class AgentMessage {
         public Builder context(Map<String, Object> v) { this.context = v != null ? new HashMap<>(v) : new HashMap<>(); return this; }
         public Builder resourceInfo(Map<String, Object> v) { this.resourceInfo = v != null ? new HashMap<>(v) : new HashMap<>(); return this; }
         public Builder messageType(MessageType v) { this.messageType = v; return this; }
+        public Builder messageId(String v) { this.messageId = v; return this; }
+        public Builder correlationId(String v) { this.correlationId = v; return this; }
+        public Builder timestamp(Instant v) { this.timestamp = v; return this; }
         public Builder putContext(String key, Object value) { this.context.put(key, value); return this; }
         public Builder putResourceInfo(String key, Object value) { this.resourceInfo.put(key, value); return this; }
 
@@ -155,8 +183,8 @@ public class AgentMessage {
 
     @Override
     public String toString() {
-        return "AgentMessage{sender=" + senderName + "(" + senderRole + "), type=" + messageType
-                + ", rounds=" + rounds + ", success=" + success + ", content="
-                + (content != null ? content.substring(0, Math.min(100, content.length())) : "null") + "}";
+        return "AgentMessage{id=" + messageId + ", sender=" + senderName + "(" + senderRole
+                + "), type=" + messageType + ", rounds=" + rounds + ", success=" + success
+                + ", content=" + (content != null ? content.substring(0, Math.min(100, content.length())) : "null") + "}";
     }
 }
