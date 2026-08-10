@@ -113,6 +113,28 @@ public class ConversationContextService {
         }
     }
 
+    /**
+     * Load the raw persisted turn records for a conversation, oldest-first.
+     * <p>
+     * Unlike {@link #loadHistorySection} (which renders a token-capped sliding
+     * window), this returns the full detail list so callers can reconstruct the
+     * real conversation size — used by the manual context-compaction endpoint to
+     * compute true token usage against the budget and run the compaction layers.
+     */
+    public List<ConversationDetail> loadDetails(Long conversationId) {
+        if (conversationId == null) return List.of();
+        try {
+            List<ConversationDetail> details = conversationDetailDao.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<ConversationDetail>()
+                            .eq("conversation_id", conversationId)
+                            .orderByAsc("create_time"));
+            return details == null ? List.of() : details;
+        } catch (Exception e) {
+            log.warn("[ConversationContextService] loadDetails failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     /** Persist one completed turn so the next request can recall it. */
     public void appendTurn(Long conversationId, String userInput, String sqlOutput, String executeResult) {
         if (conversationId == null) return;

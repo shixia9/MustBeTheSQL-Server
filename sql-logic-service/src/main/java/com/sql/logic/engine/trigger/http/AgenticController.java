@@ -8,10 +8,16 @@ import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.core.AgenticRunner;
 import com.sql.logic.engine.domain.agent.core.AgenticRunner.AgentRunHandle;
+import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
+import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.service.SessionSummaryService;
+import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
+import com.sql.logic.engine.domain.agentic.context.ContextManager;
+import com.sql.logic.engine.domain.agentic.core.AgentMessage;
 import com.sql.logic.engine.domain.conversation.ConversationContextService;
 import com.sql.logic.engine.domain.memory.MemoryExtractorService;
 import com.sql.logic.engine.infrastructure.po.AgentExecution;
+import com.sql.logic.engine.infrastructure.po.ConversationDetail;
 
 import cn.dev33.satoken.stp.StpUtil;
 import org.slf4j.Logger;
@@ -23,7 +29,9 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -56,6 +64,9 @@ public class AgenticController {
     private final SessionSummaryService sessionSummaryService;
     private final MemoryExtractorService memoryExtractorService;
     private final ConversationContextService conversationContextService;
+    private final ContextBudgetConfig contextBudgetConfig;
+    private final LlmClientManager llmClientManager;
+    private final AgentEventSinkRegistry agentEventSinkRegistry;
 
     public AgenticController(AgenticRunner agenticRunner,
                              UserAppService userAppService,
@@ -63,7 +74,10 @@ public class AgenticController {
                              AgentHistoryAppService agentHistoryAppService,
                              SessionSummaryService sessionSummaryService,
                              MemoryExtractorService memoryExtractorService,
-                             ConversationContextService conversationContextService) {
+                             ConversationContextService conversationContextService,
+                             ContextBudgetConfig contextBudgetConfig,
+                             LlmClientManager llmClientManager,
+                             AgentEventSinkRegistry agentEventSinkRegistry) {
         this.agenticRunner = agenticRunner;
         this.userAppService = userAppService;
         this.objectMapper = objectMapper;
@@ -71,6 +85,9 @@ public class AgenticController {
         this.sessionSummaryService = sessionSummaryService;
         this.memoryExtractorService = memoryExtractorService;
         this.conversationContextService = conversationContextService;
+        this.contextBudgetConfig = contextBudgetConfig;
+        this.llmClientManager = llmClientManager;
+        this.agentEventSinkRegistry = agentEventSinkRegistry;
     }
 
     /**
@@ -180,6 +197,116 @@ public class AgenticController {
                     log.error("[AgenticController] SSE resume error (threadId={})", threadId, e);
                     return Flux.just("{\"type\":\"ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
                 });
+    }
+
+    // ======================== Context Compaction (manual) ========================
+
+    /**
+     * Report the current context budget usage for a conversation.
+     * <p>
+     * Reconstructs the persisted turn records into {@link AgentMessage}s and
+     * counts real tokens against {@link ContextBudgetConfig#effectiveBudget()}.
+     * Used by the frontend circular progress ring to show how full the context
+     * window is.
+     */
+    @GetMapping("/context/budget")
+    public Map<String, Object> contextBudget(@RequestParam(required = false) Long conversationId) {
+        int budget = contextBudgetConfig.effectiveBudget();
+        List<AgentMessage> messages = reconstructMessages(conversationId);
+        int used = countTokensSafe(messages);
+        long pct = budget > 0 ? Math.round(used * 100.0 / budget) : 0;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("budget", budget);
+        m.put("usedTokens", used);
+        m.put("usagePercent", Math.min(pct, 100));
+        m.put("turnCount", messages.size());
+        return m;
+    }
+
+    /**
+     * Manually trigger progressive context compaction on a conversation's
+     * persisted history.
+     * <p>
+     * A fresh, isolated {@link ContextManager} is constructed per request so the
+     * singleton bean's tracker / circuit-breaker state is never polluted by
+     * manual operations. When a live SSE sink exists for the supplied
+     * {@code threadId}, each applied compaction layer streams a
+     * {@code CONTEXT_COMPACT} event to the active session (best-effort, no-op
+     * when the stream has already completed).
+     *
+     * @param body {@code {"conversationId": Long, "threadId": String?}}
+     */
+    @PostMapping("/context/compact")
+    public Map<String, Object> compactContext(@RequestBody Map<String, Object> body) {
+        Long conversationId = toLong(body.get("conversationId"));
+        String threadId = body.get("threadId") == null ? null : String.valueOf(body.get("threadId"));
+
+        List<AgentMessage> messages = reconstructMessages(conversationId);
+        int before = countTokensSafe(messages);
+
+        // Isolated ContextManager — fresh tracker, does not touch the shared bean.
+        ContextManager local = new ContextManager(contextBudgetConfig, llmClientManager, agentEventSinkRegistry);
+        List<AgentMessage> compacted = local.manageContext(messages, 1, "", threadId);
+        int after = countTokensSafe(compacted);
+
+        int budget = contextBudgetConfig.effectiveBudget();
+        long pctBefore = budget > 0 ? Math.round(before * 100.0 / budget) : 0;
+        long pctAfter = budget > 0 ? Math.round(after * 100.0 / budget) : 0;
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("budget", budget);
+        m.put("tokensBefore", before);
+        m.put("tokensAfter", after);
+        m.put("usagePercentBefore", Math.min(pctBefore, 100));
+        m.put("usagePercentAfter", Math.min(pctAfter, 100));
+        m.put("applied", after < before);
+        m.put("reduced", Math.max(0, before - after));
+        return m;
+    }
+
+    /**
+     * Reconstruct a list of {@link AgentMessage}s from the persisted conversation
+     * turns (oldest-first). Each turn yields a USER message (the question) and an
+     * AI message (the SQL + execution/report result), mirroring the data captured
+     * by {@link ConversationContextService#appendTurn}.
+     */
+    private List<AgentMessage> reconstructMessages(Long conversationId) {
+        if (conversationId == null) return List.of();
+        List<ConversationDetail> details = conversationContextService.loadDetails(conversationId);
+        if (details.isEmpty()) return List.of();
+        List<AgentMessage> messages = new ArrayList<>(details.size() * 2);
+        for (ConversationDetail d : details) {
+            if (d.getUserInput() != null && !d.getUserInput().isBlank()) {
+                messages.add(AgentMessage.user(d.getUserInput()));
+            }
+            StringBuilder ai = new StringBuilder();
+            if (d.getSqlOutput() != null && !d.getSqlOutput().isBlank()) {
+                ai.append("SQL:\n").append(d.getSqlOutput()).append("\n\n");
+            }
+            if (d.getExecuteResult() != null && !d.getExecuteResult().isBlank()) {
+                ai.append("结果:\n").append(d.getExecuteResult());
+            }
+            if (ai.length() > 0) {
+                messages.add(AgentMessage.ai(ai.toString()));
+            }
+        }
+        return messages;
+    }
+
+    /** Count tokens via an isolated tracker; never throws. */
+    private int countTokensSafe(List<AgentMessage> messages) {
+        try {
+            return new ContextManager(contextBudgetConfig).getTracker().countMessages(messages);
+        } catch (Exception e) {
+            log.warn("[AgenticController] countTokensSafe failed: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    private Long toLong(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.longValue();
+        try { return Long.valueOf(String.valueOf(v)); } catch (NumberFormatException e) { return null; }
     }
 
     private Mono<String> terminalEvent(AgentRunHandle handle, String threadId, Long conversationId) {
