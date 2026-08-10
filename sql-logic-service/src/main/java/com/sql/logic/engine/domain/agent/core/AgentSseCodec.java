@@ -63,7 +63,9 @@ public class AgentSseCodec {
             Map.entry("DASHBOARD", "REPORT"),
             Map.entry("TOOL_ASSISTANT", "TOOL_CALL"),
             // Sandbox execution node
-            Map.entry("SANDBOX", "TOOL_CALL")
+            Map.entry("SANDBOX", "TOOL_CALL"),
+            // Plan snapshot events (PLAN_UPDATED emitted by ManagerAgent)
+            Map.entry("PLAN", "STATUS")
     );
 
     public AgentSseCodec(ObjectMapper objectMapper) {

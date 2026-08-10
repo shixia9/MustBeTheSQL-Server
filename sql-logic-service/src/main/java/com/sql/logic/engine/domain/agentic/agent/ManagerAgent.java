@@ -226,6 +226,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
         simpleStep.setStatus(PlanStatus.RUNNING);
         planMemory.removeByConvId(threadId);
         planMemory.savePlan(threadId, List.of(simpleStep));
+        emitPlanSnapshot(threadId);
 
         AgentMessage.Builder goalBuilder = AgentMessage.builder()
                 .content(userInput)
@@ -248,6 +249,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 String result = reply.actionReport() != null
                         ? reply.actionReport().content() : reply.content();
                 planMemory.completeTask(threadId, 1, result);
+                emitPlanSnapshot(threadId);
                 allStepResults.add(Map.of("content", userInput, "agent", "DataScientist",
                         "result", result));
 
@@ -324,6 +326,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
         toolStep.setStatus(PlanStatus.RUNNING);
         planMemory.removeByConvId(threadId);
         planMemory.savePlan(threadId, List.of(toolStep));
+        emitPlanSnapshot(threadId);
 
         AgentMessage.Builder goalBuilder = AgentMessage.builder()
                 .content(userInput)
@@ -346,6 +349,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 String result = reply.actionReport() != null
                         ? reply.actionReport().content() : reply.content();
                 planMemory.completeTask(threadId, 1, result);
+                emitPlanSnapshot(threadId);
                 allStepResults.add(Map.of("content", userInput, "agent", "ToolAssistant",
                         "result", result));
                 return ActionOutput.success(result,
@@ -496,6 +500,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                     planData.put("content", planResult.actionReport().content());
                 }
                 emitSse(threadId, "PLANNER", "FINISHED", planData);
+                emitPlanSnapshot(threadId);
 
                 if (!planResult.success()) {
                     return ActionOutput.fail("PlannerAgent 计划生成失败: " + planResult.content());
@@ -506,6 +511,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             // Take the first TODO plan step
             PlanStep currentPlan = todoPlans.get(0);
             currentPlan.setStatus(PlanStatus.RUNNING);
+            emitPlanSnapshot(threadId);
 
             // HITL gate
             if (hitlEnabled && needsHumanReview(currentPlan)) {
@@ -552,6 +558,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                     String result = reply.actionReport() != null
                             ? reply.actionReport().content() : reply.content();
                     planMemory.completeTask(threadId, currentPlan.getSerialNumber(), result);
+                    emitPlanSnapshot(threadId);
                     allStepResults.add(Map.of(
                             "content", currentPlan.getContent(),
                             "agent", currentPlan.getAgent(),
@@ -574,11 +581,13 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                         planMemory.updateTask(threadId, currentPlan.getSerialNumber(),
                                 PlanStatus.TODO, currentPlan.getRetryTimes() + 1,
                                 speaker.name(), reply.content());
+                        emitPlanSnapshot(threadId);
                         continue;
                     } else {
                         planMemory.updateTask(threadId, currentPlan.getSerialNumber(),
                                 PlanStatus.FAILED, currentPlan.getRetryTimes() + 1,
                                 speaker.name(), reply.content());
+                        emitPlanSnapshot(threadId);
                         return ActionOutput.fail(reply.content(), true);
                     }
                 }
@@ -672,6 +681,48 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             String json = MAPPER.writeValueAsString(event);
             sink.tryEmitNext(json);
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * Emit a full plan snapshot as a {@code PLAN_UPDATED} SSE event so the
+     * frontend can render a real-time TODO list of the Planner's multi-step
+     * plan. Called at every plan-state transition (generation, step start,
+     * completion, failure/retry). Best-effort: any failure is swallowed.
+     */
+    void emitPlanSnapshot(String threadId) {
+        if (planMemory == null) return;
+        List<PlanStep> steps = planMemory.getByConvId(threadId);
+        if (steps == null || steps.isEmpty()) return;
+        try {
+            List<Map<String, Object>> stepList = new ArrayList<>();
+            int completed = 0;
+            int failed = 0;
+            for (PlanStep s : steps) {
+                Map<String, Object> dto = new LinkedHashMap<>();
+                dto.put("serialNumber", s.getSerialNumber());
+                dto.put("agent", s.getAgent());
+                dto.put("content", s.getContent());
+                dto.put("rely", s.getRely());
+                dto.put("status", s.getStatus() == null ? null : s.getStatus().name());
+                String r = s.getResult();
+                if (r != null && r.length() > 500) {
+                    r = r.substring(0, 500) + "…";
+                }
+                dto.put("result", r);
+                dto.put("retryTimes", s.getRetryTimes());
+                stepList.add(dto);
+                if (s.getStatus() == PlanStatus.COMPLETED) completed++;
+                else if (s.getStatus() == PlanStatus.FAILED) failed++;
+            }
+            Map<String, Object> snapshot = new LinkedHashMap<>();
+            snapshot.put("steps", stepList);
+            snapshot.put("totalSteps", steps.size());
+            snapshot.put("completedSteps", completed);
+            snapshot.put("failedSteps", failed);
+            emitSse(threadId, "PLAN", "PLAN_UPDATED", snapshot);
+        } catch (Exception ignored) {
+            // best-effort: never break orchestration on SSE encoding
+        }
     }
 
     private Map<String, Object> extractSubAgentData(Agent speaker, AgentMessage reply) {
