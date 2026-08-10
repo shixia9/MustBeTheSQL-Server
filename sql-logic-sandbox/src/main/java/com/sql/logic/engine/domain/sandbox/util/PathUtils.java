@@ -44,7 +44,9 @@ public final class PathUtils {
                     "Path traversal detected: '" + path + "' resolves outside '" + baseDir + "'");
         }
 
-        return resolved.toString();
+        // Sandbox paths are container paths (always POSIX), so never leak the host
+        // OS separator (e.g. '\workspace\chart.png' on Windows).
+        return resolved.toString().replace('\\', '/');
     }
 
     /**

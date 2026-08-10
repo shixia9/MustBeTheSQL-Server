@@ -184,14 +184,15 @@ public class ContainerCliSandboxSession implements SandboxSession {
             String filename = generateFilename();
             tempFile = writeCodeFile(code, filename);
 
-            // 2. cp into the container working directory.
+            // 2. Inject into the container working directory.
             String remotePath = config.workingDir() + "/" + filename;
-            CommandResult cpResult = runCommand(
-                    List.of(cliBin, "cp", tempFile.getAbsolutePath(), containerName + ":" + remotePath), 15);
-            if (!cpResult.success()) {
+            CommandResult injectResult = runCommand(
+                    List.of(cliBin, "exec", "-i", containerName, "sh", "-c", "cat > " + remotePath),
+                    15, tempFile);
+            if (!injectResult.success()) {
                 return ExecutionResult.error(
-                        "Failed to inject code into container: " + cpResult.stderr, cpResult.exitCode,
-                        0, config.language(), List.of());
+                        "Failed to inject code into container: " + injectResult.stderr,
+                        injectResult.exitCode, 0, config.language(), List.of());
             }
 
             // 3. exec [-i] — run the language command with streaming stdout.
@@ -329,9 +330,15 @@ public class ContainerCliSandboxSession implements SandboxSession {
             String remotePath = config.workingDir() + "/" + safeFilename;
             tempFile = Files.createTempFile("sandbox_fetch_", "_file").toFile();
 
-            CommandResult cpResult = runCommand(
-                    List.of(cliBin, "cp", containerName + ":" + remotePath, tempFile.getAbsolutePath()), 15);
-            if (!cpResult.success()) {
+            // `docker cp` cannot read from this container either: /workspace is a
+            // tmpfs mount that only exists inside the container's mount namespace,
+            // so the host-side `docker cp container:/workspace/...` cannot see it
+            // (and the overlay rootfs is --read-only). Reading via `docker exec cat`
+            // runs inside the container and captures the tmpfs bytes directly.
+            CommandResult readResult = runCommandToFile(
+                    List.of(cliBin, "exec", containerName, "sh", "-c", "cat " + remotePath),
+                    tempFile, 15);
+            if (!readResult.success() || tempFile.length() == 0) {
                 return DisplayResult.error("File not found: " + filename, -1);
             }
 
@@ -475,10 +482,10 @@ public class ContainerCliSandboxSession implements SandboxSession {
         boolean isVnc = config.language() != null && config.language().endsWith("-vnc");
 
         // --- Security hardening ---
-        // VNC containers need port mappings, so --network none is skipped for them.
-        if (!isVnc) {
-            cmd.add("--network"); cmd.add("none");
-        } else {
+        // VNC containers need port mappings, and network-enabled sessions
+        // (networkDisabled=false, e.g. for dependency installation) opt out of
+        // --network none explicitly. Everything else runs fully isolated.
+        if (isVnc) {
             // Publish VNC (5900) and noVNC web (6080) ports. Use "0" for dynamic
             // host port binding when no fixed port is configured; the actual port
             // is resolved later via <cli> inspect (see getVncInfo()).
@@ -490,6 +497,8 @@ public class ContainerCliSandboxSession implements SandboxSession {
                 cmd.add("-p"); cmd.add(hostPort + ":6080");
                 cmd.add("-p"); cmd.add("5900:5900");
             }
+        } else if (config.networkDisabled()) {
+            cmd.add("--network"); cmd.add("none");
         }
         cmd.add("--cap-drop"); cmd.add("ALL");
         cmd.add("--read-only");
@@ -571,9 +580,61 @@ public class ContainerCliSandboxSession implements SandboxSession {
      * Reads stdout and stderr fully into the returned result.
      */
     private CommandResult runCommand(List<String> command, long timeoutSec) {
+        return runCommand(command, timeoutSec, null);
+    }
+
+    /**
+     * Run a one-shot command whose stdout is redirected directly to {@code outFile}
+     * (byte-safe — used for binary file retrieval), waiting up to {@code timeoutSec}.
+     * Only stderr is buffered into the returned result.
+     */
+    private CommandResult runCommandToFile(List<String> command, File outFile, long timeoutSec) {
+        ProcessBuilder pb = new ProcessBuilder(command).redirectErrorStream(false);
+        pb.redirectOutput(ProcessBuilder.Redirect.to(outFile));
         Process process = null;
         try {
-            process = new ProcessBuilder(command).redirectErrorStream(false).start();
+            process = pb.start();
+        } catch (IOException e) {
+            return new CommandResult(-1, "", "Failed to start command: " + e.getMessage(), false);
+        }
+
+        StringBuilder stderrBuf = new StringBuilder();
+        Thread stderrThread = drainStream(process.getErrorStream(), stderrBuf, null, true);
+
+        boolean completed;
+        try {
+            completed = process.waitFor(timeoutSec, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            process.destroyForcibly();
+            joinQuietly(stderrThread);
+            return new CommandResult(-1, "", "Interrupted", false);
+        }
+
+        if (!completed) {
+            process.destroyForcibly();
+            joinQuietly(stderrThread);
+            return new CommandResult(-1, "", "Timed out after " + timeoutSec + "s", true);
+        }
+
+        joinQuietly(stderrThread);
+        return new CommandResult(process.exitValue(), "", stderrBuf.toString(), false);
+    }
+
+    /**
+     * Run a one-shot command (no streaming), waiting up to {@code timeoutSec}.
+     * Reads stdout and stderr fully into the returned result. When
+     * {@code stdinFile} is non-null, its contents are redirected into the
+     * process's stdin (the file reaches EOF naturally, so no deadlock).
+     */
+    private CommandResult runCommand(List<String> command, long timeoutSec, File stdinFile) {
+        ProcessBuilder pb = new ProcessBuilder(command).redirectErrorStream(false);
+        if (stdinFile != null) {
+            pb.redirectInput(ProcessBuilder.Redirect.from(stdinFile));
+        }
+        Process process = null;
+        try {
+            process = pb.start();
         } catch (IOException e) {
             return new CommandResult(-1, "", "Failed to start command: " + e.getMessage(), false);
         }

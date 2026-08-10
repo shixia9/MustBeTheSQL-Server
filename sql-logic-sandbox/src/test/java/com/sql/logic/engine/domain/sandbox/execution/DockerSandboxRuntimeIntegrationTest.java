@@ -86,7 +86,10 @@ class DockerSandboxRuntimeIntegrationTest {
     @Test
     void shouldInstallPipDependenciesAndUseThem() {
         sessionId = "itest-deps-" + System.currentTimeMillis();
-        SessionConfig config = SessionConfig.builder("python").timeoutSeconds(30).build();
+        // Dependency install requires outbound network — opt out of the default
+        // networkDisabled hardening for this session only.
+        SessionConfig config = SessionConfig.builder("python").timeoutSeconds(30)
+                .networkDisabled(false).build();
         SandboxSession session = runtime.createSession(sessionId, config);
 
         // Install a small package
@@ -132,10 +135,12 @@ class DockerSandboxRuntimeIntegrationTest {
         // Create a file in the workspace
         session.execute("with open('/workspace/output.txt', 'w') as f: f.write('file content here')", null);
 
-        // Retrieve the file content
+        // Retrieve the file content (base64-encoded per the sandbox contract)
         DisplayResult fileResult = session.getFileContent("output.txt");
         assertNotNull(fileResult);
-        assertTrue(fileResult.output().contains("file content here"));
+        assertTrue(fileResult.isSuccess(), "expected success but got: " + fileResult.error());
+        String raw = new String(java.util.Base64.getDecoder().decode(fileResult.output()));
+        assertTrue(raw.contains("file content here"));
     }
 
     @Test
