@@ -867,6 +867,14 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
         return "ORCHESTRATE";
     }
 
+    // ManagerAgent's thinking() returns the constant "ORCHESTRATE" — emitting
+    // that as a THINKING event would be pure noise. Suppress it so only worker
+    // agents (DataScientist, CodeAssistant, etc.) stream their real LLM reasoning.
+    @Override
+    protected boolean shouldEmitThinking() {
+        return false;
+    }
+
     // ========================================================================
     //  Prompt building
     // ========================================================================

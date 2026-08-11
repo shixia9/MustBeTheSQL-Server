@@ -38,6 +38,26 @@ public class AgentSseCodec {
             "connectionId", "llmConfigId", "userId"
     );
 
+    /**
+     * Agent profile-name → SSE node-name mapping (mirrors {@code ManagerAgent.NODE_NAME_MAP}).
+     * Used by {@code ConversableAgent.emitThinkingSse} so a worker agent's THINKING event
+     * carries the same nodeName the ManagerAgent used for its STARTED/FINISHED events —
+     * letting the frontend attach the thinking stream to the existing running step.
+     */
+    private static final Map<String, String> AGENT_NAME_TO_NODE = Map.of(
+            "DataScientist", "DATA_SCIENTIST",
+            "CodeAssistant", "CODE_ASSISTANT",
+            "DashboardAssistant", "DASHBOARD",
+            "ToolAssistant", "TOOL_ASSISTANT",
+            "Planner", "PLANNER"
+    );
+
+    /** Resolve the SSE nodeName for an agent's profile name. Falls back to upper-case. */
+    public static String nodeNameForAgentName(String agentName) {
+        if (agentName == null) return "UNKNOWN";
+        return AGENT_NAME_TO_NODE.getOrDefault(agentName, agentName.toUpperCase());
+    }
+
     private static final Map<String, String> NODE_MESSAGE_TYPES = Map.ofEntries(
             Map.entry("MEMORY_RECALL", "THINKING"),
             Map.entry("EVIDENCE_RECALL", "THINKING"),

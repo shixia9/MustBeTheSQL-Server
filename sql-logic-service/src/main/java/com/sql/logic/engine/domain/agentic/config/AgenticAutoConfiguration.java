@@ -320,7 +320,9 @@ public class AgenticAutoConfiguration {
             ContextManager contextManager,
             TaskProgressPersistenceService persistenceService,
             SkillRegistry skillRegistry,
-            LlmClientManager llmClientManager) {
+            LlmClientManager llmClientManager,
+            AgentEventSinkRegistry eventSinkRegistry,
+            AgentSseCodec agentSseCodec) {
         DataScientistAgent agent = new DataScientistAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(multiCandidateSqlAction, chartAction,
@@ -330,6 +332,8 @@ public class AgenticAutoConfiguration {
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
         agent.bindSkills(skillRegistry);
+        agent.bindEventSink(eventSinkRegistry);
+        agent.bindCodec(agentSseCodec);
         agent.build();
         return agent;
     }
@@ -338,13 +342,17 @@ public class AgenticAutoConfiguration {
     public PlannerAgent plannerAgent(PlanAction planAction, AgentMemory agentMemory,
                                       ProfileRenderer profileRenderer,
                                       SkillRegistry skillRegistry,
-                                      LlmClientManager llmClientManager) {
+                                      LlmClientManager llmClientManager,
+                                      AgentEventSinkRegistry eventSinkRegistry,
+                                      AgentSseCodec agentSseCodec) {
         PlannerAgent agent = new PlannerAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(planAction));
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
         agent.bindSkills(skillRegistry);
+        agent.bindEventSink(eventSinkRegistry);
+        agent.bindCodec(agentSseCodec);
         agent.build();
         return agent;
     }
@@ -358,7 +366,9 @@ public class AgenticAutoConfiguration {
                                                   ContextManager contextManager,
                                                   TaskProgressPersistenceService persistenceService,
                                                   SkillRegistry skillRegistry,
-                                                  LlmClientManager llmClientManager) {
+                                                  LlmClientManager llmClientManager,
+                                                  AgentEventSinkRegistry eventSinkRegistry,
+                                                  AgentSseCodec agentSseCodec) {
         CodeAssistantAgent agent = new CodeAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(genAction, execAction, analyzeAction));
@@ -367,6 +377,8 @@ public class AgenticAutoConfiguration {
         agent.bindContextManager(contextManager);
         agent.bindPersistence(persistenceService);
         agent.bindSkills(skillRegistry);
+        agent.bindEventSink(eventSinkRegistry);
+        agent.bindCodec(agentSseCodec);
         agent.build();
         return agent;
     }
@@ -376,13 +388,17 @@ public class AgenticAutoConfiguration {
                                                             DashboardAction dashboardAction,
                                                             ProfileRenderer profileRenderer,
                                                             SkillRegistry skillRegistry,
-                                                            LlmClientManager llmClientManager) {
+                                                            LlmClientManager llmClientManager,
+                                                            AgentEventSinkRegistry eventSinkRegistry,
+                                                            AgentSseCodec agentSseCodec) {
         DashboardAssistantAgent agent = new DashboardAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(dashboardAction));
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
         agent.bindSkills(skillRegistry);
+        agent.bindEventSink(eventSinkRegistry);
+        agent.bindCodec(agentSseCodec);
         agent.build();
         return agent;
     }
@@ -393,13 +409,17 @@ public class AgenticAutoConfiguration {
                                                   McpToolFixAction mcpToolFixAction,
                                                   ProfileRenderer profileRenderer,
                                                   SkillRegistry skillRegistry,
-                                                  LlmClientManager llmClientManager) {
+                                                  LlmClientManager llmClientManager,
+                                                  AgentEventSinkRegistry eventSinkRegistry,
+                                                  AgentSseCodec agentSseCodec) {
         ToolAssistantAgent agent = new ToolAssistantAgent();
         agent.bind(agentMemory);
         agent.bind(List.of(mcpToolAction, mcpToolFixAction));
         agent.bind(profileRenderer);
         agent.bind(llmClientManager);
         agent.bindSkills(skillRegistry);
+        agent.bindEventSink(eventSinkRegistry);
+        agent.bindCodec(agentSseCodec);
         agent.build();
         return agent;
     }

@@ -2,6 +2,9 @@ package com.sql.logic.engine.domain.agentic.core;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
+import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
 import com.sql.logic.engine.domain.agentic.bridge.AgentStateBridge;
@@ -14,8 +17,10 @@ import com.sql.logic.engine.domain.agentic.resource.AgentResource;
 import com.sql.logic.engine.domain.agentic.skill.SkillRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Sinks;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -53,6 +58,14 @@ public abstract class ConversableAgent implements Agent {
 
     // Skill system
     protected SkillRegistry skillRegistry;
+
+    // SSE event emission — when bound (production wiring via AgenticAutoConfiguration),
+    // the agent streams a THINKING event carrying its LLM reasoning so the frontend can
+    // render a dedicated "thinking process" panel separate from the final output.
+    // Null in unit tests → emission is a no-op (see emitThinkingSse guard).
+    protected AgentEventSinkRegistry eventSinkRegistry;
+    protected AgentSseCodec codec;
+    private static final ObjectMapper SSE_MAPPER = new ObjectMapper();
 
     // Per-request llmConfigId (set from received message context at the start of generateReply)
     private Long currentRequestLlmConfigId;
@@ -127,6 +140,82 @@ public abstract class ConversableAgent implements Agent {
     public ConversableAgent bindSkills(SkillRegistry registry) {
         this.skillRegistry = registry;
         return this;
+    }
+
+    /**
+     * Bind the SSE event sink registry + codec so this agent can stream a
+     * {@code THINKING} event carrying its LLM reasoning (see {@link #emitThinkingSse}).
+     * Optional — when unbound (e.g. unit tests), thinking emission is a silent no-op.
+     */
+    public ConversableAgent bindEventSink(AgentEventSinkRegistry registry) {
+        this.eventSinkRegistry = registry;
+        return this;
+    }
+
+    public ConversableAgent bindCodec(AgentSseCodec codec) {
+        this.codec = codec;
+        return this;
+    }
+
+    // ========================================================================
+    //  Thinking-process SSE emission
+    // ========================================================================
+
+    /**
+     * Whether this agent should emit a {@code THINKING} SSE event carrying its
+     * LLM reasoning. Worker agents return {@code true} (default); the
+     * {@code ManagerAgent} overrides this to {@code false} because its
+     * {@code thinking()} returns the constant "ORCHESTRATE" — emitting that
+     * would be noise.
+     */
+    protected boolean shouldEmitThinking() {
+        return true;
+    }
+
+    /**
+     * Emit a {@code THINKING} SSE event carrying the agent's LLM reasoning so
+     * the frontend can render it in a dedicated, collapsible thinking panel
+     * separate from the final output.
+     *
+     * <p>The event shape mirrors the existing node-event envelope:
+     * <pre>{@code
+     * {
+     *   "nodeName": "DATA_SCIENTIST",   // resolved via AgentSseCodec.nodeNameForAgentName
+     *   "outputType": "THINKING",
+     *   "messageType": "THINKING",
+     *   "sequenceNo": 0,
+     *   "data": { "agentName": "...", "content": "...", "done": true, "retry": 0 }
+     * }
+     * }</pre>
+     *
+     * <p>Best-effort: any failure is swallowed so SSE emission never breaks
+     * the core pipeline. When {@link #eventSinkRegistry} or {@link #codec} is
+     * null (e.g. unit tests), or when {@link #shouldEmitThinking()} returns
+     * false, this is a silent no-op.
+     */
+    protected void emitThinkingSse(String threadId, String llmOutput, int retry) {
+        if (eventSinkRegistry == null || codec == null) return;
+        if (!shouldEmitThinking()) return;
+        if (threadId == null || threadId.isBlank()) return;
+        Sinks.Many<String> sink = eventSinkRegistry.get(threadId);
+        if (sink == null) return;
+        try {
+            String nodeName = AgentSseCodec.nodeNameForAgentName(name());
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("agentName", name());
+            data.put("content", llmOutput != null ? llmOutput : "");
+            data.put("done", true);
+            data.put("retry", retry);
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("nodeName", nodeName);
+            event.put("outputType", "THINKING");
+            event.put("messageType", "THINKING");
+            event.put("sequenceNo", 0);
+            event.put("data", data);
+            sink.tryEmitNext(SSE_MAPPER.writeValueAsString(event));
+        } catch (Exception ignored) {
+            // best-effort: never break the pipeline on SSE encoding
+        }
     }
 
     /**
@@ -255,6 +344,10 @@ public abstract class ConversableAgent implements Agent {
 
                     // Step 2: Thinking (LLM inference)
                     String llmOutput = thinking(thinkingMessages);
+                    // Stream the agent's LLM reasoning to the frontend via a
+                    // THINKING SSE event (no-op when sink/codec unbound or
+                    // shouldEmitThinking() is false, e.g. ManagerAgent).
+                    emitThinkingSse(threadId, llmOutput, retry);
                     replyMessage = replyMessage.withContent(llmOutput);
 
                     // Step 3: Review
@@ -315,6 +408,10 @@ public abstract class ConversableAgent implements Agent {
                             var compacted = contextManager.reactiveCompact(messages, threadId);
                             // Retry with compacted context
                             String llmOutput = thinking(compacted);
+                            // Emit thinking from the reactive-compaction retry too
+                            // so the frontend sees the agent's reasoning even when
+                            // the first attempt hit a context-too-long error.
+                            emitThinkingSse(threadId, llmOutput, retry);
                             replyMessage = replyMessage.withContent(llmOutput);
                             ReviewInfo review = review(llmOutput);
                             if (review.approved()) {
