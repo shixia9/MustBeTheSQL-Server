@@ -215,4 +215,61 @@ public class AdminDataDTOs {
         public long getActiveToday() { return activeToday; }
         public void setActiveToday(long activeToday) { this.activeToday = activeToday; }
     }
+
+    /** Per-agent (node) aggregated metrics from agent_execution_step. */
+    public static class AgentMetricDTO implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private String agentName;
+        private String nodeType;
+        private int totalSteps;
+        private int successSteps;
+        private long avgDurationMs;
+        private long totalInputTokens;
+        private long totalOutputTokens;
+
+        public String getAgentName() { return agentName; }
+        public void setAgentName(String agentName) { this.agentName = agentName; }
+        public String getNodeType() { return nodeType; }
+        public void setNodeType(String nodeType) { this.nodeType = nodeType; }
+        public int getTotalSteps() { return totalSteps; }
+        public void setTotalSteps(int totalSteps) { this.totalSteps = totalSteps; }
+        public int getSuccessSteps() { return successSteps; }
+        public void setSuccessSteps(int successSteps) { this.successSteps = successSteps; }
+        public long getAvgDurationMs() { return avgDurationMs; }
+        public void setAvgDurationMs(long avgDurationMs) { this.avgDurationMs = avgDurationMs; }
+        public long getTotalInputTokens() { return totalInputTokens; }
+        public void setTotalInputTokens(long totalInputTokens) { this.totalInputTokens = totalInputTokens; }
+        public long getTotalOutputTokens() { return totalOutputTokens; }
+        public void setTotalOutputTokens(long totalOutputTokens) { this.totalOutputTokens = totalOutputTokens; }
+    }
+
+    /** Workflow execution overview row from agent_execution. */
+    public static class WorkflowOverviewDTO implements Serializable {
+        private static final long serialVersionUID = 1L;
+        private Long id;
+        private Long userId;
+        private String threadId;
+        private String status;
+        private String modelCalls;
+        private String toolCalls;
+        private String totalTokens;
+        private String createTime;
+
+        public Long getId() { return id; }
+        public void setId(Long id) { this.id = id; }
+        public Long getUserId() { return userId; }
+        public void setUserId(Long userId) { this.userId = userId; }
+        public String getThreadId() { return threadId; }
+        public void setThreadId(String threadId) { this.threadId = threadId; }
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
+        public String getModelCalls() { return modelCalls; }
+        public void setModelCalls(String modelCalls) { this.modelCalls = modelCalls; }
+        public String getToolCalls() { return toolCalls; }
+        public void setToolCalls(String toolCalls) { this.toolCalls = toolCalls; }
+        public String getTotalTokens() { return totalTokens; }
+        public void setTotalTokens(String totalTokens) { this.totalTokens = totalTokens; }
+        public String getCreateTime() { return createTime; }
+        public void setCreateTime(String createTime) { this.createTime = createTime; }
+    }
 }

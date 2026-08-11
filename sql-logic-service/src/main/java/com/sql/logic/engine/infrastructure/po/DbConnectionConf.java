@@ -24,4 +24,6 @@ public class DbConnectionConf {
 
     private String dbName;
     private Integer isTest;
+    /** File path for file-based databases (DuckDB, SQLite, CSV/Excel). */
+    private String filePath;
 }

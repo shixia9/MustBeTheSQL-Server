@@ -96,18 +96,48 @@ public class ConnectionManager {
     }
 
     private String buildJdbcUrl(DbConnectionConf conf) {
+        String dbType = conf.getDbType() != null ? conf.getDbType().toLowerCase() : "mysql";
         String dbName = conf.getDbName();
-        if ("mysql".equalsIgnoreCase(conf.getDbType())) {
-            String base = String.format("jdbc:mysql://%s:%d", conf.getHost(), conf.getPort());
-            return dbName != null && !dbName.isBlank()
-                    ? base + "/" + dbName + "?useSSL=false&serverTimezone=UTC"
-                    : base + "?useSSL=false&serverTimezone=UTC";
-        } else if ("postgresql".equalsIgnoreCase(conf.getDbType())) {
-            String base = String.format("jdbc:postgresql://%s:%d", conf.getHost(), conf.getPort());
-            return dbName != null && !dbName.isBlank()
-                    ? base + "/" + dbName
-                    : base;
+        switch (dbType) {
+            case "mysql":
+                String mysqlBase = String.format("jdbc:mysql://%s:%d", conf.getHost(), conf.getPort());
+                return dbName != null && !dbName.isBlank()
+                        ? mysqlBase + "/" + dbName + "?useSSL=false&serverTimezone=UTC"
+                        : mysqlBase + "?useSSL=false&serverTimezone=UTC";
+            case "postgresql":
+                String pgBase = String.format("jdbc:postgresql://%s:%d", conf.getHost(), conf.getPort());
+                return dbName != null && !dbName.isBlank()
+                        ? pgBase + "/" + dbName
+                        : pgBase;
+            case "duckdb":
+                // DuckDB can be :memory: or a file path stored in dbName or filePath
+                String duckPath = resolveFilePath(conf);
+                return "jdbc:duckdb:" + (duckPath != null ? duckPath : ":memory:");
+            case "sqlite":
+                // SQLite requires a file path
+                String sqlitePath = resolveFilePath(conf);
+                if (sqlitePath == null || sqlitePath.isBlank()) {
+                    throw new IllegalArgumentException("SQLite requires a file path in dbName or filePath");
+                }
+                return "jdbc:sqlite:" + sqlitePath;
+            case "csv":
+                // CSV uses DuckDB backend; open in-memory and register CSV files as views
+                return "jdbc:duckdb::memory:";
+            default:
+                throw new IllegalArgumentException("Unsupported database type: " + conf.getDbType());
         }
-        throw new IllegalArgumentException("Unsupported database type: " + conf.getDbType());
+    }
+
+    /**
+     * Resolve file path from dbName or filePath column.
+     * For file-based databases (DuckDB, SQLite), the file path comes from
+     * either the dbName field (legacy) or filePath field (new).
+     */
+    private String resolveFilePath(DbConnectionConf conf) {
+        String filePath = conf.getFilePath();
+        if (filePath != null && !filePath.isBlank()) return filePath;
+        String dbName = conf.getDbName();
+        if (dbName != null && !dbName.isBlank() && !":memory:".equalsIgnoreCase(dbName)) return dbName;
+        return null;
     }
 }

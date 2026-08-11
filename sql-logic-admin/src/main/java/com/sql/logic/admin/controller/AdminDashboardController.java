@@ -34,4 +34,32 @@ public class AdminDashboardController {
         result.put("timestamp", System.currentTimeMillis());
         return Result.success(result);
     }
+
+    /** Workflow execution overview — recent agent_execution records. */
+    @GetMapping("/workflows")
+    public Result<AdminDataDTOs.PageResult<Map<String, Object>>> getWorkflowOverview(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String keyword) {
+        // Cap page size to prevent excessive DB load
+        int cappedSize = Math.min(size, 100);
+        AdminDataDTOs.PageResult<AdminDataDTOs.WorkflowOverviewDTO> result =
+                adminDataService.getWorkflowOverview(page, cappedSize, keyword);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (AdminDataDTOs.WorkflowOverviewDTO w : result.getRecords()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", w.getId());
+            row.put("userId", w.getUserId());
+            row.put("threadId", w.getThreadId());
+            row.put("status", w.getStatus());
+            row.put("modelCalls", w.getModelCalls());
+            row.put("toolCalls", w.getToolCalls());
+            row.put("totalTokens", w.getTotalTokens());
+            row.put("createTime", w.getCreateTime());
+            rows.add(row);
+        }
+        AdminDataDTOs.PageResult<Map<String, Object>> pr =
+                new AdminDataDTOs.PageResult<>(rows, result.getTotal(), result.getCurrent(), result.getSize());
+        return Result.success(pr);
+    }
 }

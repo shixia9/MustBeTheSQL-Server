@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.time.format.DateTimeFormatter;
 
 @DubboService
 public class AdminDataProvider implements AdminDataService {
@@ -21,15 +22,18 @@ public class AdminDataProvider implements AdminDataService {
     private final UserInfoDao userInfoDao;
     private final LlmCallMetricsDao llmCallMetricsDao;
     private final AgentExecutionDao agentExecutionDao;
+    private final AgentExecutionStepDao agentExecutionStepDao;
     private final UserLlmConfigDao userLlmConfigDao;
 
     public AdminDataProvider(UserInfoDao userInfoDao,
                              LlmCallMetricsDao llmCallMetricsDao,
                              AgentExecutionDao agentExecutionDao,
+                             AgentExecutionStepDao agentExecutionStepDao,
                              UserLlmConfigDao userLlmConfigDao) {
         this.userInfoDao = userInfoDao;
         this.llmCallMetricsDao = llmCallMetricsDao;
         this.agentExecutionDao = agentExecutionDao;
+        this.agentExecutionStepDao = agentExecutionStepDao;
         this.userLlmConfigDao = userLlmConfigDao;
     }
 
@@ -253,5 +257,63 @@ public class AdminDataProvider implements AdminDataService {
 
     private Long safeParseLong(String s) {
         try { return Long.parseLong(s.trim()); } catch (Exception e) { return null; }
+    }
+
+    @Override
+    public List<AdminDataDTOs.AgentMetricDTO> getAgentMetrics() {
+        // SQL-side aggregation to avoid loading the entire agent_execution_step
+        // table into memory (ISSUE 1 — OOM risk on production systems).
+        QueryWrapper<AgentExecutionStep> qw = new QueryWrapper<>();
+        qw.select("COALESCE(NULLIF(node_name,''), 'unknown') AS node_name",
+                  "COALESCE(NULLIF(node_type,''), 'unknown') AS node_type",
+                  "COUNT(*) AS total_steps",
+                  "SUM(CASE WHEN status IN ('SUCCESS','COMPLETED') THEN 1 ELSE 0 END) AS success_steps",
+                  "AVG(COALESCE(duration_ms, 0)) AS avg_duration_ms",
+                  "SUM(COALESCE(input_tokens, 0)) AS total_input_tokens",
+                  "SUM(COALESCE(output_tokens, 0)) AS total_output_tokens");
+        qw.groupBy("COALESCE(NULLIF(node_name,''), 'unknown')",
+                   "COALESCE(NULLIF(node_type,''), 'unknown')");
+        qw.orderByDesc("total_steps");
+
+        List<Map<String, Object>> rows = agentExecutionStepDao.selectMaps(qw);
+        List<AdminDataDTOs.AgentMetricDTO> result = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            AdminDataDTOs.AgentMetricDTO dto = new AdminDataDTOs.AgentMetricDTO();
+            dto.setAgentName((String) row.get("node_name"));
+            dto.setNodeType((String) row.get("node_type"));
+            dto.setTotalSteps(((Number) row.get("total_steps")).intValue());
+            dto.setSuccessSteps(((Number) row.get("success_steps")).intValue());
+            dto.setAvgDurationMs(((Number) row.get("avg_duration_ms")).longValue());
+            dto.setTotalInputTokens(((Number) row.get("total_input_tokens")).intValue());
+            dto.setTotalOutputTokens(((Number) row.get("total_output_tokens")).intValue());
+            result.add(dto);
+        }
+        return result;
+    }
+
+    @Override
+    public AdminDataDTOs.PageResult<AdminDataDTOs.WorkflowOverviewDTO> getWorkflowOverview(int page, int size, String keyword) {
+        Page<AgentExecution> p = new Page<>(page, size);
+        QueryWrapper<AgentExecution> qw = new QueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            qw.and(w -> w.like("thread_id", keyword.trim()).or().like("status", keyword.trim()));
+        }
+        qw.orderByDesc("create_time");
+        Page<AgentExecution> result = agentExecutionDao.selectPage(p, qw);
+
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        List<AdminDataDTOs.WorkflowOverviewDTO> dtos = result.getRecords().stream().map(e -> {
+            AdminDataDTOs.WorkflowOverviewDTO dto = new AdminDataDTOs.WorkflowOverviewDTO();
+            dto.setId(e.getId());
+            dto.setUserId(e.getUserId());
+            dto.setThreadId(e.getThreadId());
+            dto.setStatus(e.getStatus());
+            dto.setModelCalls(e.getModelCalls() != null ? String.valueOf(e.getModelCalls()) : "0");
+            dto.setToolCalls(e.getToolCalls() != null ? String.valueOf(e.getToolCalls()) : "0");
+            dto.setTotalTokens(e.getTotalTokens() != null ? String.valueOf(e.getTotalTokens()) : "0");
+            dto.setCreateTime(e.getCreateTime() != null ? e.getCreateTime().format(dtf) : null);
+            return dto;
+        }).collect(Collectors.toList());
+        return new AdminDataDTOs.PageResult<>(dtos, result.getTotal(), result.getCurrent(), result.getSize());
     }
 }

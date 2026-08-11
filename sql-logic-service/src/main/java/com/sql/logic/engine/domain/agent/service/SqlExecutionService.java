@@ -183,6 +183,11 @@ public class SqlExecutionService {
      */
     private String ensureSafeRead(String sql) {
         String trimmed = sql.trim();
+        // Strip leading comment lines/blocks so the prefix gate sees the actual
+        // statement keyword — LLMs frequently emit a comment banner before the SQL
+        // (e.g. "-- 2026年销售分析\nWITH ..."), which would otherwise fail the
+        // startsWith(SELECT/WITH) gate and block a valid read-only query.
+        trimmed = stripLeadingComments(trimmed);
         while (trimmed.endsWith(";")) {
             trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
         }
@@ -215,6 +220,36 @@ public class SqlExecutionService {
             log.debug("[SqlExecutionService] JSQLParser could not parse SQL, trusting prefix gate: {}", e.getMessage());
             return trimmed;
         }
+    }
+
+    /**
+     * Remove leading {@code --} line comments and {@code /* ... *\/} block comments
+     * (and surrounding whitespace) so the read-only prefix gate can see the actual
+     * statement keyword. Stops at the first real token — inline/trailing comments
+     * are left untouched.
+     */
+    private static String stripLeadingComments(String sql) {
+        int i = 0;
+        int len = sql.length();
+        while (i < len) {
+            while (i < len && Character.isWhitespace(sql.charAt(i))) {
+                i++;
+            }
+            if (i + 1 < len && sql.charAt(i) == '-' && sql.charAt(i + 1) == '-') {
+                while (i < len && sql.charAt(i) != '\n') {
+                    i++;
+                }
+                continue;
+            }
+            if (i + 1 < len && sql.charAt(i) == '/' && sql.charAt(i + 1) == '*') {
+                i += 2;
+                int end = sql.indexOf("*/", i);
+                i = (end == -1) ? len : end + 2;
+                continue;
+            }
+            break;
+        }
+        return sql.substring(i).trim();
     }
 
     private static QueryResult readResultSet(ResultSet rs) throws SQLException {

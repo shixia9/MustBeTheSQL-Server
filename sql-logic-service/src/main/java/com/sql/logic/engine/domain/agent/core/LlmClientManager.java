@@ -91,6 +91,20 @@ public class LlmClientManager {
     }
 
     /**
+     * Return any available LLM strategy, preferring system default (0L) first,
+     * then any registered strategy. Returns null only if the cache is completely empty.
+     */
+    public LLMStrategy getAnyClient() {
+        LLMStrategy s = clientCache.get(0L);
+        if (s != null) return s;
+        // Pick any registered strategy as last resort
+        for (LLMStrategy v : clientCache.values()) {
+            if (v != null) return v;
+        }
+        return null;
+    }
+
+    /**
      * Resolve the best LLM strategy for a request.
      * <p>
      * Resolution order:

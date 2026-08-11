@@ -15,7 +15,6 @@ import jakarta.annotation.Resource;
 import java.util.concurrent.TimeUnit;
 
 import java.sql.*;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -38,6 +37,30 @@ public class DatabaseMetaDataService {
 
     public List<String> getTableNames(Long connectionId) {
         return getTableNames(connectionId, null);
+    }
+
+    /**
+     * Resolve the database dialect type (mysql, postgresql, etc.) for a connection.
+     */
+    public String getDbType(Long connectionId) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf == null) return "mysql";
+        String dbType = conf.getDbType();
+        return (dbType != null && !dbType.isBlank()) ? dbType.toLowerCase() : "mysql";
+    }
+
+    /**
+     * List available database/schema names for the given connection.
+     */
+    public List<String> getSchemas(Long connectionId) {
+        DbConnectionConf conf = dbConnectionConfDao.selectById(connectionId);
+        if (conf == null) throw new IllegalArgumentException("Connection not found");
+        try (Connection conn = databaseAppService.getConnection(connectionId)) {
+            MetaData metaData = dialectFactory.getMetaData(conf.getDbType());
+            return metaData.schemas(conn).stream().map(SchemaDTO::getName).collect(Collectors.toList());
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to fetch schemas: " + e.getMessage(), e);
+        }
     }
 
     public List<String> getTableNames(Long connectionId, String schemaName) {

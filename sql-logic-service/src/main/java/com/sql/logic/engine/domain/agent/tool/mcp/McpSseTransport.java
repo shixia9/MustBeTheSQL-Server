@@ -14,11 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * MCP transport over HTTP SSE (Server-Sent Events).
- * <p>
- * Connects to a remote MCP server via HTTP. Requests are sent as HTTP POST with
- * JSON-RPC body; responses are streamed back via SSE, identified by the matching
- * {@code id} field.
+ * MCP transport over synchronous HTTP.
  */
 public class McpSseTransport implements McpTransport {
 
@@ -35,7 +31,8 @@ public class McpSseTransport implements McpTransport {
 
     @Override
     public void connect() {
-        // SSE transport is connectionless per-request; validate reachability with a ping
+        // Synchronous HTTP transport is effectively connectionless per-request;
+        // validate reachability with a ping POST.
         try {
             HttpURLConnection conn = openConnection("POST");
             conn.setDoOutput(true);
@@ -85,7 +82,14 @@ public class McpSseTransport implements McpTransport {
                 throw new McpException("MCP server returned HTTP " + status + " for " + method + ": " + err);
             }
 
-            JsonNode root = objectMapper.readTree(conn.getInputStream());
+            // Read the full response body once; if the server used the SSE
+            // text/event-stream format, extract the JSON-RPC payload from the
+            // data: lines. Otherwise treat the body as a single JSON document.
+            String contentType = conn.getContentType();
+            String rawBody = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String jsonPayload = extractJsonPayload(contentType, rawBody);
+
+            JsonNode root = objectMapper.readTree(jsonPayload);
             if (root.has("error")) {
                 JsonNode err = root.get("error");
                 String msg = err.has("message") ? err.get("message").asText() : err.toString();
@@ -98,6 +102,58 @@ public class McpSseTransport implements McpTransport {
         } catch (Exception e) {
             throw new McpException("MCP request '" + method + "' failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Extract the JSON-RPC payload from the HTTP response body.
+     * <p>
+     * If {@code contentType} indicates {@code text/event-stream}, the body is
+     * parsed as an SSE event stream: {@code data:} lines are collected (a
+     * single event may span multiple {@code data:} lines, joined with
+     * newlines), and the first event whose joined payload parses as valid JSON
+     * is returned. Other SSE fields ({@code event:}, {@code id:},
+     * {@code retry:}, {@code :comments}) are ignored.
+     * <p>
+     * If the content type is not {@code text/event-stream}, the raw body is
+     * returned unchanged (assumed to be a single JSON document).
+     *
+     * @param contentType the HTTP {@code Content-Type} header value (may be null)
+     * @param rawBody     the raw response body
+     * @return a JSON string suitable for {@link ObjectMapper#readTree(String)}
+     */
+    private String extractJsonPayload(String contentType, String rawBody) {
+        if (contentType == null || !contentType.toLowerCase().contains("text/event-stream")) {
+            return rawBody;
+        }
+        StringBuilder event = new StringBuilder();
+        for (String line : rawBody.split("\n", -1)) {
+            if (line.startsWith("data:")) {
+                String payload = line.substring(5).trim();
+                if (event.length() > 0) event.append("\n");
+                event.append(payload);
+            } else if (line.startsWith("event:") || line.startsWith("id:")
+                    || line.startsWith("retry:") || line.startsWith(":")) {
+                // Other SSE fields / comments — ignored
+                continue;
+            } else if (line.isBlank()) {
+                // Blank line = end of event
+                if (event.length() > 0) {
+                    String candidate = event.toString();
+                    try {
+                        objectMapper.readTree(candidate);
+                        return candidate;
+                    } catch (Exception ignored) {
+                        // not JSON — keep scanning
+                    }
+                    event.setLength(0);
+                }
+            }
+        }
+        // Handle a final event with no trailing blank line
+        if (event.length() > 0) {
+            return event.toString();
+        }
+        return rawBody;
     }
 
     @Override

@@ -112,12 +112,17 @@ public final class SqlAgentSpec {
         // ---- Memory ----
         public static final String USER_MEMORY = "userMemory";
 
+        // ---- Tool Invocation ----
+        public static final String TOOL_INVOCATION = "toolInvocation";
+
         // ---- Agent Studio config ----
         public static final String AGENT_SYSTEM_PROMPT = "agentSystemPrompt";
         public static final String AGENT_MEMORY_ENABLED = "agentMemoryEnabled";
         public static final String AGENT_TOOLS = "agentTools";
         public static final String AGENT_NAME = "agentName";
         public static final String AGENT_ID = "agentId";
+        /** Pre-loaded schema DDL text injected into agent prompts. */
+        public static final String SCHEMA_DDL = "schemaDdl";
         // ---- MCP Tool ----
         public static final String MCP_TOOL_NAME = "mcpToolName";
         public static final String MCP_TOOL_PARAMS = "mcpToolParams";
@@ -144,14 +149,16 @@ public final class SqlAgentSpec {
         public static final String PYTHON_GENERATOR = "python-generator";
         public static final String PYTHON_ANALYZE = "python-analyze";
         public static final String HITL_GATE = "hitl-gate";
-        /** Glossary knowledge wrapper (Phase 5 RAG) — {businessKnowledge}. */
+        /** Glossary knowledge wrapper — {businessKnowledge}. */
         public static final String EVIDENCE_GLOSSARY = "evidence-glossary";
-        /** Few-shot knowledge wrapper (Phase 5 RAG) — {agentKnowledge}. */
+        /** Few-shot knowledge wrapper — {agentKnowledge}. */
         public static final String EVIDENCE_KNOWLEDGE = "evidence-knowledge";
         public static final String COMPLEXITY_ANALYZER = "complexity-analyzer";
         public static final String TASK_SPLIT = "task-split";
         public static final String SUMMARIZE = "summarize";
         public static final String MEMORY_EXTRACTION = "memory-extraction";
+        /** MCP tool-call fixer — repairs arguments of a failed MCP tool invocation. */
+        public static final String MCP_TOOL_FIX = "mcp-tool-fix";
     }
 
     // ======================== Retrieval ========================

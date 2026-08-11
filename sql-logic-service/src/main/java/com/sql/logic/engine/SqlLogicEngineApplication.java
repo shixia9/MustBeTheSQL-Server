@@ -6,6 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Excludes {@link PgVectorStoreAutoConfiguration} because Phase 5 wires
@@ -16,6 +17,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
 @SpringBootApplication(exclude = { PgVectorStoreAutoConfiguration.class })
 @EnableDiscoveryClient
 @EnableAsync
+@EnableScheduling
 @EnableDubbo
 public class SqlLogicEngineApplication {
 

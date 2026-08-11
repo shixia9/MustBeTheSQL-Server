@@ -162,7 +162,25 @@ public class MemoryDomainService {
                 return Double.compare(s2, s1);
             });
 
-            return results.size() > topK ? results.subList(0, topK) : results;
+            List<Map<String, Object>> top = results.size() > topK ? results.subList(0, topK) : results;
+
+            // Mark recalled memories as recently accessed (bump update_time) so the
+            // MemoryConsolidationService decay pass skips them — "frequently-recalled
+            // memories are preserved". Best-effort: a failure here must not break recall.
+            try {
+                List<Long> recalledIds = new ArrayList<>();
+                for (Map<String, Object> m : top) {
+                    Object id = m.get("id");
+                    if (id instanceof Number n) recalledIds.add(n.longValue());
+                }
+                if (!recalledIds.isEmpty()) {
+                    memoryItemDao.touchUpdateTime(recalledIds);
+                }
+            } catch (Exception e) {
+                log.debug("[MemoryDomainService] touchUpdateTime skipped: {}", e.getMessage());
+            }
+
+            return top;
         } catch (Exception e) {
             log.warn("[MemoryDomainService] Vector search failed: {}", e.getMessage());
             return List.of();

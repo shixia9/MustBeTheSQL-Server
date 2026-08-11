@@ -38,6 +38,26 @@ public class AgentSseCodec {
             "connectionId", "llmConfigId", "userId"
     );
 
+    /**
+     * Agent profile-name → SSE node-name mapping (mirrors {@code ManagerAgent.NODE_NAME_MAP}).
+     * Used by {@code ConversableAgent.emitThinkingSse} so a worker agent's THINKING event
+     * carries the same nodeName the ManagerAgent used for its STARTED/FINISHED events —
+     * letting the frontend attach the thinking stream to the existing running step.
+     */
+    private static final Map<String, String> AGENT_NAME_TO_NODE = Map.of(
+            "DataScientist", "DATA_SCIENTIST",
+            "CodeAssistant", "CODE_ASSISTANT",
+            "DashboardAssistant", "DASHBOARD",
+            "ToolAssistant", "TOOL_ASSISTANT",
+            "Planner", "PLANNER"
+    );
+
+    /** Resolve the SSE nodeName for an agent's profile name. Falls back to upper-case. */
+    public static String nodeNameForAgentName(String agentName) {
+        if (agentName == null) return "UNKNOWN";
+        return AGENT_NAME_TO_NODE.getOrDefault(agentName, agentName.toUpperCase());
+    }
+
     private static final Map<String, String> NODE_MESSAGE_TYPES = Map.ofEntries(
             Map.entry("MEMORY_RECALL", "THINKING"),
             Map.entry("EVIDENCE_RECALL", "THINKING"),
@@ -55,7 +75,17 @@ public class AgentSseCodec {
             Map.entry("PYTHON_ANALYSIS", "THINKING"),
             Map.entry("MCP_TOOL_EXECUTOR", "TOOL_CALL"),
             Map.entry("MCP_TOOL_FIXER", "THINKING"),
-            Map.entry("REPORT", "REPORT")
+            Map.entry("REPORT", "REPORT"),
+            // 6-Agent Multi-Agent system nodes
+            Map.entry("MANAGER", "STATUS"),
+            Map.entry("DATA_SCIENTIST", "TOOL_CALL"),
+            Map.entry("CODE_ASSISTANT", "TOOL_CALL"),
+            Map.entry("DASHBOARD", "REPORT"),
+            Map.entry("TOOL_ASSISTANT", "TOOL_CALL"),
+            // Sandbox execution node
+            Map.entry("SANDBOX", "TOOL_CALL"),
+            // Plan snapshot events (PLAN_UPDATED emitted by ManagerAgent)
+            Map.entry("PLAN", "STATUS")
     );
 
     public AgentSseCodec(ObjectMapper objectMapper) {
@@ -227,6 +257,34 @@ public class AgentSseCodec {
                 data.put("toolName", state.value(SqlAgentSpec.StateKey.MCP_TOOL_NAME, ""));
                 data.put("fixAttempt", readInt(state, SqlAgentSpec.StateKey.MCP_FIX_ATTEMPT_COUNT));
                 data.put("fixedParams", state.value(SqlAgentSpec.StateKey.MCP_TOOL_PARAMS, ""));
+                data.put("step", currentStep);
+                break;
+            // ---- 6-Agent Multi-Agent system nodes ----
+            case "MANAGER":
+                data.put("nextNode", state.value(SqlAgentSpec.StateKey.NEXT_NODE, ""));
+                data.put("plan", state.value(SqlAgentSpec.StateKey.PLAN, ""));
+                data.put("agentSuccess", state.value("agentSuccess", ""));
+                addIfPresent(data, "errorMsg", state.value(SqlAgentSpec.StateKey.SQL_ERROR, ""));
+                addIfPresent(data, "content", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
+                break;
+            case "DATA_SCIENTIST":
+                data.put("sql", state.value(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, ""));
+                data.put("step", currentStep);
+                addIfPresent(data, "sqlExecutionResult", state.value(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, ""));
+                addIfPresent(data, "errorMsg", state.value(SqlAgentSpec.StateKey.SQL_ERROR, ""));
+                break;
+            case "CODE_ASSISTANT":
+                data.put("pythonCode", state.value(SqlAgentSpec.StateKey.PYTHON_CODE, ""));
+                data.put("pythonResult", state.value(SqlAgentSpec.StateKey.PYTHON_RESULT, ""));
+                data.put("analysis", state.value(SqlAgentSpec.StateKey.PYTHON_ANALYSIS_RESULT, ""));
+                data.put("step", currentStep);
+                break;
+            case "DASHBOARD":
+                data.put("report", state.value(SqlAgentSpec.StateKey.REPORT_RESULT, ""));
+                break;
+            case "TOOL_ASSISTANT":
+                data.put("toolName", state.value(SqlAgentSpec.StateKey.MCP_TOOL_NAME, ""));
+                data.put("toolResult", state.value(SqlAgentSpec.StateKey.MCP_TOOL_RESULT, ""));
                 data.put("step", currentStep);
                 break;
             default:

@@ -63,18 +63,6 @@ public class ConversationContextService {
                 return existing;
             }
         }
-        if (userId != null) {
-            Date twoHoursAgo = new Date(System.currentTimeMillis() - 2 * 60 * 60 * 1000);
-            var wrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Conversation>()
-                    .eq("user_id", userId)
-                    .ge("update_time", twoHoursAgo)
-                    .orderByDesc("update_time")
-                    .last("LIMIT 1");
-            List<Conversation> recent = conversationDao.selectList(wrapper);
-            if (recent != null && !recent.isEmpty()) {
-                return recent.get(0);
-            }
-        }
         Conversation conv = new Conversation();
         conv.setUserId(userId);
         conv.setTitle(truncateForTitle(userInput));
@@ -122,6 +110,28 @@ public class ConversationContextService {
         } catch (Exception e) {
             log.warn("[ConversationContextService] loadHistorySection failed: {}", e.getMessage());
             return "";
+        }
+    }
+
+    /**
+     * Load the raw persisted turn records for a conversation, oldest-first.
+     * <p>
+     * Unlike {@link #loadHistorySection} (which renders a token-capped sliding
+     * window), this returns the full detail list so callers can reconstruct the
+     * real conversation size — used by the manual context-compaction endpoint to
+     * compute true token usage against the budget and run the compaction layers.
+     */
+    public List<ConversationDetail> loadDetails(Long conversationId) {
+        if (conversationId == null) return List.of();
+        try {
+            List<ConversationDetail> details = conversationDetailDao.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<ConversationDetail>()
+                            .eq("conversation_id", conversationId)
+                            .orderByAsc("create_time"));
+            return details == null ? List.of() : details;
+        } catch (Exception e) {
+            log.warn("[ConversationContextService] loadDetails failed: {}", e.getMessage());
+            return List.of();
         }
     }
 

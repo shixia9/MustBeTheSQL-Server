@@ -42,6 +42,8 @@ public class AgentRunContext {
     private TraceContext traceContext;
     /** Phase B (B5): the multi-turn conversation id, so recordExecution can append the turn. */
     private Long conversationId;
+    /** Optimization iteration: the appId when execution is driven by an App Builder flow. */
+    private Long appId;
 
     public AgentRunContext(String threadId, Long userId, Long connectionId, Long llmConfigId,
                            Long workspaceId, List<String> tableNames, String schemaName, boolean autoConfirm, RunnableConfig runnableConfig) {
@@ -73,6 +75,8 @@ public class AgentRunContext {
 
     public Long getConversationId() { return conversationId; }
     public void setConversationId(Long conversationId) { this.conversationId = conversationId; }
+    public Long getAppId() { return appId; }
+    public void setAppId(Long appId) { this.appId = appId; }
 
     /**
      * Append a per-node step record to the in-memory buffer and return the assigned
