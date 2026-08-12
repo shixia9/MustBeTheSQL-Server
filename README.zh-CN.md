@@ -25,7 +25,7 @@
 
 <!-- 主页截图 -->
 <p align="center">
-  <em><!-- 系统主页截图占位 --></em>
+  <img src="_assets/Chat.png" alt="Must Be The SQL — 主对话界面" width="100%" />
 </p>
 
 ---
@@ -363,32 +363,52 @@ docker-compose -f docker-compose-local.yml up -d
 
 > 以下区域预留给功能截图，图片将在后续更新中补充。
 
-### 1. 多 Agent 对话界面
-<!-- 截图占位：多Agent对话主界面，展示Agent执行时间线、思考过程面板、最终输出 -->
+### 1. Login 登录界面
 
-### 2. Agent 思考过程
-<!-- 截图占位：Agent思考过程流式展示，打字机效果，可折叠面板 -->
+<p align="center">
+  <img src="_assets/Login.png" alt="Login 登录界面" width="85%" />
+</p>
 
-### 3. 上下文压缩可视化
-<!-- 截图占位：上下文压缩可视化，L1-L4层级展示，token预算进度环 -->
+### 2. 多 Agent 对话界面
 
-### 4. 执行计划 TODO 列表
-<!-- 截图占位：执行计划TODO列表，步骤状态展示 -->
+<p align="center">
+  <img src="_assets/Chat_Planner.png" alt="对话 — Planner 执行计划" width="85%" />
+  <em>Planner — 执行计划与 TODO 列表</em>
+</p>
 
-### 5. SQL 执行与结果
-<!-- 截图占位：SQL生成、执行结果表格、图表可视化 -->
+<p align="center">
+  <img src="_assets/Chat_Chart.png" alt="对话 — 图表可视化" width="85%" />
+  <em>图表可视化</em>
+</p>
 
-### 6. Python 沙箱执行
-<!-- 截图占位：代码执行终端，输出展示 -->
+<p align="center">
+  <img src="_assets/Chat_Data.png" alt="对话 — SQL 数据结果" width="85%" />
+  <em>SQL 执行与数据结果</em>
+</p>
 
-### 7. HTML 报告渲染
-<!-- 截图占位：Dashboard Agent生成的HTML报告 -->
+<p align="center">
+  <img src="_assets/Chat_Reports_html.png" alt="对话 — HTML 报告渲染" width="85%" />
+  <em>Dashboard Agent HTML 报告</em>
+</p>
 
-### 8. Agent Studio 配置
-<!-- 截图占位：Agent配置界面，prompt/工具/RAG/内存设置 -->
+### 3. 工具动态注册
 
-### 9. 管理后台
-<!-- 截图占位：管理后台，用户管理、LLM监控 -->
+<p align="center">
+  <img src="_assets/MCP.png" alt="MCP 工具动态注册" width="85%" />
+</p>
 
-### 10. 工作空间管理
-<!-- 截图占位：多租户工作空间管理 -->
+### 4. 定时任务
+
+<p align="center">
+  <img src="_assets/Schedule-Tasks.png" alt="定时任务" width="85%" />
+</p>
+
+### 5. 工作流编辑器
+
+### 6. 数据库连接
+
+### 7. 记忆系统
+
+### 8. 后台管理
+
+### 9. 其他

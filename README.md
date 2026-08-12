@@ -24,7 +24,7 @@
 
 <!-- 主页截图 -->
 <p align="center">
-  <em><!-- 系统主页截图占位 --></em>
+  <img src="_assets/Chat.png" alt="Must Be The SQL — Main Chat Interface" width="100%" />
 </p>
 
 ---
@@ -362,32 +362,52 @@ Key configuration files in `sql-logic-service/src/main/resources/`:
 
 > The following sections are reserved for feature screenshots. Images will be added in future updates.
 
-### 1. Multi-Agent Chat Interface
-<!-- 截图占位：多Agent对话主界面，展示Agent执行时间线、思考过程面板、最终输出 -->
+### 1. Login Page
 
-### 2. Agent Thinking Process
-<!-- 截图占位：Agent思考过程流式展示，打字机效果，可折叠面板 -->
+<p align="center">
+  <img src="_assets/Login.png" alt="Login Page" width="85%" />
+</p>
 
-### 3. Context Compression Visualization
-<!-- 截图占位：上下文压缩可视化，L1-L4层级展示，token预算进度环 -->
+### 2. Multi-Agent Chat Interface
 
-### 4. Plan & TODO List
-<!-- 截图占位：执行计划TODO列表，步骤状态展示 -->
+<p align="center">
+  <img src="_assets/Chat_Planner.png" alt="Chat — Planner execution plan" width="85%" />
+  <em>Planner — execution plan & TODO list</em>
+</p>
 
-### 5. SQL Execution & Results
-<!-- 截图占位：SQL生成、执行结果表格、图表可视化 -->
+<p align="center">
+  <img src="_assets/Chat_Chart.png" alt="Chat — chart visualization" width="85%" />
+  <em>Chart visualization</em>
+</p>
 
-### 6. Python Sandbox Execution
-<!-- 截图占位：代码执行终端，输出展示 -->
+<p align="center">
+  <img src="_assets/Chat_Data.png" alt="Chat — SQL data results" width="85%" />
+  <em>SQL execution & data results</em>
+</p>
 
-### 7. HTML Report Rendering
-<!-- 截图占位：Dashboard Agent生成的HTML报告 -->
+<p align="center">
+  <img src="_assets/Chat_Reports_html.png" alt="Chat — HTML report rendering" width="85%" />
+  <em>Dashboard Agent HTML report</em>
+</p>
 
-### 8. Agent Studio Configuration
-<!-- 截图占位：Agent配置界面，prompt/工具/RAG/内存设置 -->
+### 3. Dynamic Tool Registration
 
-### 9. Admin Dashboard
-<!-- 截图占位：管理后台，用户管理、LLM监控 -->
+<p align="center">
+  <img src="_assets/MCP.png" alt="MCP Dynamic Tool Registration" width="85%" />
+</p>
 
-### 10. Workspace Management
-<!-- 截图占位：多租户工作空间管理 -->
+### 4. Scheduled Tasks
+
+<p align="center">
+  <img src="_assets/Schedule-Tasks.png" alt="Scheduled Tasks" width="85%" />
+</p>
+
+### 5. Workflow Editor
+
+### 6. Database Connection
+
+### 7. Memory System
+
+### 8. Admin Dashboard
+
+### 9. Others
