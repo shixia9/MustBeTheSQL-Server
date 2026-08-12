@@ -146,7 +146,7 @@ public class AiAgentFactory {
                 .build();
         ChatClient chatClient = ChatClient.builder(chatModel).build();
 
-        return new OpenAILLMStrategy(chatClient.mutate());
+        return new OpenAILLMStrategy(chatClient.mutate(), finalBaseUrl, apiKey, modelName);
     }
 
     /**

@@ -7,6 +7,7 @@ import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
 import com.sql.logic.engine.domain.agent.core.AgentSseCodec;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
 import com.sql.logic.engine.domain.agent.strategy.LLMStrategy;
+import com.sql.logic.engine.domain.agent.strategy.ThinkingResult;
 import com.sql.logic.engine.domain.agentic.bridge.AgentStateBridge;
 import com.sql.logic.engine.domain.agentic.context.ContextBudgetConfig;
 import com.sql.logic.engine.domain.agentic.context.ContextManager;
@@ -193,17 +194,18 @@ public abstract class ConversableAgent implements Agent {
      * null (e.g. unit tests), or when {@link #shouldEmitThinking()} returns
      * false, this is a silent no-op.
      */
-    protected void emitThinkingSse(String threadId, String llmOutput, int retry) {
+    protected void emitThinkingSse(String threadId, String reasoning, int retry) {
         if (eventSinkRegistry == null || codec == null) return;
         if (!shouldEmitThinking()) return;
         if (threadId == null || threadId.isBlank()) return;
+        if (reasoning == null || reasoning.isBlank()) return;
         Sinks.Many<String> sink = eventSinkRegistry.get(threadId);
         if (sink == null) return;
         try {
             String nodeName = AgentSseCodec.nodeNameForAgentName(name());
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("agentName", name());
-            data.put("content", llmOutput != null ? llmOutput : "");
+            data.put("content", reasoning);
             data.put("done", true);
             data.put("retry", retry);
             Map<String, Object> event = new LinkedHashMap<>();
@@ -342,12 +344,21 @@ public abstract class ConversableAgent implements Agent {
                                 thinkingMessages, retry, taskProgress, threadId);
                     }
 
-                    // Step 2: Thinking (LLM inference)
-                    String llmOutput = thinking(thinkingMessages);
-                    // Stream the agent's LLM reasoning to the frontend via a
-                    // THINKING SSE event (no-op when sink/codec unbound or
-                    // shouldEmitThinking() is false, e.g. ManagerAgent).
-                    emitThinkingSse(threadId, llmOutput, retry);
+                    // Step 2: Thinking (LLM inference with native thinking mode)
+                    // When the LLM supports thinking (e.g., doubao, deepseek),
+                    // a single API call returns both reasoning_content and content.
+                    // The reasoning is emitted via THINKING SSE event; the content
+                    // becomes the agent's working output.
+                    String reasoning = "";
+                    String llmOutput;
+                    if (shouldEmitThinking()) {
+                        ThinkingResult tr = thinkingWithReasoning(thinkingMessages);
+                        reasoning = tr.reasoning();
+                        llmOutput = tr.content();
+                    } else {
+                        llmOutput = thinking(thinkingMessages);
+                    }
+                    emitThinkingSse(threadId, reasoning, retry);
                     replyMessage = replyMessage.withContent(llmOutput);
 
                     // Step 3: Review
@@ -406,12 +417,17 @@ public abstract class ConversableAgent implements Agent {
                                     replyMessage.context()
                             );
                             var compacted = contextManager.reactiveCompact(messages, threadId);
-                            // Retry with compacted context
-                            String llmOutput = thinking(compacted);
-                            // Emit thinking from the reactive-compaction retry too
-                            // so the frontend sees the agent's reasoning even when
-                            // the first attempt hit a context-too-long error.
-                            emitThinkingSse(threadId, llmOutput, retry);
+                            // Thinking with native mode for the reactive-compaction retry too
+                            String reasoning = "";
+                            String llmOutput;
+                            if (shouldEmitThinking()) {
+                                ThinkingResult tr = thinkingWithReasoning(compacted);
+                                reasoning = tr.reasoning();
+                                llmOutput = tr.content();
+                            } else {
+                                llmOutput = thinking(compacted);
+                            }
+                            emitThinkingSse(threadId, reasoning, retry);
                             replyMessage = replyMessage.withContent(llmOutput);
                             ReviewInfo review = review(llmOutput);
                             if (review.approved()) {
@@ -546,6 +562,31 @@ public abstract class ConversableAgent implements Agent {
         }
         String prompt = messagesToPrompt(messages);
         return strategy.chat(prompt);
+    }
+
+    /**
+     * LLM inference with native thinking mode enabled.
+     *
+     * <p>Unlike the old {@code reasoning()} approach (which made a separate
+     * lightweight LLM call), this method uses the LLM API's native thinking
+     * capability — a single API call with {@code thinking: {type: "enabled"}}
+     * returns both {@code reasoning_content} (the model's chain-of-thought)
+     * and {@code content} (the final structured output).
+     *
+     * <p>When the LLM does not support thinking mode, the returned
+     * {@link ThinkingResult} has empty reasoning and the regular content.
+     *
+     * @param messages the full thinking context (system + resources + user)
+     * @return {@link ThinkingResult} with reasoning and content
+     */
+    protected ThinkingResult thinkingWithReasoning(List<AgentMessage> messages) {
+        LLMStrategy strategy = resolveLlmStrategy();
+        if (strategy == null) {
+            throw new IllegalStateException("No LLMStrategy bound to agent " + name()
+                    + " — bind either a direct LLMStrategy or a LlmClientManager for lazy resolution");
+        }
+        String prompt = messagesToPrompt(messages);
+        return strategy.chatWithThinking(prompt);
     }
 
     /**
