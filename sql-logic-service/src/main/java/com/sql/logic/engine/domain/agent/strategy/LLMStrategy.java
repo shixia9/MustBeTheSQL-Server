@@ -3,6 +3,7 @@ package com.sql.logic.engine.domain.agent.strategy;
 import reactor.core.publisher.Flux;
 
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 public interface LLMStrategy {
 
@@ -78,5 +79,29 @@ public interface LLMStrategy {
      */
     default ThinkingResult chatWithThinking(String prompt) {
         return new ThinkingResult(chat(prompt), "");
+    }
+
+    /**
+     * Streaming LLM call with native thinking mode enabled.
+     *
+     * <p>Similar to {@link #chatWithThinking(String)}, but the API call uses
+     * {@code stream: true} so reasoning chunks arrive incrementally via the
+     * {@code onReasoningChunk} callback.
+     *
+     * <p>The default implementation falls back to {@link #chatWithThinking(String)}
+     * and emits the full reasoning as a single chunk. Implementations with
+     * streaming support (e.g., {@code OpenAILLMStrategy}) should override this
+     * to parse SSE chunks and invoke the callback per delta.
+     *
+     * @param prompt          the raw prompt to send to the LLM
+     * @param onReasoningChunk callback invoked for each reasoning text delta
+     * @return {@link ThinkingResult} with the full reasoning and content
+     */
+    default ThinkingResult chatWithThinkingStream(String prompt, Consumer<String> onReasoningChunk) {
+        ThinkingResult result = chatWithThinking(prompt);
+        if (!result.reasoning().isEmpty()) {
+            onReasoningChunk.accept(result.reasoning());
+        }
+        return result;
     }
 }

@@ -20,6 +20,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Sinks;
 
+import java.util.function.Consumer;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -194,19 +196,20 @@ public abstract class ConversableAgent implements Agent {
      * null (e.g. unit tests), or when {@link #shouldEmitThinking()} returns
      * false, this is a silent no-op.
      */
-    protected void emitThinkingSse(String threadId, String reasoning, int retry) {
+    protected void emitThinkingChunkSse(String threadId, String chunk, int retry, boolean done) {
         if (eventSinkRegistry == null || codec == null) return;
         if (!shouldEmitThinking()) return;
         if (threadId == null || threadId.isBlank()) return;
-        if (reasoning == null || reasoning.isBlank()) return;
+        // Skip empty chunks (but allow done=true to signal completion)
+        if (!done && (chunk == null || chunk.isBlank())) return;
         Sinks.Many<String> sink = eventSinkRegistry.get(threadId);
         if (sink == null) return;
         try {
             String nodeName = AgentSseCodec.nodeNameForAgentName(name());
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("agentName", name());
-            data.put("content", reasoning);
-            data.put("done", true);
+            data.put("content", chunk != null ? chunk : "");
+            data.put("done", done);
             data.put("retry", retry);
             Map<String, Object> event = new LinkedHashMap<>();
             event.put("nodeName", nodeName);
@@ -346,19 +349,21 @@ public abstract class ConversableAgent implements Agent {
 
                     // Step 2: Thinking (LLM inference with native thinking mode)
                     // When the LLM supports thinking (e.g., doubao, deepseek),
-                    // a single API call returns both reasoning_content and content.
-                    // The reasoning is emitted via THINKING SSE event; the content
-                    // becomes the agent's working output.
-                    String reasoning = "";
+                    // a single streaming API call returns reasoning_content chunks
+                    // (emitted to frontend in real-time via THINKING SSE) and the
+                    // final content (used as the agent's working output).
                     String llmOutput;
                     if (shouldEmitThinking()) {
-                        ThinkingResult tr = thinkingWithReasoning(thinkingMessages);
-                        reasoning = tr.reasoning();
+                        final String fThreadId = threadId;
+                        final int fRetry = retry;
+                        ThinkingResult tr = thinkingWithReasoningStream(thinkingMessages,
+                                chunk -> emitThinkingChunkSse(fThreadId, chunk, fRetry, false));
                         llmOutput = tr.content();
+                        // Signal thinking complete
+                        emitThinkingChunkSse(threadId, "", retry, true);
                     } else {
                         llmOutput = thinking(thinkingMessages);
                     }
-                    emitThinkingSse(threadId, reasoning, retry);
                     replyMessage = replyMessage.withContent(llmOutput);
 
                     // Step 3: Review
@@ -417,17 +422,18 @@ public abstract class ConversableAgent implements Agent {
                                     replyMessage.context()
                             );
                             var compacted = contextManager.reactiveCompact(messages, threadId);
-                            // Thinking with native mode for the reactive-compaction retry too
-                            String reasoning = "";
+                            // Thinking with streaming for the reactive-compaction retry too
                             String llmOutput;
                             if (shouldEmitThinking()) {
-                                ThinkingResult tr = thinkingWithReasoning(compacted);
-                                reasoning = tr.reasoning();
+                                final String fThreadId = threadId;
+                                final int fRetry = retry;
+                                ThinkingResult tr = thinkingWithReasoningStream(compacted,
+                                        chunk -> emitThinkingChunkSse(fThreadId, chunk, fRetry, false));
                                 llmOutput = tr.content();
+                                emitThinkingChunkSse(threadId, "", retry, true);
                             } else {
                                 llmOutput = thinking(compacted);
                             }
-                            emitThinkingSse(threadId, reasoning, retry);
                             replyMessage = replyMessage.withContent(llmOutput);
                             ReviewInfo review = review(llmOutput);
                             if (review.approved()) {
@@ -565,28 +571,27 @@ public abstract class ConversableAgent implements Agent {
     }
 
     /**
-     * LLM inference with native thinking mode enabled.
+     * LLM inference with native thinking mode — streaming version.
      *
-     * <p>Unlike the old {@code reasoning()} approach (which made a separate
-     * lightweight LLM call), this method uses the LLM API's native thinking
-     * capability — a single API call with {@code thinking: {type: "enabled"}}
-     * returns both {@code reasoning_content} (the model's chain-of-thought)
-     * and {@code content} (the final structured output).
+     * <p>Uses the LLM API's native thinking capability with {@code stream: true}:
+     * reasoning chunks arrive incrementally via the {@code onReasoningChunk}
+     * callback (emitted to frontend as THINKING SSE events for real-time
+     * typewriter effect), while content chunks are accumulated for the final
+     * output. All in a single API call — no extra LLM round-trip.
      *
-     * <p>When the LLM does not support thinking mode, the returned
-     * {@link ThinkingResult} has empty reasoning and the regular content.
-     *
-     * @param messages the full thinking context (system + resources + user)
-     * @return {@link ThinkingResult} with reasoning and content
+     * @param messages        the full thinking context (system + resources + user)
+     * @param onReasoningChunk callback invoked for each reasoning text delta
+     * @return {@link ThinkingResult} with the full reasoning and content
      */
-    protected ThinkingResult thinkingWithReasoning(List<AgentMessage> messages) {
+    protected ThinkingResult thinkingWithReasoningStream(List<AgentMessage> messages,
+                                                          Consumer<String> onReasoningChunk) {
         LLMStrategy strategy = resolveLlmStrategy();
         if (strategy == null) {
             throw new IllegalStateException("No LLMStrategy bound to agent " + name()
                     + " — bind either a direct LLMStrategy or a LlmClientManager for lazy resolution");
         }
         String prompt = messagesToPrompt(messages);
-        return strategy.chatWithThinking(prompt);
+        return strategy.chatWithThinkingStream(prompt, onReasoningChunk);
     }
 
     /**
