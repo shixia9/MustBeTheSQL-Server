@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.application.service.AgentHistoryAppService;
 import com.sql.logic.engine.application.service.UserAppService;
 import com.sql.logic.engine.common.dto.SqlGenerateRequest;
+import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agent.core.AgenticRunner;
@@ -210,7 +211,7 @@ public class AgenticController {
      * window is.
      */
     @GetMapping("/context/budget")
-    public Map<String, Object> contextBudget(@RequestParam(required = false) Long conversationId) {
+    public Result<Map<String, Object>> contextBudget(@RequestParam(required = false) Long conversationId) {
         int budget = contextBudgetConfig.effectiveBudget();
         List<AgentMessage> messages = reconstructMessages(conversationId);
         int used = countTokensSafe(messages);
@@ -220,7 +221,7 @@ public class AgenticController {
         m.put("usedTokens", used);
         m.put("usagePercent", Math.min(pct, 100));
         m.put("turnCount", messages.size());
-        return m;
+        return Result.success(m);
     }
 
     /**
@@ -237,7 +238,7 @@ public class AgenticController {
      * @param body {@code {"conversationId": Long, "threadId": String?}}
      */
     @PostMapping("/context/compact")
-    public Map<String, Object> compactContext(@RequestBody Map<String, Object> body) {
+    public Result<Map<String, Object>> compactContext(@RequestBody Map<String, Object> body) {
         Long conversationId = toLong(body.get("conversationId"));
         String threadId = body.get("threadId") == null ? null : String.valueOf(body.get("threadId"));
 
@@ -261,7 +262,7 @@ public class AgenticController {
         m.put("usagePercentAfter", Math.min(pctAfter, 100));
         m.put("applied", after < before);
         m.put("reduced", Math.max(0, before - after));
-        return m;
+        return Result.success(m);
     }
 
     /**
