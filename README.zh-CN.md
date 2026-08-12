@@ -24,9 +24,7 @@
 ---
 
 <!-- 主页截图 -->
-<p align="center">
-  <img src="_assets/Chat.png" alt="Must Be The SQL — 主对话界面" width="100%" />
-</p>
+![image](_assets/Chat.png)
 
 ---
 
@@ -365,43 +363,29 @@ docker-compose -f docker-compose-local.yml up -d
 
 ### 1. Login 登录界面
 
-<p align="center">
-  <img src="_assets/Login.png" alt="Login 登录界面" width="85%" />
-</p>
+![image](_assets/Login.png)
 
 ### 2. 多 Agent 对话界面
 
-<p align="center">
-  <img src="_assets/Chat_Planner.png" alt="对话 — Planner 执行计划" width="85%" />
-  <em>Planner — 执行计划与 TODO 列表</em>
-</p>
+![image](_assets/Chat_Planner.png)
+*Planner — 执行计划与 TODO 列表*
 
-<p align="center">
-  <img src="_assets/Chat_Chart.png" alt="对话 — 图表可视化" width="85%" />
-  <em>图表可视化</em>
-</p>
+![image](_assets/Chat_Chart.png)
+*图表可视化*
 
-<p align="center">
-  <img src="_assets/Chat_Data.png" alt="对话 — SQL 数据结果" width="85%" />
-  <em>SQL 执行与数据结果</em>
-</p>
+![image](_assets/Chat_Data.png)
+*SQL 执行与数据结果*
 
-<p align="center">
-  <img src="_assets/Chat_Reports_html.png" alt="对话 — HTML 报告渲染" width="85%" />
-  <em>Dashboard Agent HTML 报告</em>
-</p>
+![image](_assets/Chat_Reports_html.png)
+*Dashboard Agent HTML 报告*
 
 ### 3. 工具动态注册
 
-<p align="center">
-  <img src="_assets/MCP.png" alt="MCP 工具动态注册" width="85%" />
-</p>
+![image](_assets/MCP.png)
 
 ### 4. 定时任务
 
-<p align="center">
-  <img src="_assets/Schedule-Tasks.png" alt="定时任务" width="85%" />
-</p>
+![image](_assets/Schedule-Tasks.png)
 
 ### 5. 工作流编辑器
 

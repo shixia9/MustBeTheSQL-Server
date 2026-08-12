@@ -23,9 +23,7 @@
 ---
 
 <!-- 主页截图 -->
-<p align="center">
-  <img src="_assets/Chat.png" alt="Must Be The SQL — Main Chat Interface" width="100%" />
-</p>
+![image](_assets/Chat.png)
 
 ---
 
@@ -364,43 +362,29 @@ Key configuration files in `sql-logic-service/src/main/resources/`:
 
 ### 1. Login Page
 
-<p align="center">
-  <img src="_assets/Login.png" alt="Login Page" width="85%" />
-</p>
+![image](_assets/Login.png)
 
 ### 2. Multi-Agent Chat Interface
 
-<p align="center">
-  <img src="_assets/Chat_Planner.png" alt="Chat — Planner execution plan" width="85%" />
-  <em>Planner — execution plan & TODO list</em>
-</p>
+![image](_assets/Chat_Planner.png)
+*Planner — execution plan & TODO list*
 
-<p align="center">
-  <img src="_assets/Chat_Chart.png" alt="Chat — chart visualization" width="85%" />
-  <em>Chart visualization</em>
-</p>
+![image](_assets/Chat_Chart.png)
+*Chart visualization*
 
-<p align="center">
-  <img src="_assets/Chat_Data.png" alt="Chat — SQL data results" width="85%" />
-  <em>SQL execution & data results</em>
-</p>
+![image](_assets/Chat_Data.png)
+*SQL execution & data results*
 
-<p align="center">
-  <img src="_assets/Chat_Reports_html.png" alt="Chat — HTML report rendering" width="85%" />
-  <em>Dashboard Agent HTML report</em>
-</p>
+![image](_assets/Chat_Reports_html.png)
+*Dashboard Agent HTML report*
 
 ### 3. Dynamic Tool Registration
 
-<p align="center">
-  <img src="_assets/MCP.png" alt="MCP Dynamic Tool Registration" width="85%" />
-</p>
+![image](_assets/MCP.png)
 
 ### 4. Scheduled Tasks
 
-<p align="center">
-  <img src="_assets/Schedule-Tasks.png" alt="Scheduled Tasks" width="85%" />
-</p>
+![image](_assets/Schedule-Tasks.png)
 
 ### 5. Workflow Editor
 
