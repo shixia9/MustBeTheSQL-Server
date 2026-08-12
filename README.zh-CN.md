@@ -24,7 +24,7 @@
 ---
 
 <!-- 主页截图 -->
-![image](_assets/Chat.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/Vd3Z/1910X925/Chat.png)
 
 ---
 
@@ -363,29 +363,29 @@ docker-compose -f docker-compose-local.yml up -d
 
 ### 1. Login 登录界面
 
-![image](_assets/Login.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/Q4eX/1910X925/Login.png)
 
 ### 2. 多 Agent 对话界面
 
-![image](_assets/Chat_Planner.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/Jr3m/1910X925/Chat_Planner.png)
 *Planner — 执行计划与 TODO 列表*
 
-![image](_assets/Chat_Chart.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/4NdM/1910X925/Chat_Chart.png)
 *图表可视化*
 
-![image](_assets/Chat_Data.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/OydG/1910X925/Chat_Data.png)
 *SQL 执行与数据结果*
 
-![image](_assets/Chat_Reports_html.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/e4bU/1910X925/Chat_Reports_html.png)
 *Dashboard Agent HTML 报告*
 
 ### 3. 工具动态注册
 
-![image](_assets/MCP.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/wnRq/1910X925/MCP.png)
 
 ### 4. 定时任务
 
-![image](_assets/Schedule-Tasks.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/zMve/1910X925/Schedule-Tasks.png)
 
 ### 5. 工作流编辑器
 

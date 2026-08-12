@@ -23,7 +23,7 @@
 ---
 
 <!-- 主页截图 -->
-![image](_assets/Chat.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/Vd3Z/1910X925/Chat.png)
 
 ---
 
@@ -362,29 +362,29 @@ Key configuration files in `sql-logic-service/src/main/resources/`:
 
 ### 1. Login Page
 
-![image](_assets/Login.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/Q4eX/1910X925/Login.png)
 
 ### 2. Multi-Agent Chat Interface
 
-![image](_assets/Chat_Planner.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/Jr3m/1910X925/Chat_Planner.png)
 *Planner — execution plan & TODO list*
 
-![image](_assets/Chat_Chart.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/4NdM/1910X925/Chat_Chart.png)
 *Chart visualization*
 
-![image](_assets/Chat_Data.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/OydG/1910X925/Chat_Data.png)
 *SQL execution & data results*
 
-![image](_assets/Chat_Reports_html.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/e4bU/1910X925/Chat_Reports_html.png)
 *Dashboard Agent HTML report*
 
 ### 3. Dynamic Tool Registration
 
-![image](_assets/MCP.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/wnRq/1910X925/MCP.png)
 
 ### 4. Scheduled Tasks
 
-![image](_assets/Schedule-Tasks.png)
+![image](https://img.tofaka.com/autoupload/f/8jc10/20260812/zMve/1910X925/Schedule-Tasks.png)
 
 ### 5. Workflow Editor
 
