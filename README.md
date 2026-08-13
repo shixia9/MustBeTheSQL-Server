@@ -103,7 +103,7 @@ The Manager Agent classifies each request and routes it through one of five path
 
 ### Inter-Agent Communication
 
-Agents communicate through a pluggable message bus with three modes (controlled by `bus-orc.mode`):
+Agents communicate through a pluggable message bus with two modes (controlled by `bus-orc.mode`):
 
 | Mode | Behaviour | Use Case |
 |------|-----------|----------|
