@@ -8,6 +8,7 @@ import com.sql.logic.engine.domain.trace.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,6 +34,7 @@ public class AgentSseCodec {
     private static final Logger log = LoggerFactory.getLogger(AgentSseCodec.class);
 
     private final ObjectMapper objectMapper;
+    private final AgentEventSinkRegistry eventSinkRegistry;
 
     private static final Set<String> SENSITIVE_KEYS = Set.of(
             "connectionId", "llmConfigId", "userId"
@@ -89,7 +91,13 @@ public class AgentSseCodec {
     );
 
     public AgentSseCodec(ObjectMapper objectMapper) {
+        this(objectMapper, null);
+    }
+
+    @Autowired
+    public AgentSseCodec(ObjectMapper objectMapper, AgentEventSinkRegistry eventSinkRegistry) {
         this.objectMapper = objectMapper;
+        this.eventSinkRegistry = eventSinkRegistry;
     }
 
     public String messageTypeForNode(String nodeName) {
@@ -104,12 +112,17 @@ public class AgentSseCodec {
     /** Build the STARTED SSE event with extra contextual data (e.g. currentStep for
      *  looped nodes so the frontend can distinguish multiple visits). */
     public String startedJson(String nodeName, Map<String, Object> extra) {
+        return startedJson(nodeName, extra, 0);
+    }
+
+    /** Build a STARTED event with a run-level sequence number. */
+    public String startedJson(String nodeName, Map<String, Object> extra, int sequenceNo) {
         try {
             Map<String, Object> event = new LinkedHashMap<>();
             event.put("nodeName", nodeName);
             event.put("outputType", "STARTED");
             event.put("messageType", messageTypeForNode(nodeName));
-            event.put("sequenceNo", 0);
+            event.put("sequenceNo", sequenceNo);
             if (extra != null && !extra.isEmpty()) {
                 event.put("data", extra);
             }
@@ -153,7 +166,10 @@ public class AgentSseCodec {
             if (runContext != null) {
                 try {
                     int seq = runContext.appendStep(nodeName, "SUCCESS", null, outputDataJson);
-                    event.put("sequenceNo", seq);
+                    int eventSequence = eventSinkRegistry == null
+                            || eventSinkRegistry.get(runContext.getThreadId()) == null
+                            ? seq : eventSinkRegistry.nextSequence(runContext.getThreadId());
+                    event.put("sequenceNo", eventSequence);
                     TraceContext tc = runContext.getTraceContext();
                     if (tc != null) {
                         // beginNode was called by the STARTED listener; recordStep

@@ -26,7 +26,8 @@ public class RedisPlanMemory implements PlanMemory {
 
     private static final String KEY_PREFIX = "sql:agentic:plan:";
     private static final String LOCK_PREFIX = "sql:agentic:plan:lock:";
-    private static final Duration TTL = Duration.ofHours(2);
+    public static final Duration TTL = Duration.ofHours(2);
+    public static final int MAX_PLAN_BYTES = 512 * 1024;
 
     private final RedissonClient redisson;
     private final ObjectMapper objectMapper;
@@ -111,7 +112,11 @@ public class RedisPlanMemory implements PlanMemory {
     private void write(String convId, List<PlanStep> steps) {
         if (convId == null || convId.isBlank()) return;
         try {
-            bucket(convId).set(objectMapper.writeValueAsString(steps == null ? List.of() : steps), TTL);
+            String json = objectMapper.writeValueAsString(steps == null ? List.of() : steps);
+            if (json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_PLAN_BYTES) {
+                throw new IllegalStateException("Agentic plan exceeds the Redis size limit");
+            }
+            bucket(convId).set(json, TTL);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to write agentic plan to Redis", e);
         }

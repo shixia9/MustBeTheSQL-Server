@@ -240,7 +240,7 @@ public class ContextManager {
             event.put("nodeName", "CONTEXT");
             event.put("outputType", "CONTEXT_COMPACT");
             event.put("messageType", "STATUS");
-            event.put("sequenceNo", 0);
+            event.put("sequenceNo", eventSinkRegistry.nextSequence(threadId));
             event.put("data", data);
             sink.tryEmitNext(SSE_MAPPER.writeValueAsString(event));
         } catch (Exception e) {

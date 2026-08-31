@@ -2,6 +2,7 @@ package com.sql.logic.engine.domain.agentic.bridge;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.agent.core.CheckpointValueLimiter;
 import com.sql.logic.engine.domain.agentic.core.ActionOutput;
 import com.sql.logic.engine.domain.agentic.core.AgentMessage;
 
@@ -119,21 +120,25 @@ public final class AgentStateBridge {
      */
     public static Map<String, Object> toStateUpdates(AgentMessage output) {
         Map<String, Object> updates = new HashMap<>();
-        updates.put(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, output.content());
+        updates.put(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT,
+                CheckpointValueLimiter.limit(output.content()));
 
         ActionOutput report = output.actionReport();
         if (report != null) {
             if (report.success()) {
-                updates.put(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT, report.content());
+                updates.put(SqlAgentSpec.StateKey.SQL_EXECUTION_RESULT,
+                        CheckpointValueLimiter.limit(report.content()));
                 updates.put(SqlAgentSpec.StateKey.SQL_ERROR, "");
             } else {
-                updates.put(SqlAgentSpec.StateKey.SQL_ERROR, report.content());
+                updates.put(SqlAgentSpec.StateKey.SQL_ERROR,
+                        CheckpointValueLimiter.limit(report.content()));
             }
 
             // Propagate additional data
             if (report.data() != null) {
                 if (report.data().containsKey("sql")) {
-                    updates.put(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT, report.data().get("sql"));
+                    updates.put(SqlAgentSpec.StateKey.SQL_GENERATION_RESULT,
+                            limitValue(report.data().get("sql")));
                 }
                 if (report.data().containsKey("columns")) {
                     updates.put("executionColumns", report.data().get("columns"));
@@ -163,7 +168,7 @@ public final class AgentStateBridge {
                 }
             }
             Object plan = routeReport.data().get("plan");
-            if (plan != null) updates.put(SqlAgentSpec.StateKey.PLAN, plan);
+            if (plan != null) updates.put(SqlAgentSpec.StateKey.PLAN, limitValue(plan));
             Object status = routeReport.data().get("hitlStatus");
             if (status != null) updates.put(SqlAgentSpec.StateKey.HITL_STATUS, status);
         }
@@ -174,6 +179,10 @@ public final class AgentStateBridge {
 
     private static String getString(OverAllState state, String key) {
         return state.value(key).map(Object::toString).orElse(null);
+    }
+
+    private static Object limitValue(Object value) {
+        return value instanceof String text ? CheckpointValueLimiter.limit(text) : value;
     }
 
     private static Long toLong(OverAllState state, String key) {

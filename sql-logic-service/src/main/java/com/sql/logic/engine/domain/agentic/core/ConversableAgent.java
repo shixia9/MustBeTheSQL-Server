@@ -186,7 +186,7 @@ public abstract class ConversableAgent implements Agent {
      *   "nodeName": "DATA_SCIENTIST",   // resolved via AgentSseCodec.nodeNameForAgentName
      *   "outputType": "THINKING",
      *   "messageType": "THINKING",
-     *   "sequenceNo": 0,
+     *   "sequenceNo": 12,
      *   "data": { "agentName": "...", "content": "...", "done": true, "retry": 0 }
      * }
      * }</pre>
@@ -215,7 +215,7 @@ public abstract class ConversableAgent implements Agent {
             event.put("nodeName", nodeName);
             event.put("outputType", "THINKING");
             event.put("messageType", "THINKING");
-            event.put("sequenceNo", 0);
+            event.put("sequenceNo", eventSinkRegistry.nextSequence(threadId));
             event.put("data", data);
             sink.tryEmitNext(SSE_MAPPER.writeValueAsString(event));
         } catch (Exception ignored) {

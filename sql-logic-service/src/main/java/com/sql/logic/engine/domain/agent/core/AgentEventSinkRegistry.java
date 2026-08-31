@@ -5,6 +5,7 @@ import reactor.core.publisher.Sinks;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Registry for custom SSE events emitted by agents during graph node execution.
@@ -18,10 +19,13 @@ import java.util.concurrent.ConcurrentMap;
 public class AgentEventSinkRegistry {
 
     private final ConcurrentMap<String, Sinks.Many<String>> sinks = new ConcurrentHashMap<>();
+    /** Run-local sequence counters survive a HITL pause and resume. */
+    private final ConcurrentMap<String, AtomicInteger> sequences = new ConcurrentHashMap<>();
 
     public Sinks.Many<String> register(String threadId) {
         Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
         sinks.put(threadId, sink);
+        sequences.computeIfAbsent(threadId, ignored -> new AtomicInteger());
         return sink;
     }
 
@@ -31,5 +35,17 @@ public class AgentEventSinkRegistry {
 
     public Sinks.Many<String> remove(String threadId) {
         return sinks.remove(threadId);
+    }
+
+    /** Return the next positive SSE sequence for this run. */
+    public int nextSequence(String threadId) {
+        if (threadId == null || threadId.isBlank()) return 0;
+        return sequences.computeIfAbsent(threadId, ignored -> new AtomicInteger())
+                .incrementAndGet();
+    }
+
+    /** Clear sequence state only after a run has really completed. */
+    public void clearSequence(String threadId) {
+        if (threadId != null && !threadId.isBlank()) sequences.remove(threadId);
     }
 }

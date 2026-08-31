@@ -50,13 +50,16 @@ public class AgentSseStartedListener implements GraphLifecycleListener {
     );
 
     private final NodeStartedSinkRegistry sinkRegistry;
+    private final AgentEventSinkRegistry eventSinkRegistry;
     private final TraceContextRegistry traceContextRegistry;
     private final AgentSseCodec codec;
 
     public AgentSseStartedListener(NodeStartedSinkRegistry sinkRegistry,
+                                   AgentEventSinkRegistry eventSinkRegistry,
                                    TraceContextRegistry traceContextRegistry,
                                    AgentSseCodec codec) {
         this.sinkRegistry = sinkRegistry;
+        this.eventSinkRegistry = eventSinkRegistry;
         this.traceContextRegistry = traceContextRegistry;
         this.codec = codec;
     }
@@ -88,7 +91,9 @@ public class AgentSseStartedListener implements GraphLifecycleListener {
                 }
             }
 
-            String json = codec.startedJson(name, extra);
+            int sequence = eventSinkRegistry.get(threadId) == null
+                    ? 0 : eventSinkRegistry.nextSequence(threadId);
+            String json = codec.startedJson(name, extra, sequence);
             if (json != null && !json.isEmpty()) {
                 sink.tryEmitNext(json);
             }

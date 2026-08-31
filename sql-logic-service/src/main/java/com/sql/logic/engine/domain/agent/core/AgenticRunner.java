@@ -38,6 +38,7 @@ public class AgenticRunner {
     private final CompiledGraph compiledGraph;
     private final AgentOrchestrator orchestrator;
     private final HitlSessionRegistry hitlSessionRegistry;
+    private final HitlMetrics hitlMetrics;
     private final TraceContextRegistry traceContextRegistry;
     private final NodeStartedSinkRegistry sinkRegistry;
     private final AgentEventSinkRegistry eventSinkRegistry;
@@ -50,6 +51,7 @@ public class AgenticRunner {
     public AgenticRunner(AgentOrchestrator orchestrator,
                          RedisSaver redisSaver,
                          HitlSessionRegistry hitlSessionRegistry,
+                         HitlMetrics hitlMetrics,
                          TraceContextRegistry traceContextRegistry,
                          AgentSseStartedListener sseStartedListener,
                          NodeStartedSinkRegistry sinkRegistry,
@@ -61,6 +63,7 @@ public class AgenticRunner {
                          SkillInvocationResolver skillInvocationResolver) {
         this.orchestrator = orchestrator;
         this.hitlSessionRegistry = hitlSessionRegistry;
+        this.hitlMetrics = hitlMetrics;
         this.traceContextRegistry = traceContextRegistry;
         this.sinkRegistry = sinkRegistry;
         this.eventSinkRegistry = eventSinkRegistry;
@@ -132,7 +135,7 @@ public class AgenticRunner {
         }
 
         Map<String, Object> initialState = new LinkedHashMap<>();
-        initialState.put(SqlAgentSpec.StateKey.INPUT, input);
+        initialState.put(SqlAgentSpec.StateKey.INPUT, CheckpointValueLimiter.limit(input));
         initialState.put(SqlAgentSpec.StateKey.USER_ID, userId);
         initialState.put(SqlAgentSpec.StateKey.CONNECTION_ID, connectionId);
         initialState.put(SqlAgentSpec.StateKey.LLM_CONFIG_ID, llmConfigId);
@@ -143,7 +146,7 @@ public class AgenticRunner {
         initialState.put(SqlAgentSpec.StateKey.THREAD_ID, threadId);
         initialState.put(SqlAgentSpec.StateKey.CONVERSATION_ID, conversationId);
         initialState.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY,
-                conversationHistory != null ? conversationHistory : "");
+                CheckpointValueLimiter.limit(conversationHistory != null ? conversationHistory : ""));
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 0);
         initialState.put(SqlAgentSpec.StateKey.HITL_VERSION, 0);
         initialState.put("htmlReport", htmlReport);
@@ -161,13 +164,15 @@ public class AgenticRunner {
                 ? memoryDomainService.searchRelevant(userId, null, input, 5)
                 : List.of();
         String userMemorySection = formatRecalledMemories(recalledMemories);
-        initialState.put(SqlAgentSpec.StateKey.USER_MEMORY, userMemorySection);
+        initialState.put(SqlAgentSpec.StateKey.USER_MEMORY,
+                CheckpointValueLimiter.limit(userMemorySection));
 
         // Quick fallback schema (fast, no LLM) — available immediately for ManagerAgent routing.
         // The enriched (LLM-filtered) version is built on a background thread and becomes
         // available to downstream agents (DataScientist, etc.) when ready.
         String quickSchema = schemaEnrichmentService.buildQuickFallback(connectionId, tableNames, schemaName);
-        initialState.put(SqlAgentSpec.StateKey.SCHEMA_DDL, quickSchema);
+        initialState.put(SqlAgentSpec.StateKey.SCHEMA_DDL,
+                CheckpointValueLimiter.limit(quickSchema));
 
         // Resolve actual database dialect type from connection config
         String dbType = resolveDbType(connectionId);
@@ -220,9 +225,12 @@ public class AgenticRunner {
                                      Long userId, Integer expectedHitlVersion) {
         HitlSessionRegistry.ClaimResult claim = hitlSessionRegistry.claimDetailed(threadId, userId);
         if (claim.status() != HitlSessionRegistry.ClaimStatus.CLAIMED) {
-            log.warn("[AgenticRunner] resume rejected threadId={} status={}", threadId, claim.status());
+            log.warn("[AgenticRunner] resume rejected threadId={} userId={} status={}",
+                    threadId, userId, claim.status());
+            hitlMetrics.resume(claim.status().name());
             return ResumeResult.failure(claim.status().name(), claim.message());
         }
+        var resumeTimer = hitlMetrics.startResumeTimer();
         AgentRunContext context = claim.context();
         RunnableConfig rc = context.getRunnableConfig();
         try {
@@ -230,19 +238,21 @@ public class AgenticRunner {
             int currentVersion = readInt(pending.state(), SqlAgentSpec.StateKey.HITL_VERSION, 0);
             if (expectedHitlVersion != null && expectedHitlVersion != currentVersion) {
                 hitlSessionRegistry.restore(context);
-                return ResumeResult.failure("STALE_VERSION", "HITL version is stale");
+                return finishResume(resumeTimer,
+                        ResumeResult.failure("STALE_VERSION", "HITL version is stale"));
             }
             Map<String, Object> update = new LinkedHashMap<>();
             update.put(SqlAgentSpec.StateKey.CONFIRMATION_APPROVED, approved);
             update.put(SqlAgentSpec.StateKey.CONFIRMATION_FEEDBACK,
-                    feedback == null ? "" : feedback.trim());
+                    CheckpointValueLimiter.limit(feedback == null ? "" : feedback.trim()));
             update.put(SqlAgentSpec.StateKey.HITL_VERSION, currentVersion + 1);
             update.put(SqlAgentSpec.StateKey.HITL_STATUS, "DECISION_SUBMITTED");
 
             RunnableConfig resumed = compiledGraph.updateState(rc, update).withResume();
             context.setRunnableConfig(resumed);
-            log.info("[AgenticRunner] Resumed threadId={} approved={} version={}",
-                    threadId, approved, currentVersion + 1);
+            log.info("[AgenticRunner] Resumed threadId={} userId={} approved={} version={} checkpointId={}",
+                    threadId, userId, approved, currentVersion + 1,
+                    rc.checkPointId().orElse(""));
 
             Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
             Sinks.Many<String> customSink = eventSinkRegistry.register(threadId);
@@ -253,14 +263,25 @@ public class AgenticRunner {
                     .doOnError(e -> log.error("[AgenticRunner] Resume stream error (threadId={})", threadId, e));
 
             Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, customSink, threadId, context);
-            return ResumeResult.success(new AgentRunHandle(threadId, context, resumed, graphFlux, unified));
+            return finishResume(resumeTimer,
+                    ResumeResult.success(new AgentRunHandle(threadId, context, resumed, graphFlux, unified)));
         } catch (Exception e) {
             // Claim is destructive only for the pending envelope. Restore it if
             // checkpoint update failed so a transient Redis error is retryable.
             hitlSessionRegistry.register(context);
+            hitlMetrics.checkpointFailure();
             log.error("[AgenticRunner] Failed to resume threadId={}", threadId, e);
-            return ResumeResult.failure("CHECKPOINT_ERROR", "Failed to update HITL checkpoint");
+            return finishResume(resumeTimer,
+                    ResumeResult.failure("CHECKPOINT_ERROR", "Failed to update HITL checkpoint"));
         }
+    }
+
+    private ResumeResult finishResume(io.micrometer.core.instrument.Timer.Sample timer,
+                                      ResumeResult result) {
+        String outcome = result.succeeded() ? "success" : result.code();
+        hitlMetrics.resume(outcome);
+        hitlMetrics.stopResumeTimer(timer, outcome);
+        return result;
     }
 
     public record ResumeResult(AgentRunHandle handle, String code, String message) {
@@ -369,7 +390,17 @@ public class AgenticRunner {
                     context.setRunnableConfig(latestConfig);
                     runnableConfig = latestConfig;
                     hitlSessionRegistry.register(context);
-                    log.info("[AgenticRunner] Run halted at HITL: threadId={}", threadId);
+                    log.info("[AgenticRunner] Run halted at HITL: threadId={} checkpointId={}",
+                            threadId, latestConfig.checkPointId().orElse(""));
+                } else {
+                    Object status = snapshot == null ? null
+                            : snapshot.state().value(SqlAgentSpec.StateKey.HITL_STATUS, null);
+                    HitlSessionRegistry.SessionStatus terminalStatus =
+                            "REJECTED".equals(String.valueOf(status))
+                                    ? HitlSessionRegistry.SessionStatus.REJECTED
+                                    : HitlSessionRegistry.SessionStatus.COMPLETED;
+                    hitlSessionRegistry.complete(threadId, terminalStatus);
+                    eventSinkRegistry.clearSequence(threadId);
                 }
                 haltedAtHitl = halted;
                 return halted;

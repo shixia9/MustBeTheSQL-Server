@@ -19,7 +19,7 @@ import java.util.Map;
  * <ul>
  *   <li>{@code nodeName = "SANDBOX"}</li>
  *   <li>{@code messageType = AgentSseCodec.messageTypeForNode("SANDBOX")} → {@code "TOOL_CALL"}</li>
- *   <li>{@code sequenceNo = 0}</li>
+ *   <li>{@code sequenceNo} is monotonic within an agentic run</li>
  *   <li>{@code data = <the payload map>}</li>
  * </ul>
  *
@@ -60,7 +60,7 @@ public class AgentSandboxEventSink implements SandboxEventSink {
             event.put("nodeName", "SANDBOX");
             event.put("outputType", outputType);
             event.put("messageType", codec.messageTypeForNode("SANDBOX"));
-            event.put("sequenceNo", 0);
+            event.put("sequenceNo", registry.nextSequence(threadId));
             if (data != null && !data.isEmpty()) {
                 event.put("data", data);
             }

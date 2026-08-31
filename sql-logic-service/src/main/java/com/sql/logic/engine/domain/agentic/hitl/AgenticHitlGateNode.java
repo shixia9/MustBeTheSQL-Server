@@ -6,6 +6,7 @@ import com.sql.logic.engine.domain.agent.node.HitlGateNode;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.ha.LlmCallReporter;
 import com.sql.logic.engine.domain.agent.core.LlmClientManager;
+import com.sql.logic.engine.domain.agent.core.HitlMetrics;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -21,16 +22,24 @@ import java.util.Map;
 @Component
 public class AgenticHitlGateNode extends HitlGateNode {
 
+    private final HitlMetrics metrics;
+
     public AgenticHitlGateNode(LlmClientManager llmClientManager,
                                PromptManager promptManager,
-                               LlmCallReporter llmCallReporter) {
+                               LlmCallReporter llmCallReporter,
+                               HitlMetrics metrics) {
         super(llmClientManager, promptManager, llmCallReporter);
+        this.metrics = metrics;
     }
 
     @Override
     public Map<String, Object> apply(OverAllState state) throws Exception {
         Map<String, Object> result = new LinkedHashMap<>(super.apply(state));
         result.put(SqlAgentSpec.StateKey.HITL_GATE_EVALUATED, true);
+        Object autoConfirm = state.value(SqlAgentSpec.StateKey.AUTO_CONFIRM, Boolean.TRUE);
+        Object needsReview = result.getOrDefault(SqlAgentSpec.StateKey.NEEDS_HUMAN_REVIEW, Boolean.FALSE);
+        metrics.gate(Boolean.parseBoolean(String.valueOf(autoConfirm)),
+                Boolean.parseBoolean(String.valueOf(needsReview)));
         return result;
     }
 }

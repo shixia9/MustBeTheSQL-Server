@@ -693,7 +693,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             event.put("nodeName", nodeName);
             event.put("outputType", outputType);
             event.put("messageType", codec.messageTypeForNode(nodeName));
-            event.put("sequenceNo", 0);
+            event.put("sequenceNo", eventSinkRegistry.nextSequence(threadId));
             if (data != null && !data.isEmpty()) {
                 event.put("data", data);
             }

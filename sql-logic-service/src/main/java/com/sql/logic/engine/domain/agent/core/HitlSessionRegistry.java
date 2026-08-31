@@ -26,25 +26,34 @@ public class HitlSessionRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(HitlSessionRegistry.class);
     public static final long SESSION_TTL_MS = 30 * 60 * 1000L;
+    public static final int MAX_SESSION_BYTES = 64 * 1024;
     private static final String KEY_PREFIX = "sql:agentic:hitl:session:";
     private static final String LOCK_PREFIX = "sql:agentic:hitl:lock:";
     private static final String CONSUMED_PREFIX = "sql:agentic:hitl:consumed:";
 
     private final RedissonClient redissonClient;
     private final ObjectMapper objectMapper;
+    private final HitlMetrics metrics;
 
-    public HitlSessionRegistry(RedissonClient redissonClient, ObjectMapper objectMapper) {
+    public HitlSessionRegistry(RedissonClient redissonClient, ObjectMapper objectMapper,
+                               HitlMetrics metrics) {
         this.redissonClient = redissonClient;
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
     }
 
     public void register(AgentRunContext context) {
         if (context == null || context.getThreadId() == null) return;
         try {
             SessionRecord record = SessionRecord.from(context);
-            bucket(context.getThreadId()).set(objectMapper.writeValueAsString(record),
+            String json = objectMapper.writeValueAsString(record);
+            if (json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_SESSION_BYTES) {
+                throw new IllegalStateException("HITL session envelope exceeds the size limit");
+            }
+            bucket(context.getThreadId()).set(json,
                     Duration.ofMillis(SESSION_TTL_MS));
             consumedBucket(context.getThreadId()).delete();
+            metrics.sessionRegistered();
         } catch (Exception e) {
             throw new IllegalStateException("Failed to persist HITL session", e);
         }
@@ -58,7 +67,7 @@ public class HitlSessionRegistry {
     public void remove(String threadId) {
         if (threadId != null && !threadId.isBlank()) {
             bucket(threadId).delete();
-            consumedBucket(threadId).set("1", Duration.ofMillis(SESSION_TTL_MS));
+            writeAudit(threadId, SessionStatus.COMPLETED);
         }
     }
 
@@ -71,6 +80,12 @@ public class HitlSessionRegistry {
 
     /** Detailed claim result used by the agentic HTTP protocol. */
     public ClaimResult claimDetailed(String threadId, Long userId) {
+        ClaimResult result = doClaimDetailed(threadId, userId);
+        metrics.claim(result.status().name());
+        return result;
+    }
+
+    private ClaimResult doClaimDetailed(String threadId, Long userId) {
         if (threadId == null || threadId.isBlank()) {
             return ClaimResult.failure(ClaimStatus.EXPIRED, "The HITL session is missing or expired");
         }
@@ -82,8 +97,12 @@ public class HitlSessionRegistry {
                     "Another resume request is already claiming this session");
             String json = bucket(threadId).get();
             if (json == null || json.isBlank()) {
-                String consumed = consumedBucket(threadId).get();
-                return consumed != null
+                SessionAudit audit = readAudit(threadId);
+                if (audit != null && SessionStatus.CLAIMED.name().equals(audit.status)) {
+                    return ClaimResult.failure(ClaimStatus.RESUME_IN_PROGRESS,
+                            "The HITL session is already being resumed");
+                }
+                return audit != null
                         ? ClaimResult.failure(ClaimStatus.ALREADY_CONSUMED,
                         "The HITL decision has already been consumed")
                         : ClaimResult.failure(ClaimStatus.EXPIRED,
@@ -98,11 +117,13 @@ public class HitlSessionRegistry {
                         "The HITL session cannot be decoded");
             }
             if (userId != null && !userId.equals(context.getUserId())) {
+                log.warn("[HitlSessionRegistry] HITL session forbidden threadId={} userId={} ownerId={}",
+                        threadId, userId, context.getUserId());
                 return ClaimResult.failure(ClaimStatus.FORBIDDEN,
                         "The HITL session belongs to another user");
             }
             bucket(threadId).delete();
-            consumedBucket(threadId).set("1", Duration.ofMillis(SESSION_TTL_MS));
+            writeAudit(threadId, SessionStatus.CLAIMED);
             return ClaimResult.claimed(context);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -120,6 +141,15 @@ public class HitlSessionRegistry {
     /** Restore a claimed session after a checkpoint update failure or stale version. */
     public void restore(AgentRunContext context) {
         register(context);
+    }
+
+    /** Mark a claimed session after the resumed graph reaches a terminal state. */
+    public void complete(String threadId, SessionStatus status) {
+        if (threadId == null || threadId.isBlank() || status == null) return;
+        SessionAudit audit = readAudit(threadId);
+        if (audit != null && SessionStatus.CLAIMED.name().equals(audit.status)) {
+            writeAudit(threadId, status);
+        }
     }
 
     public boolean belongsTo(String threadId, Long userId) {
@@ -144,6 +174,36 @@ public class HitlSessionRegistry {
     private RBucket<String> consumedBucket(String threadId) {
         return redissonClient.getBucket(CONSUMED_PREFIX + threadId);
     }
+
+    private void writeAudit(String threadId, SessionStatus status) {
+        try {
+            consumedBucket(threadId).set(objectMapper.writeValueAsString(
+                            new SessionAudit(status.name(), System.currentTimeMillis())),
+                    Duration.ofMillis(SESSION_TTL_MS));
+        } catch (Exception e) {
+            log.warn("[HitlSessionRegistry] Failed to write session audit {}: {}",
+                    threadId, e.getMessage());
+        }
+    }
+
+    private SessionAudit readAudit(String threadId) {
+        try {
+            String json = consumedBucket(threadId).get();
+            if (json == null || json.isBlank()) return null;
+            if ("1".equals(json)) return new SessionAudit(SessionStatus.COMPLETED.name(), 0L);
+            return objectMapper.readValue(json, SessionAudit.class);
+        } catch (Exception e) {
+            log.warn("[HitlSessionRegistry] Failed to read session audit {}: {}",
+                    threadId, e.getMessage());
+            return null;
+        }
+    }
+
+    public enum SessionStatus {
+        WAITING, CLAIMED, COMPLETED, REJECTED
+    }
+
+    public record SessionAudit(String status, long changedAt) {}
 
     public enum ClaimStatus {
         CLAIMED, FORBIDDEN, EXPIRED, ALREADY_CONSUMED, RESUME_IN_PROGRESS, STORAGE_ERROR
