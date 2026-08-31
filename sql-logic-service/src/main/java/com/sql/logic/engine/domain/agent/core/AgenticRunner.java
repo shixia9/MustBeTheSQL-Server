@@ -335,9 +335,10 @@ public class AgenticRunner {
 
         private final String threadId;
         private final AgentRunContext context;
-        private final RunnableConfig runnableConfig;
+        private volatile RunnableConfig runnableConfig;
         private final Flux<NodeOutput> flux;
         private final Flux<String> unifiedSseFlux;
+        private volatile Boolean haltedAtHitl;
 
         AgentRunHandle(String threadId, AgentRunContext context, RunnableConfig runnableConfig,
                        Flux<NodeOutput> flux, Flux<String> unifiedSseFlux) {
@@ -357,16 +358,20 @@ public class AgenticRunner {
         /**
          * After the stream completes, check whether the graph is paused before HITL.
          */
-        public boolean isHaltedAtHitl() {
+        public synchronized boolean isHaltedAtHitl() {
+            if (haltedAtHitl != null) return haltedAtHitl;
             try {
                 StateSnapshot snapshot = compiledGraph.getState(runnableConfig);
                 String next = snapshot == null ? null : snapshot.next();
                 boolean halted = SqlAgentSpec.Node.HITL.equals(next);
                 if (halted) {
-                    context.setRunnableConfig(snapshot.config());
+                    RunnableConfig latestConfig = snapshot.config();
+                    context.setRunnableConfig(latestConfig);
+                    runnableConfig = latestConfig;
                     hitlSessionRegistry.register(context);
                     log.info("[AgenticRunner] Run halted at HITL: threadId={}", threadId);
                 }
+                haltedAtHitl = halted;
                 return halted;
             } catch (Exception e) {
                 log.warn("[AgenticRunner] getState failed for threadId={}: {}", threadId, e.getMessage());

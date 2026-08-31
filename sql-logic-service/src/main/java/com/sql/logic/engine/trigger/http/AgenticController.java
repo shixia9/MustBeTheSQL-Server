@@ -60,6 +60,7 @@ import java.util.Map;
 public class AgenticController {
 
     private static final Logger log = LoggerFactory.getLogger(AgenticController.class);
+    private static final int MAX_HITL_FEEDBACK_LENGTH = 4000;
 
     private final AgenticRunner agenticRunner;
     private final UserAppService userAppService;
@@ -178,6 +179,10 @@ public class AgenticController {
 
         boolean approved = request.getApproved();
         String feedback = request.getFeedback() == null ? "" : request.getFeedback().trim();
+        if (feedback.length() > MAX_HITL_FEEDBACK_LENGTH) {
+            return errorResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "feedback exceeds the maximum length of " + MAX_HITL_FEEDBACK_LENGTH);
+        }
 
         log.info("[AgenticController] Resuming agentic threadId={}, userId={}, approved={}",
                 request.getThreadId(), currentUserId, approved);

@@ -6,13 +6,8 @@ import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class AgenticHitlNodeTest {
 
@@ -63,13 +58,6 @@ class AgenticHitlNodeTest {
     }
 
     private static OverAllState stateWith(Map<String, Object> data) {
-        OverAllState state = mock(OverAllState.class);
-        when(state.value(anyString())).thenAnswer(inv ->
-                Optional.ofNullable(data.get(inv.getArgument(0))));
-        when(state.value(anyString(), any())).thenAnswer(inv -> {
-            Object value = data.get(inv.getArgument(0));
-            return value == null ? inv.getArgument(1) : value;
-        });
-        return state;
+        return new OverAllState(data);
     }
 }
