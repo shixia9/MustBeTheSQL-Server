@@ -25,12 +25,14 @@ import java.util.UUID;
  *       on a {@link AgentMessageBus#broadcast} message</li>
  * </ul>
  *
- * <h2>Permitted subtypes (≥8)</h2>
- * {@link PlanProposal}, {@link TaskDispatch}, {@link ToolResult}, {@link ReviewRequest},
+ * <h2>Permitted subtypes</h2>
+ * {@link PlanProposal}, {@link TaskDispatch}, {@link TaskAck}, {@link TaskNack},
+ * {@link ToolResult}, {@link ReviewRequest},
  * {@link ReviewResponse}, {@link StatusUpdate}, {@link ErrorReport}, {@link Shutdown}.
  */
 public sealed interface BusMessage
-        permits BusMessage.PlanProposal, BusMessage.TaskDispatch, BusMessage.ToolResult,
+        permits BusMessage.PlanProposal, BusMessage.TaskDispatch, BusMessage.TaskAck,
+                BusMessage.TaskNack, BusMessage.ToolResult,
                 BusMessage.ReviewRequest, BusMessage.ReviewResponse, BusMessage.StatusUpdate,
                 BusMessage.ErrorReport, BusMessage.Shutdown {
 
@@ -63,6 +65,18 @@ public sealed interface BusMessage
 
     /** Manager dispatches a task to a specific worker agent. */
     record TaskDispatch(BusHeader header, String targetAgent, String task) implements BusMessage {}
+
+    /** Worker accepted, de-duplicated and submitted a dispatch for execution. */
+    record TaskAck(BusHeader header, String dispatchMessageId) implements BusMessage {}
+
+    /** Worker rejected a dispatch before accepting it for business execution. */
+    record TaskNack(BusHeader header, String dispatchMessageId, String errorCode,
+                    String reason, boolean retryable) implements BusMessage {
+        public TaskNack {
+            errorCode = errorCode == null ? "UNKNOWN" : errorCode;
+            reason = reason == null ? "" : reason;
+        }
+    }
 
     /** A worker reports the outcome of a tool invocation. */
     record ToolResult(BusHeader header, String toolName, boolean success, String result) implements BusMessage {

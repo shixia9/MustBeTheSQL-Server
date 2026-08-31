@@ -1,6 +1,7 @@
 package com.sql.logic.engine.domain.agentic.core.bus;
 
 import java.util.function.Consumer;
+import java.util.concurrent.CompletionStage;
 
 /**
  * Inter-Agent message bus abstraction.
@@ -34,9 +35,10 @@ public interface AgentMessageBus {
 
     /**
      * Point-to-point delivery to subscribers of {@code message.receiverName()} (and
-     * wildcard {@code "*"} subscribers).
+     * wildcard {@code "*"} observers). The returned receipt tracks only exact-topic
+     * business receivers; wildcard observers do not make a delivery successful.
      */
-    void send(BusMessage message);
+    CompletionStage<DeliveryReceipt> send(BusMessage message);
 
     /**
      * Fan-out delivery to <em>all</em> subscribers across every topic.

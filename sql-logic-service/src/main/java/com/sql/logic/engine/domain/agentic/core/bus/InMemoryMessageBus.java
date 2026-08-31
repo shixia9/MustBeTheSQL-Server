@@ -3,6 +3,10 @@ package com.sql.logic.engine.domain.agentic.core.bus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
@@ -42,18 +46,52 @@ public final class InMemoryMessageBus implements AgentMessageBus {
     }
 
     @Override
-    public void send(BusMessage message) {
-        if (message == null) return;
-        // Point-to-point: receiverName topic + wildcard subscribers.
+    public CompletionStage<DeliveryReceipt> send(BusMessage message) {
+        long startedAt = System.nanoTime();
+        if (message == null) {
+            return CompletableFuture.completedFuture(DeliveryReceipt.empty(null, 0L));
+        }
+
         String topic = message.receiverName();
-        dispatch(message, topic, false);
+        List<HandlerEntry> exact = topic == null || topic.isBlank()
+                ? List.of() : activeHandlers(topicHandlers.get(topic));
+
+        // Wildcard subscribers are observers. They receive a best-effort copy but
+        // are deliberately excluded from the business delivery receipt.
+        if (!WILDCARD_TOPIC.equals(topic)) {
+            fireBestEffort(topicHandlers.get(WILDCARD_TOPIC), message);
+        }
+
+        if (exact.isEmpty()) {
+            return CompletableFuture.completedFuture(
+                    DeliveryReceipt.empty(message, System.nanoTime() - startedAt));
+        }
+
+        List<CompletableFuture<Throwable>> attempts = new ArrayList<>(exact.size());
+        for (HandlerEntry entry : exact) {
+            attempts.add(fireTracked(entry, message));
+        }
+        return CompletableFuture.allOf(attempts.toArray(CompletableFuture[]::new))
+                .thenApply(ignored -> {
+                    List<String> errors = new ArrayList<>();
+                    int succeeded = 0;
+                    for (CompletableFuture<Throwable> attempt : attempts) {
+                        Throwable error = attempt.join();
+                        if (error == null) succeeded++;
+                        else errors.add(error.toString());
+                    }
+                    return new DeliveryReceipt(message.messageId(), topic, exact.size(),
+                            succeeded, exact.size() - succeeded, errors,
+                            System.nanoTime() - startedAt);
+                });
     }
 
     @Override
     public void broadcast(BusMessage message) {
         if (message == null) return;
-        // Fan-out: every topic's subscribers.
-        dispatch(message, null, true);
+        for (var entry : topicHandlers.entrySet()) {
+            fireBestEffort(entry.getValue(), message);
+        }
     }
 
     @Override
@@ -67,54 +105,43 @@ public final class InMemoryMessageBus implements AgentMessageBus {
         return entry;
     }
 
-    /**
-     * Dispatch {@code message} to matching handlers.
-     *
-     * @param topic          receiver topic for {@code send}; ignored when {@code broadcast}
-     * @param includeWildcard whether wildcard {@code "*"} subscribers should also receive
-     *                        (true for send, true for broadcast via the all-topics walk)
-     * @param broadcast      if true, deliver to every topic
-     */
-    private void dispatch(BusMessage message, String topic, boolean broadcast) {
-        if (broadcast) {
-            // Iterate a snapshot of all topics; wildcard is included naturally.
-            for (var entry : topicHandlers.entrySet()) {
-                fire(entry.getValue(), message);
-            }
-        } else {
-            // Point-to-point: exact topic + wildcard. A null/blank receiverName means
-            // "no specific recipient" — only wildcard subscribers receive it.
-            if (topic != null && !topic.isBlank()) {
-                CopyOnWriteArrayList<HandlerEntry> exact = topicHandlers.get(topic);
-                if (exact != null) {
-                    fire(exact, message);
-                }
-            }
-            if (!WILDCARD_TOPIC.equals(topic)) {
-                CopyOnWriteArrayList<HandlerEntry> wild = topicHandlers.get(WILDCARD_TOPIC);
-                if (wild != null) {
-                    fire(wild, message);
-                }
-            }
-        }
-    }
-
-    private void fire(CopyOnWriteArrayList<HandlerEntry> handlers, BusMessage message) {
+    private void fireBestEffort(CopyOnWriteArrayList<HandlerEntry> handlers, BusMessage message) {
+        if (handlers == null) return;
         // Copy-on-write list: safe to iterate without external synchronization.
         for (HandlerEntry entry : handlers) {
             if (entry.cancelled.get()) continue;
+            fireTracked(entry, message);
+        }
+    }
+
+    private CompletableFuture<Throwable> fireTracked(HandlerEntry entry, BusMessage message) {
+        CompletableFuture<Throwable> outcome = new CompletableFuture<>();
+        try {
             dispatcher.execute(() -> {
                 try {
-                    if (!entry.cancelled.get()) {
+                    if (entry.cancelled.get()) {
+                        outcome.complete(new IllegalStateException("subscription cancelled before delivery"));
+                    } else {
                         entry.handler.accept(message);
+                        outcome.complete(null);
                     }
-                } catch (Exception e) {
-                    // Fault isolation: one handler's failure must not affect others.
+                } catch (Throwable error) {
                     log.warn("[InMemoryMessageBus] handler threw while processing {}: {}",
-                            message.type(), e.toString());
+                            message.type(), error.toString());
+                    outcome.complete(error);
                 }
             });
+        } catch (Throwable error) {
+            log.warn("[InMemoryMessageBus] dispatcher rejected {}: {}",
+                    message.type(), error.toString());
+            outcome.complete(error);
         }
+        return outcome;
+    }
+
+    private static List<HandlerEntry> activeHandlers(CopyOnWriteArrayList<HandlerEntry> handlers) {
+        if (handlers == null || handlers.isEmpty()) return List.of();
+        return handlers.stream().filter(entry -> !entry.cancelled.get()).toList();
     }
 
     /** Package-private for tests: number of active handlers on a topic. */

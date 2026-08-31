@@ -24,6 +24,7 @@ import com.sql.logic.engine.domain.agentic.core.AgentMemory;
 import com.sql.logic.engine.domain.agentic.core.bus.AgentDispatcher;
 import com.sql.logic.engine.domain.agentic.core.bus.AgentMessageBus;
 import com.sql.logic.engine.domain.agentic.core.bus.BusAgentDispatcher;
+import com.sql.logic.engine.domain.agentic.core.bus.BusDispatchMetrics;
 import com.sql.logic.engine.domain.agentic.core.bus.BusOrchestrationProperties;
 import com.sql.logic.engine.domain.agentic.core.bus.BusWorkerEndpointRegistrar;
 import com.sql.logic.engine.domain.agentic.core.bus.BypassAgentDispatcher;
@@ -46,6 +47,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.redisson.api.RedissonClient;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -163,6 +165,11 @@ public class AgenticAutoConfiguration {
         return new InMemoryMessageBus();
     }
 
+    @Bean
+    public BusDispatchMetrics busDispatchMetrics(MeterRegistry meterRegistry) {
+        return new BusDispatchMetrics(meterRegistry);
+    }
+
     /**
      * Select the dispatch strategy from {@code bus-orc.mode}:
      * {@code OFF} → direct call (default, zero behaviour change),
@@ -176,11 +183,17 @@ public class AgenticAutoConfiguration {
      */
     @Bean
     public AgentDispatcher agentDispatcher(BusOrchestrationProperties props,
-                                           AgentMessageBus bus) {
+                                           AgentMessageBus bus,
+                                           BusDispatchMetrics metrics) {
         return switch (props.getMode()) {
             case OFF -> new DirectAgentDispatcher();
             case BYPASS -> new BypassAgentDispatcher(bus, new DirectAgentDispatcher());
-            case SWITCH -> new BusAgentDispatcher(bus, "Manager", props.getDispatcherTimeoutSeconds());
+            case SWITCH -> new BusAgentDispatcher(bus, "Manager",
+                    props.getAckTimeoutSeconds(),
+                    props.getDispatcherTimeoutSeconds(),
+                    props.getMaxDispatchAttempts(),
+                    props.getRetryBackoffMillis(),
+                    metrics);
         };
     }
 

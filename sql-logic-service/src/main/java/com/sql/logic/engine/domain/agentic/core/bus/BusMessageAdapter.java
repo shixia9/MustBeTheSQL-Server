@@ -226,6 +226,33 @@ public final class BusMessageAdapter {
                 resultEnvelope);
     }
 
+    /** Build an acceptance acknowledgement from worker to dispatcher. */
+    public static BusMessage.TaskAck toTaskAck(
+            String senderName, String receiverName, String correlationId,
+            String dispatchMessageId) {
+        return new BusMessage.TaskAck(
+                BusMessage.BusHeader.builder()
+                        .senderName(senderName)
+                        .receiverName(receiverName)
+                        .correlationId(correlationId)
+                        .build(),
+                dispatchMessageId);
+    }
+
+    /** Build a pre-execution rejection from worker to dispatcher. */
+    public static BusMessage.TaskNack toTaskNack(
+            String senderName, String receiverName, String correlationId,
+            String dispatchMessageId, String errorCode, String reason,
+            boolean retryable) {
+        return new BusMessage.TaskNack(
+                BusMessage.BusHeader.builder()
+                        .senderName(senderName)
+                        .receiverName(receiverName)
+                        .correlationId(correlationId)
+                        .build(),
+                dispatchMessageId, errorCode, reason, retryable);
+    }
+
     // ------------------------------------------------------------------
     //  JSON helpers + context sanitisation
     // ------------------------------------------------------------------

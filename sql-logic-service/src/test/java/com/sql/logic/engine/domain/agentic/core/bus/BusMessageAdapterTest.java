@@ -117,6 +117,22 @@ class BusMessageAdapterTest {
     }
 
     @Test
+    void ackAndNackShouldEchoDispatchIdentity() {
+        BusMessage.TaskAck ack = BusMessageAdapter.toTaskAck(
+                "DataScientist", "Manager", "corr-1", "dispatch-1");
+        BusMessage.TaskNack nack = BusMessageAdapter.toTaskNack(
+                "DataScientist", "Manager", "corr-1", "dispatch-1",
+                "EXECUTOR_REJECTED", "busy", true);
+
+        assertEquals("corr-1", ack.correlationId());
+        assertEquals("dispatch-1", ack.dispatchMessageId());
+        assertEquals("Manager", ack.receiverName());
+        assertEquals("dispatch-1", nack.dispatchMessageId());
+        assertEquals("EXECUTOR_REJECTED", nack.errorCode());
+        assertTrue(nack.retryable());
+    }
+
+    @Test
     void errorEnvelopeShouldDecodeAsFailedReply() {
         String json = BusMessageAdapter.encodeErrorEnvelope(new RuntimeException("boom"));
         AgentMessage decoded = BusMessageAdapter.decodeReplyEnvelope(json);

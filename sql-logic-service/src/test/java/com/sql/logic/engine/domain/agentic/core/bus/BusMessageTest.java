@@ -14,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class BusMessageTest {
 
     @Test
-    void shouldExposeAllEightPermittedSubtypes() {
-        // AC-1: the sealed interface permits exactly the 8 documented message types.
+    void shouldExposeAllTenPermittedSubtypes() {
+        // AC-1: the switch remains exhaustive as protocol messages evolve.
         BusMessage msg = new BusMessage.TaskDispatch(header("Manager", "DataScientist"), "DataScientist", "analyze");
         // A switch expression over a sealed type is exhaustive — the compiler rejects
         // this switch if any permitted subtype is missing. This is the compile-time
@@ -23,6 +23,8 @@ class BusMessageTest {
         String label = switch (msg) {
             case BusMessage.PlanProposal ignored -> "plan";
             case BusMessage.TaskDispatch ignored -> "dispatch";
+            case BusMessage.TaskAck ignored -> "ack";
+            case BusMessage.TaskNack ignored -> "nack";
             case BusMessage.ToolResult ignored -> "tool";
             case BusMessage.ReviewRequest ignored -> "rev-req";
             case BusMessage.ReviewResponse ignored -> "rev-res";
@@ -35,10 +37,13 @@ class BusMessageTest {
 
     @Test
     void everySubtypeShouldBeExhaustivelyMatchable() {
-        // AC-1: each of the 8 subtypes is constructible and matchable.
+        // AC-1: each of the 10 subtypes is constructible and matchable.
         BusMessage[] messages = {
                 new BusMessage.PlanProposal(header("P", "M"), "plan", List.of("a", "b")),
                 new BusMessage.TaskDispatch(header("M", "D"), "D", "task"),
+                new BusMessage.TaskAck(header("D", "M"), "dispatch-1"),
+                new BusMessage.TaskNack(header("D", "M"), "dispatch-1",
+                        "BUSY", "executor busy", true),
                 new BusMessage.ToolResult(header("D", "M"), "sql", true, "ok"),
                 new BusMessage.ReviewRequest(header("D", "M"), "sql", "is this safe?"),
                 new BusMessage.ReviewResponse(header("M", "D"), true, "approved"),
@@ -46,7 +51,7 @@ class BusMessageTest {
                 new BusMessage.ErrorReport(header("D", "M"), "TIMEOUT", "llm timed out"),
                 new BusMessage.Shutdown(header("M", "D"), "done")
         };
-        assertEquals(8, messages.length);
+        assertEquals(10, messages.length);
         for (BusMessage m : messages) {
             assertNotNull(m.type());
             assertNotNull(m.header());

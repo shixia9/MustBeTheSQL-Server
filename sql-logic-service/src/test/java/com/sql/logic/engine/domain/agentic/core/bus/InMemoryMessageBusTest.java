@@ -39,9 +39,12 @@ class InMemoryMessageBusTest {
         AtomicReference<BusMessage> received = new AtomicReference<>();
         bus.subscribe("DataScientist", received::set);
 
-        bus.send(msg("Manager", "DataScientist"));
+        DeliveryReceipt receipt = bus.send(msg("Manager", "DataScientist"))
+                .toCompletableFuture().join();
 
         assertNotNull(received.get());
+        assertEquals(1, receipt.matchedReceivers());
+        assertEquals(1, receipt.successfulReceivers());
         assertEquals("Manager", received.get().senderName());
         assertEquals("DataScientist", received.get().receiverName());
     }
@@ -127,9 +130,25 @@ class InMemoryMessageBusTest {
         bus.subscribe("D", m -> { throw new IllegalStateException("boom"); });
         bus.subscribe("D", m -> survivor.incrementAndGet());
 
-        bus.send(msg("Manager", "D")); // must not propagate the exception
+        DeliveryReceipt receipt = bus.send(msg("Manager", "D"))
+                .toCompletableFuture().join();
 
         assertEquals(1, survivor.get(), "sibling handler must still run");
+        assertEquals(2, receipt.matchedReceivers());
+        assertEquals(1, receipt.successfulReceivers());
+        assertEquals(1, receipt.failedReceivers());
+        assertFalse(receipt.errors().isEmpty());
+    }
+
+    @Test
+    void sendShouldImmediatelyReportMissingReceiver() {
+        InMemoryMessageBus bus = syncBus();
+
+        DeliveryReceipt receipt = bus.send(msg("Manager", "Ghost"))
+                .toCompletableFuture().join();
+
+        assertEquals(0, receipt.matchedReceivers());
+        assertFalse(receipt.delivered());
     }
 
     @Test

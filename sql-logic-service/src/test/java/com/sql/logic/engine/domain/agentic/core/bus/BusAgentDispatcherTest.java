@@ -45,6 +45,8 @@ class BusAgentDispatcherTest {
         assertEquals("SELECT 1", reply.content());
         assertTrue(reply.success());
         assertEquals(1, worker.replyCount());
+        assertEquals(1, dispatcher.metricsSnapshot().acked());
+        assertEquals(1, dispatcher.metricsSnapshot().completed());
         // Context survived the bus round-trip.
         assertEquals(7L, ((Number) worker.receivedGoals().get(0).context().get("connectionId")).longValue());
     }
@@ -82,11 +84,12 @@ class BusAgentDispatcherTest {
 
         dispatcher.dispatch(manager, worker, AgentMessage.builder().content("q").build(), null).join();
 
-        // The bus now carries real business traffic (not just a mirror): one
-        // TaskDispatch + one ToolResult, correlated.
+        // Dispatch, acceptance and final result are distinct protocol stages.
         var dispatches = traffic.stream().filter(BusMessage.TaskDispatch.class::isInstance).toList();
+        var acks = traffic.stream().filter(BusMessage.TaskAck.class::isInstance).toList();
         var results = traffic.stream().filter(BusMessage.ToolResult.class::isInstance).toList();
         assertEquals(1, dispatches.size());
+        assertEquals(1, acks.size());
         assertEquals(1, results.size());
         BusMessage.TaskDispatch td = (BusMessage.TaskDispatch) dispatches.get(0);
         BusMessage.ToolResult tr = (BusMessage.ToolResult) results.get(0);
@@ -95,7 +98,7 @@ class BusAgentDispatcherTest {
     }
 
     @Test
-    void shouldTimeoutWhenNoWorkerResponds() {
+    void shouldFailImmediatelyWhenWorkerHasNoSubscriber() {
         InMemoryMessageBus bus = new InMemoryMessageBus();
         StubConversableAgent manager = new StubConversableAgent("Manager", "", true);
         StubConversableAgent ghost = new StubConversableAgent("Ghost", "x", true);
@@ -107,7 +110,112 @@ class BusAgentDispatcherTest {
                 dispatcher.dispatch(manager, ghost, AgentMessage.builder().content("q").build(), null)
                         .join());
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-        // Should resolve around the 1s timeout.
-        assertTrue(elapsedMs >= 900, "timeout should fire (~1s), elapsed=" + elapsedMs);
+        assertTrue(elapsedMs < 500, "missing subscriber should fail immediately, elapsed=" + elapsedMs);
+        assertEquals(1, dispatcher.metricsSnapshot().deliveryFailures());
+    }
+
+    @Test
+    void shouldRetryCallbackFailureAndReportItToDispatcher() {
+        InMemoryMessageBus bus = new InMemoryMessageBus(Runnable::run);
+        StubConversableAgent manager = new StubConversableAgent("Manager", "", true);
+        StubConversableAgent worker = new StubConversableAgent("Broken", "x", true);
+        java.util.concurrent.atomic.AtomicInteger callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        bus.subscribe("Broken", ignored -> {
+            callbacks.incrementAndGet();
+            throw new IllegalStateException("callback boom");
+        });
+        dispatcher = new BusAgentDispatcher(bus, "Manager", 30L, 30L, 2, 0L);
+
+        assertThrows(java.util.concurrent.CompletionException.class, () ->
+                dispatcher.dispatch(manager, worker,
+                        AgentMessage.builder().content("q").build(), null).join());
+
+        assertEquals(2, callbacks.get());
+        assertEquals(1, dispatcher.metricsSnapshot().retries());
+        assertEquals(2, dispatcher.metricsSnapshot().deliveryFailures());
+    }
+
+    @Test
+    void shouldSeparateAckTimeoutFromExecutionTimeout() {
+        InMemoryMessageBus bus = new InMemoryMessageBus(Runnable::run);
+        StubConversableAgent manager = new StubConversableAgent("Manager", "", true);
+        StubConversableAgent worker = new StubConversableAgent("Slow", "x", true);
+        bus.subscribe("Slow", message -> {
+            BusMessage.TaskDispatch td = (BusMessage.TaskDispatch) message;
+            bus.send(BusMessageAdapter.toTaskAck(
+                    "Slow", "Manager", td.correlationId(), td.messageId()));
+            // Deliberately never send ToolResult.
+        });
+        dispatcher = new BusAgentDispatcher(bus, "Manager", 1L, 1L, 1, 0L);
+
+        assertThrows(java.util.concurrent.CompletionException.class, () ->
+                dispatcher.dispatch(manager, worker,
+                        AgentMessage.builder().content("q").build(), null).join());
+
+        BusDispatchMetrics.Snapshot snapshot = dispatcher.metricsSnapshot();
+        assertEquals(1, snapshot.acked());
+        assertEquals(0, snapshot.ackTimeouts());
+        assertEquals(1, snapshot.executionTimeouts());
+    }
+
+    @Test
+    void shouldRetryWhenAckTimesOut() {
+        InMemoryMessageBus bus = new InMemoryMessageBus(Runnable::run);
+        StubConversableAgent manager = new StubConversableAgent("Manager", "", true);
+        StubConversableAgent worker = new StubConversableAgent("Silent", "x", true);
+        java.util.concurrent.atomic.AtomicInteger deliveries = new java.util.concurrent.atomic.AtomicInteger();
+        bus.subscribe("Silent", ignored -> deliveries.incrementAndGet());
+        dispatcher = new BusAgentDispatcher(bus, "Manager", 1L, 30L, 2, 0L);
+
+        assertThrows(java.util.concurrent.CompletionException.class, () ->
+                dispatcher.dispatch(manager, worker,
+                        AgentMessage.builder().content("q").build(), null).join());
+
+        assertEquals(2, deliveries.get());
+        assertEquals(2, dispatcher.metricsSnapshot().ackTimeouts());
+        assertEquals(1, dispatcher.metricsSnapshot().retries());
+    }
+
+    @Test
+    void executorRejectionShouldReturnNackImmediately() {
+        InMemoryMessageBus bus = new InMemoryMessageBus(Runnable::run);
+        StubConversableAgent manager = new StubConversableAgent("Manager", "", true);
+        StubConversableAgent worker = new StubConversableAgent("Busy", "x", true);
+        java.util.concurrent.ExecutorService rejected =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+        rejected.shutdown();
+        workerEndpoint = new BusWorkerEndpoint(bus, worker, "Manager", rejected);
+        dispatcher = new BusAgentDispatcher(bus, "Manager", 10L, 30L, 1, 0L);
+
+        assertThrows(java.util.concurrent.CompletionException.class, () ->
+                dispatcher.dispatch(manager, worker,
+                        AgentMessage.builder().content("q").build(), null).join());
+
+        assertEquals(1, dispatcher.metricsSnapshot().nacked());
+        assertEquals(0, worker.replyCount());
+    }
+
+    @Test
+    void workerShouldDeduplicateRetriedCorrelationId() throws Exception {
+        InMemoryMessageBus bus = new InMemoryMessageBus();
+        StubConversableAgent worker = new StubConversableAgent("DataScientist", "ok", true);
+        workerEndpoint = new BusWorkerEndpoint(bus, worker, "Manager");
+        java.util.concurrent.CountDownLatch result = new java.util.concurrent.CountDownLatch(1);
+        bus.subscribe("Manager", message -> {
+            if (message instanceof BusMessage.ToolResult) result.countDown();
+        });
+
+        String envelope = BusMessageAdapter.encodeGoalEnvelope(
+                AgentMessage.builder().content("q").build(), null);
+        BusMessage.TaskDispatch first = BusMessageAdapter.toTaskDispatch(
+                "Manager", "DataScientist", "same-logical-task", envelope);
+        BusMessage.TaskDispatch retry = BusMessageAdapter.toTaskDispatch(
+                "Manager", "DataScientist", "same-logical-task", envelope);
+
+        bus.send(first).toCompletableFuture().join();
+        bus.send(retry).toCompletableFuture().join();
+
+        assertTrue(result.await(2, java.util.concurrent.TimeUnit.SECONDS));
+        assertEquals(1, worker.replyCount(), "retry must not execute the same logical task twice");
     }
 }
