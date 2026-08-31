@@ -1,6 +1,8 @@
 package com.sql.logic.engine.domain.agentic.config;
 
+import com.alibaba.cloud.ai.graph.checkpoint.savers.redis.RedisSaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
@@ -28,8 +30,8 @@ import com.sql.logic.engine.domain.agentic.core.bus.BypassAgentDispatcher;
 import com.sql.logic.engine.domain.agentic.core.bus.DirectAgentDispatcher;
 import com.sql.logic.engine.domain.agentic.core.bus.InMemoryMessageBus;
 import com.sql.logic.engine.domain.agentic.memory.*;
-import com.sql.logic.engine.domain.agentic.plan.InMemoryPlanMemory;
 import com.sql.logic.engine.domain.agentic.plan.PlanMemory;
+import com.sql.logic.engine.domain.agentic.plan.RedisPlanMemory;
 import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
 import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
 import com.sql.logic.engine.domain.agentic.routing.ComplexityRouter;
@@ -43,6 +45,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.redisson.api.RedissonClient;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -79,8 +82,8 @@ public class AgenticAutoConfiguration {
     }
 
     @Bean
-    public PlanMemory planMemory() {
-        return new InMemoryPlanMemory();
+    public PlanMemory planMemory(RedissonClient redissonClient, ObjectMapper objectMapper) {
+        return new RedisPlanMemory(redissonClient, objectMapper);
     }
 
     // ======================== Phase 3: Context Management ========================
@@ -479,10 +482,19 @@ public class AgenticAutoConfiguration {
             DataScientistAgent dataScientistAgent,
             CodeAssistantAgent codeAssistantAgent,
             DashboardAssistantAgent dashboardAssistantAgent,
-            ToolAssistantAgent toolAssistantAgent) throws GraphStateException {
+            ToolAssistantAgent toolAssistantAgent,
+            com.sql.logic.engine.domain.agentic.hitl.AgenticHitlGateNode hitlGateNode,
+            com.sql.logic.engine.domain.agentic.hitl.AgenticHitlNode hitlNode) throws GraphStateException {
         return new AgentOrchestrator(plannerAgent, managerAgent,
                 dataScientistAgent, codeAssistantAgent,
-                dashboardAssistantAgent, toolAssistantAgent);
+                dashboardAssistantAgent, toolAssistantAgent,
+                hitlGateNode, hitlNode);
+    }
+
+    /** Redis-backed graph checkpoint saver for agentic HITL resume. */
+    @Bean
+    public RedisSaver agenticRedisSaver(RedissonClient redissonClient) {
+        return RedisSaver.builder().redisson(redissonClient).build();
     }
 
     // ======================== Platform Beans ========================

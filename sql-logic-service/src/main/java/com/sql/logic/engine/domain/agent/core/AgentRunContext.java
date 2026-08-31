@@ -31,7 +31,8 @@ public class AgentRunContext {
     private final String schemaName;
     private final List<String> tableNames;
     private final boolean autoConfirm;
-    private final RunnableConfig runnableConfig;
+    /** Latest checkpoint config; updated after every successful resume. */
+    private volatile RunnableConfig runnableConfig;
     private final long createdAt;
 
     /** Ordered per-node step records accumulated during streaming; drain on persist. */
@@ -68,6 +69,7 @@ public class AgentRunContext {
     public List<String> getTableNames() { return tableNames; }
     public boolean isAutoConfirm() { return autoConfirm; }
     public RunnableConfig getRunnableConfig() { return runnableConfig; }
+    public void setRunnableConfig(RunnableConfig runnableConfig) { this.runnableConfig = runnableConfig; }
     public long getCreatedAt() { return createdAt; }
 
     public TraceContext getTraceContext() { return traceContext; }

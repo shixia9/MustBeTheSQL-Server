@@ -7,7 +7,7 @@ import com.sql.logic.engine.domain.agentic.core.AgentMessage;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.Set;
 
 /**
  * Bidirectional bridge between the existing StateGraph {@link OverAllState}
@@ -75,6 +75,11 @@ public final class AgentStateBridge {
                 .putContext("plan", getString(state, SqlAgentSpec.StateKey.PLAN))
                 .putContext("currentStep", getInt(state, SqlAgentSpec.StateKey.CURRENT_STEP))
                 .putContext("repairCount", getInt(state, SqlAgentSpec.StateKey.REPAIR_COUNT))
+                .putContext("autoConfirm", getBoolean(state, SqlAgentSpec.StateKey.AUTO_CONFIRM))
+                .putContext("agenticGraph", true)
+                .putContext("hitlGateEvaluated", getBoolean(state, SqlAgentSpec.StateKey.HITL_GATE_EVALUATED))
+                .putContext("hitlStatus", getString(state, SqlAgentSpec.StateKey.HITL_STATUS))
+                .putContext("hitlVersion", getInt(state, SqlAgentSpec.StateKey.HITL_VERSION))
 
                 // Report mode
                 .putContext("htmlReport", getBoolean(state, "htmlReport"))
@@ -82,21 +87,15 @@ public final class AgentStateBridge {
                 // Resource info
                 .putResourceInfo("tableNames", getString(state, SqlAgentSpec.StateKey.TABLE_NAMES));
 
-        // Schema DDL: prefer async enrichment result when ready, otherwise use
-        // the quick fallback that was placed in state at graph-start time.
+        state.value(SqlAgentSpec.StateKey.CONFIRMATION_APPROVED)
+                .ifPresent(v -> builder.putContext("confirmationApproved", v));
+        state.value(SqlAgentSpec.StateKey.CONFIRMATION_FEEDBACK)
+                .ifPresent(v -> builder.putContext("confirmationFeedback", v));
+
+        // Schema DDL is intentionally read only from checkpoint-safe state.  The
+        // previous implementation placed a CompletableFuture in graph state,
+        // which cannot be restored by RedisSaver after a restart.
         String schemaDdl = getString(state, SqlAgentSpec.StateKey.SCHEMA_DDL);
-        Object futureObj = state.value("_schemaEnrichmentFuture").orElse(null);
-        if (futureObj instanceof CompletableFuture<?> f && f.isDone()) {
-            try {
-                @SuppressWarnings("unchecked")
-                String enriched = ((CompletableFuture<String>) f).get();
-                if (enriched != null && !enriched.isBlank()) {
-                    schemaDdl = enriched;
-                }
-            } catch (Exception ignored) {
-                // Enrichment failed — stick with the quick fallback
-            }
-        }
         if (schemaDdl != null && !schemaDdl.isBlank()) {
             builder.putContext("schemaDdl", schemaDdl);
             String existingInfo = getString(state, SqlAgentSpec.StateKey.TABLE_RELATION);
@@ -149,6 +148,25 @@ public final class AgentStateBridge {
         }
 
         updates.put("agentSuccess", output.success());
+
+        ActionOutput routeReport = output.actionReport();
+        if (routeReport != null && routeReport.data() != null) {
+            Object route = routeReport.data().get("route");
+            if (route != null) {
+                String routeName = String.valueOf(route);
+                if (Set.of("HITL_GATE", "HITL", "MANAGER", "END").contains(routeName)) {
+                    updates.put(SqlAgentSpec.StateKey.NEXT_NODE, routeName);
+                } else if (output.success()) {
+                    // Manager's internal worker orchestration is complete for
+                    // routes such as fast_path/full_orchestration.
+                    updates.put(SqlAgentSpec.StateKey.NEXT_NODE, com.alibaba.cloud.ai.graph.StateGraph.END);
+                }
+            }
+            Object plan = routeReport.data().get("plan");
+            if (plan != null) updates.put(SqlAgentSpec.StateKey.PLAN, plan);
+            Object status = routeReport.data().get("hitlStatus");
+            if (status != null) updates.put(SqlAgentSpec.StateKey.HITL_STATUS, status);
+        }
         return updates;
     }
 

@@ -86,6 +86,13 @@ public class PlannerAgent extends ConversableAgent {
     @Override
     protected String buildUserPrompt(String observation, String memoryContext,
                                       String resourceContext, Map<String, Object> context) {
-        return "请为以下用户需求生成执行计划:\n" + observation;
+        Object feedback = context == null ? null : context.get("confirmationFeedback");
+        StringBuilder prompt = new StringBuilder("请为以下用户需求生成执行计划:\n")
+                .append(observation);
+        if (feedback != null && !String.valueOf(feedback).isBlank()) {
+            prompt.append("\n\n用户拒绝上一版计划时给出的修改意见（必须纳入新计划）：\n")
+                    .append(feedback);
+        }
+        return prompt.toString();
     }
 }

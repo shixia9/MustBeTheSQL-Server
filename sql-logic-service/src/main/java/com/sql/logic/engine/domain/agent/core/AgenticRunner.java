@@ -4,11 +4,11 @@ import com.alibaba.cloud.ai.graph.CompileConfig;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.NodeOutput;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
-import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
+import com.alibaba.cloud.ai.graph.checkpoint.savers.redis.RedisSaver;
 import com.sql.logic.engine.application.service.DatabaseMetaDataService;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
-import com.sql.logic.engine.domain.agentic.agent.ManagerAgent;
 import com.sql.logic.engine.domain.agentic.config.AgentOrchestrator;
 import com.sql.logic.engine.domain.agentic.enrichment.SchemaEnrichmentService;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
@@ -26,8 +26,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 
 /**
  * Streaming executor for the 6-Agent Multi-Agent system (AgentOrchestrator).
@@ -39,7 +37,6 @@ public class AgenticRunner {
 
     private final CompiledGraph compiledGraph;
     private final AgentOrchestrator orchestrator;
-    private final ManagerAgent managerAgent;
     private final HitlSessionRegistry hitlSessionRegistry;
     private final TraceContextRegistry traceContextRegistry;
     private final NodeStartedSinkRegistry sinkRegistry;
@@ -47,12 +44,11 @@ public class AgenticRunner {
     private final AgentSseCodec codec;
     private final DatabaseMetaDataService databaseMetaDataService;
     private final SchemaEnrichmentService schemaEnrichmentService;
-    private final ExecutorService schemaLinkingExecutor;
     private final MemoryDomainService memoryDomainService;
     private final SkillInvocationResolver skillInvocationResolver;
 
     public AgenticRunner(AgentOrchestrator orchestrator,
-                         ManagerAgent managerAgent,
+                         RedisSaver redisSaver,
                          HitlSessionRegistry hitlSessionRegistry,
                          TraceContextRegistry traceContextRegistry,
                          AgentSseStartedListener sseStartedListener,
@@ -61,11 +57,9 @@ public class AgenticRunner {
                          AgentSseCodec codec,
                          DatabaseMetaDataService databaseMetaDataService,
                          SchemaEnrichmentService schemaEnrichmentService,
-                         ExecutorService schemaLinkingExecutor,
                          MemoryDomainService memoryDomainService,
                          SkillInvocationResolver skillInvocationResolver) {
         this.orchestrator = orchestrator;
-        this.managerAgent = managerAgent;
         this.hitlSessionRegistry = hitlSessionRegistry;
         this.traceContextRegistry = traceContextRegistry;
         this.sinkRegistry = sinkRegistry;
@@ -73,16 +67,15 @@ public class AgenticRunner {
         this.codec = codec;
         this.databaseMetaDataService = databaseMetaDataService;
         this.schemaEnrichmentService = schemaEnrichmentService;
-        this.schemaLinkingExecutor = schemaLinkingExecutor;
         this.memoryDomainService = memoryDomainService;
         this.skillInvocationResolver = skillInvocationResolver;
         try {
             this.compiledGraph = orchestrator.compile(CompileConfig.builder()
-                    .saverConfig(SaverConfig.builder().register(new MemorySaver()).build())
+                    .saverConfig(SaverConfig.builder().register(redisSaver).build())
+                    .interruptBefore(SqlAgentSpec.Node.HITL)
                     .withLifecycleListener(sseStartedListener)
                     .build());
-            log.info("[AgenticRunner] Agentic graph compiled with lifecycle listener. "
-                    + "6-Agent chain: START → MANAGER → {PLANNER, DATA_SCIENTIST, CODE_ASSISTANT, TOOL_ASSISTANT, DASHBOARD} → END");
+            log.info("[AgenticRunner] Agentic graph compiled with Redis checkpoint + interruptBefore(HITL). ");
         } catch (Exception e) {
             throw new IllegalStateException("Failed to compile Agentic StateGraph", e);
         }
@@ -151,7 +144,8 @@ public class AgenticRunner {
         initialState.put(SqlAgentSpec.StateKey.CONVERSATION_ID, conversationId);
         initialState.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY,
                 conversationHistory != null ? conversationHistory : "");
-        initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 1);
+        initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 0);
+        initialState.put(SqlAgentSpec.StateKey.HITL_VERSION, 0);
         initialState.put("htmlReport", htmlReport);
 
         // propagate a direct tool invocation (from the "/" command palette) into state.
@@ -184,18 +178,9 @@ public class AgenticRunner {
 
         TraceContext traceContext = new TraceContext(threadId, userId, workspaceId);
         traceContextRegistry.register(threadId, traceContext);
-        initialState.put(SqlAgentSpec.StateKey.TRACE_CONTEXT, traceContext);
-
-        // Launch async schema enrichment (LLM semantic filtering) in the background.
-        // The quick fallback SCHEMA_DDL is already in state — downstream agents will
-        // transparently pick up the enriched version when it completes.
-        String convHistory = (conversationHistory != null) ? conversationHistory : "";
-        CompletableFuture<String> enrichmentFuture = CompletableFuture.supplyAsync(
-                () -> schemaEnrichmentService.enrich(connectionId, tableNames, schemaName,
-                        input, convHistory, "",
-                        llmConfigId, userId, traceContext),
-                schemaLinkingExecutor);
-        initialState.put("_schemaEnrichmentFuture", enrichmentFuture);
+        // RedisSaver serializes the complete graph state. Runtime-only values such
+        // as TraceContext and CompletableFuture must never enter that state. The
+        // quick schema is checkpoint-safe; tracing remains in the local registry.
 
         Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
         Sinks.Many<String> customSink = eventSinkRegistry.register(threadId);
@@ -214,37 +199,60 @@ public class AgenticRunner {
     }
 
     /**
-     * Resume a HITL-paused session by notifying the ManagerAgent.
+     * Resume a HITL-paused session by updating its Redis checkpoint and
+     * continuing the same compiled graph.
      */
     public AgentRunHandle resume(String threadId, boolean approved, String feedback, Long userId) {
-        AgentRunContext context = hitlSessionRegistry.get(threadId).orElse(null);
+        return resume(threadId, approved, feedback, userId, null);
+    }
+
+    /** Resume with an optional optimistic HITL version check. */
+    public AgentRunHandle resume(String threadId, boolean approved, String feedback,
+                                 Long userId, Integer expectedHitlVersion) {
+        AgentRunContext context = hitlSessionRegistry.claim(threadId, userId).orElse(null);
         if (context == null) {
             log.warn("[AgenticRunner] resume: no pending session for threadId={}", threadId);
             return null;
         }
-        if (userId != null && !userId.equals(context.getUserId())) {
-            log.warn("[AgenticRunner] resume: userId {} does not own threadId={}", userId, threadId);
+        RunnableConfig rc = context.getRunnableConfig();
+        try {
+            StateSnapshot pending = compiledGraph.getState(rc);
+            int currentVersion = readInt(pending.state(), SqlAgentSpec.StateKey.HITL_VERSION, 0);
+            if (expectedHitlVersion != null && expectedHitlVersion != currentVersion) {
+                throw new IllegalArgumentException("HITL version is stale");
+            }
+            Map<String, Object> update = new LinkedHashMap<>();
+            update.put(SqlAgentSpec.StateKey.CONFIRMATION_APPROVED, approved);
+            update.put(SqlAgentSpec.StateKey.CONFIRMATION_FEEDBACK,
+                    feedback == null ? "" : feedback.trim());
+            update.put(SqlAgentSpec.StateKey.HITL_VERSION, currentVersion + 1);
+            update.put(SqlAgentSpec.StateKey.HITL_STATUS, "DECISION_SUBMITTED");
+
+            RunnableConfig resumed = compiledGraph.updateState(rc, update).withResume();
+            context.setRunnableConfig(resumed);
+            log.info("[AgenticRunner] Resumed threadId={} approved={} version={}",
+                    threadId, approved, currentVersion + 1);
+
+            Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
+            Sinks.Many<String> customSink = eventSinkRegistry.register(threadId);
+            Flux<NodeOutput> graphFlux = compiledGraph.stream(null, resumed)
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .doOnNext(output -> log.info("[AgenticRunner] Resumed agent node completed (threadId={}): {}", threadId, output.node()))
+                    .doOnComplete(() -> log.info("[AgenticRunner] Resume stream complete (threadId={})", threadId))
+                    .doOnError(e -> log.error("[AgenticRunner] Resume stream error (threadId={})", threadId, e));
+
+            Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, customSink, threadId, context);
+            return new AgentRunHandle(threadId, context, resumed, graphFlux, unified);
+        } catch (IllegalArgumentException e) {
+            hitlSessionRegistry.register(context);
+            throw e;
+        } catch (Exception e) {
+            // Claim is destructive only for the pending envelope. Restore it if
+            // checkpoint update failed so a transient Redis error is retryable.
+            hitlSessionRegistry.register(context);
+            log.error("[AgenticRunner] Failed to resume threadId={}", threadId, e);
             return null;
         }
-
-        // Signal the ManagerAgent to continue
-        managerAgent.resumeWithDecision(approved);
-        log.info("[AgenticRunner] Resumed threadId={} approved={}", threadId, approved);
-
-        RunnableConfig rc = context.getRunnableConfig();
-        Sinks.Many<String> startedSink = sinkRegistry.register(threadId);
-        Sinks.Many<String> customSink = eventSinkRegistry.register(threadId);
-        Flux<NodeOutput> graphFlux = compiledGraph.stream(null, rc)
-                .subscribeOn(Schedulers.boundedElastic())
-                .doOnNext(output -> log.info("[AgenticRunner] Resumed agent node completed (threadId={}): {}", threadId, output.node()))
-                .doOnComplete(() -> {
-                    log.info("[AgenticRunner] Resume stream complete (threadId={})", threadId);
-                    hitlSessionRegistry.remove(threadId);
-                })
-                .doOnError(e -> log.error("[AgenticRunner] Resume stream error (threadId={})", threadId, e));
-
-        Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, customSink, threadId, context);
-        return new AgentRunHandle(threadId, context, rc, graphFlux, unified);
     }
 
     private Flux<String> buildUnifiedSse(Flux<NodeOutput> graphFlux, Sinks.Many<String> startedSink,
@@ -265,10 +273,6 @@ public class AgenticRunner {
 
     public CompiledGraph getCompiledGraph() {
         return compiledGraph;
-    }
-
-    public ManagerAgent getManagerAgent() {
-        return managerAgent;
     }
 
     /**
@@ -331,16 +335,30 @@ public class AgenticRunner {
         public Flux<String> getUnifiedSseFlux() { return unifiedSseFlux; }
 
         /**
-         * After the stream completes, check if the ManagerAgent is waiting for HITL.
+         * After the stream completes, check whether the graph is paused before HITL.
          */
         public boolean isHaltedAtHitl() {
-            String pending = managerAgent.getPendingThreadId();
-            boolean halted = pending != null && pending.equals(threadId);
-            if (halted) {
-                hitlSessionRegistry.register(context);
-                log.info("[AgenticRunner] Run halted at HITL: threadId={}", threadId);
+            try {
+                StateSnapshot snapshot = compiledGraph.getState(runnableConfig);
+                String next = snapshot == null ? null : snapshot.next();
+                boolean halted = SqlAgentSpec.Node.HITL.equals(next);
+                if (halted) {
+                    context.setRunnableConfig(snapshot.config());
+                    hitlSessionRegistry.register(context);
+                    log.info("[AgenticRunner] Run halted at HITL: threadId={}", threadId);
+                }
+                return halted;
+            } catch (Exception e) {
+                log.warn("[AgenticRunner] getState failed for threadId={}: {}", threadId, e.getMessage());
+                return false;
             }
-            return halted;
         }
+    }
+
+    private int readInt(com.alibaba.cloud.ai.graph.OverAllState state, String key, int fallback) {
+        Object value = state == null ? null : state.value(key, null);
+        if (value instanceof Number n) return n.intValue();
+        try { return value == null ? fallback : Integer.parseInt(String.valueOf(value)); }
+        catch (NumberFormatException e) { return fallback; }
     }
 }

@@ -1,78 +1,141 @@
 package com.sql.logic.engine.domain.agent.core;
 
+import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.redisson.api.RBucket;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.Iterator;
-import java.util.Map;
+import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
- * In-memory registry of pending HITL (human-in-the-loop) sessions, keyed by threadId.
- * <p>
- * When a first-run graph execution pauses before the {@code HITL} interrupt node, the
- * runner stores the {@link AgentRunContext} here so the subsequent {@code /confirm}
- * HTTP call can resume the same checkpoint. Sessions expire after
- * {@link #SESSION_TTL_MS} to bound memory usage.
- * <p>
- * Single-process, in-memory by design — matches the requirement that requests resume
- * on the same backend instance. Swap for a shared store if horizontal scaling is needed.
+ * Redis-backed registry of pending HITL sessions, keyed by threadId.
+ *
+ * <p>The graph checkpoint is stored by the agentic RedisSaver. This registry
+ * stores the authorization/context envelope needed to locate and resume that
+ * checkpoint. A Redis lock makes claim-and-delete atomic across instances.</p>
  */
 @Component
 public class HitlSessionRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(HitlSessionRegistry.class);
+    public static final long SESSION_TTL_MS = 30 * 60 * 1000L;
+    private static final String KEY_PREFIX = "sql:agentic:hitl:session:";
+    private static final String LOCK_PREFIX = "sql:agentic:hitl:lock:";
 
-    /** Lifetime of a pending confirmation session (30 minutes). */
-    static final long SESSION_TTL_MS = 30 * 60 * 1000L;
+    private final RedissonClient redissonClient;
+    private final ObjectMapper objectMapper;
 
-    private final Map<String, AgentRunContext> sessions = new ConcurrentHashMap<>();
+    public HitlSessionRegistry(RedissonClient redissonClient, ObjectMapper objectMapper) {
+        this.redissonClient = redissonClient;
+        this.objectMapper = objectMapper;
+    }
 
     public void register(AgentRunContext context) {
-        pruneExpired();
-        if (context == null || context.getThreadId() == null) {
-            return;
+        if (context == null || context.getThreadId() == null) return;
+        try {
+            SessionRecord record = SessionRecord.from(context);
+            bucket(context.getThreadId()).set(objectMapper.writeValueAsString(record),
+                    Duration.ofMillis(SESSION_TTL_MS));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to persist HITL session", e);
         }
-        sessions.put(context.getThreadId(), context);
     }
 
     public Optional<AgentRunContext> get(String threadId) {
-        if (threadId == null) {
-            return Optional.empty();
-        }
-        AgentRunContext ctx = sessions.get(threadId);
-        if (ctx != null && isExpired(ctx)) {
-            sessions.remove(threadId);
-            log.debug("[HitlSessionRegistry] Expired session evicted on access: {}", threadId);
-            return Optional.empty();
-        }
-        return Optional.ofNullable(ctx);
+        if (threadId == null || threadId.isBlank()) return Optional.empty();
+        return read(threadId);
     }
 
     public void remove(String threadId) {
-        if (threadId != null) {
-            sessions.remove(threadId);
+        if (threadId != null && !threadId.isBlank()) bucket(threadId).delete();
+    }
+
+    /** Atomically consumes a pending session; only the winner may resume the graph. */
+    public Optional<AgentRunContext> claim(String threadId, Long userId) {
+        if (threadId == null || threadId.isBlank()) return Optional.empty();
+        RLock lock = redissonClient.getLock(LOCK_PREFIX + threadId);
+        boolean acquired = false;
+        try {
+            acquired = lock.tryLock(5, 30, TimeUnit.SECONDS);
+            if (!acquired) return Optional.empty();
+            Optional<AgentRunContext> found = read(threadId);
+            if (found.isEmpty()) return Optional.empty();
+            AgentRunContext context = found.get();
+            if (userId != null && !userId.equals(context.getUserId())) return Optional.empty();
+            bucket(threadId).delete();
+            return found;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        } finally {
+            if (acquired && lock.isHeldByCurrentThread()) lock.unlock();
         }
     }
 
-    /** Test whether a session belongs to the given user — used by the confirm endpoint for authz. */
     public boolean belongsTo(String threadId, Long userId) {
         return get(threadId).map(ctx -> userId != null && userId.equals(ctx.getUserId())).orElse(false);
     }
 
-    private void pruneExpired() {
-        Iterator<Map.Entry<String, AgentRunContext>> it = sessions.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<String, AgentRunContext> e = it.next();
-            if (isExpired(e.getValue())) {
-                it.remove();
-            }
+    private Optional<AgentRunContext> read(String threadId) {
+        try {
+            String json = bucket(threadId).get();
+            if (json == null || json.isBlank()) return Optional.empty();
+            return Optional.of(objectMapper.readValue(json, SessionRecord.class).toContext());
+        } catch (Exception e) {
+            log.warn("[HitlSessionRegistry] Failed to read session {}: {}", threadId, e.getMessage());
+            return Optional.empty();
         }
     }
 
-    private boolean isExpired(AgentRunContext ctx) {
-        return ctx == null || (System.currentTimeMillis() - ctx.getCreatedAt()) > SESSION_TTL_MS;
+    private RBucket<String> bucket(String threadId) {
+        return redissonClient.getBucket(KEY_PREFIX + threadId);
+    }
+
+    /** Serializable envelope; sinks and trace objects intentionally stay process-local. */
+    public static class SessionRecord {
+        public String threadId;
+        public Long userId;
+        public Long connectionId;
+        public Long llmConfigId;
+        public Long workspaceId;
+        public String schemaName;
+        public List<String> tableNames;
+        public boolean autoConfirm;
+        public Long conversationId;
+        public String checkpointId;
+
+        public SessionRecord() {}
+
+        static SessionRecord from(AgentRunContext context) {
+            SessionRecord record = new SessionRecord();
+            record.threadId = context.getThreadId();
+            record.userId = context.getUserId();
+            record.connectionId = context.getConnectionId();
+            record.llmConfigId = context.getLlmConfigId();
+            record.workspaceId = context.getWorkspaceId();
+            record.schemaName = context.getSchemaName();
+            record.tableNames = context.getTableNames() == null ? List.of() : List.copyOf(context.getTableNames());
+            record.autoConfirm = context.isAutoConfirm();
+            record.conversationId = context.getConversationId();
+            RunnableConfig config = context.getRunnableConfig();
+            if (config != null) record.checkpointId = config.checkPointId().orElse(null);
+            return record;
+        }
+
+        AgentRunContext toContext() {
+            RunnableConfig.Builder builder = RunnableConfig.builder().threadId(threadId);
+            if (checkpointId != null && !checkpointId.isBlank()) builder.checkPointId(checkpointId);
+            AgentRunContext context = new AgentRunContext(threadId, userId, connectionId,
+                    llmConfigId, workspaceId, tableNames, schemaName, autoConfirm, builder.build());
+            context.setConversationId(conversationId);
+            return context;
+        }
     }
 }

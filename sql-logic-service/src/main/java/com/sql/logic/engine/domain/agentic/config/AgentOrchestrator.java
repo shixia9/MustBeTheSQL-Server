@@ -12,6 +12,8 @@ import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
 import com.sql.logic.engine.domain.agentic.agent.*;
+import com.sql.logic.engine.domain.agentic.hitl.AgenticHitlGateNode;
+import com.sql.logic.engine.domain.agentic.hitl.AgenticHitlNode;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -32,7 +34,9 @@ public class AgentOrchestrator {
             DataScientistAgent dataScientist,
             CodeAssistantAgent codeAssistant,
             DashboardAssistantAgent dashboard,
-            ToolAssistantAgent toolAssistant) throws GraphStateException {
+            ToolAssistantAgent toolAssistant,
+            AgenticHitlGateNode hitlGateNode,
+            AgenticHitlNode hitlNode) throws GraphStateException {
 
         KeyStrategyFactory keyStrategyFactory = () -> {
             Map<String, KeyStrategy> strategies = new LinkedHashMap<>();
@@ -44,6 +48,14 @@ public class AgentOrchestrator {
             strategies.put(SqlAgentSpec.StateKey.REPORT_RESULT, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.PLAN, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.SCHEMA_DDL, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.AUTO_CONFIRM, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.NEEDS_HUMAN_REVIEW, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.CONFIRMATION_APPROVED, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.CONFIRMATION_FEEDBACK, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.REPAIR_COUNT, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.HITL_GATE_EVALUATED, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.HITL_STATUS, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.HITL_VERSION, new ReplaceStrategy());
             return strategies;
         };
 
@@ -56,6 +68,8 @@ public class AgentOrchestrator {
         graph.addNode("CODE_ASSISTANT", AsyncNodeAction.node_async(codeAssistant.asNodeAction()));
         graph.addNode("DASHBOARD", AsyncNodeAction.node_async(dashboard.asNodeAction()));
         graph.addNode("TOOL_ASSISTANT", AsyncNodeAction.node_async(toolAssistant.asNodeAction()));
+        graph.addNode("HITL_GATE", AsyncNodeAction.node_async(hitlGateNode));
+        graph.addNode("HITL", AsyncNodeAction.node_async(hitlNode));
 
         // Entry: Manager handles everything
         graph.addEdge(StateGraph.START, "MANAGER");
@@ -73,8 +87,25 @@ public class AgentOrchestrator {
                         "CODE_ASSISTANT", "CODE_ASSISTANT",
                         "TOOL_ASSISTANT", "TOOL_ASSISTANT",
                         "DASHBOARD", "DASHBOARD",
+                        "HITL_GATE", "HITL_GATE",
+                        "MANAGER", "MANAGER",
                         StateGraph.END, StateGraph.END
                 ));
+
+        graph.addConditionalEdges("HITL_GATE",
+                AsyncEdgeAction.edge_async(state -> {
+                    Object value = state.value(SqlAgentSpec.StateKey.NEEDS_HUMAN_REVIEW,
+                            Boolean.FALSE);
+                    boolean needsReview = value instanceof Boolean b
+                            ? b : Boolean.parseBoolean(String.valueOf(value));
+                    return needsReview ? "HITL" : "MANAGER";
+                }),
+                Map.of("HITL", "HITL", "MANAGER", "MANAGER"));
+
+        graph.addConditionalEdges("HITL",
+                AsyncEdgeAction.edge_async(state -> state.value(SqlAgentSpec.StateKey.NEXT_NODE,
+                                StateGraph.END)),
+                Map.of("MANAGER", "MANAGER", StateGraph.END, StateGraph.END));
 
         // Workers return to Manager for next step dispatch
         graph.addEdge("PLANNER", "MANAGER");

@@ -20,7 +20,6 @@ import reactor.core.publisher.Sinks;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -61,11 +60,6 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     private ComplexityRouter complexityRouter;
     private int maxRound = 100;
 
-    // HITL support
-    private boolean hitlEnabled = false;
-    private String pendingThreadId;
-    private CompletableFuture<Boolean> hitlFuture;
-
     // SSE event emission
     private AgentEventSinkRegistry eventSinkRegistry;
     private AgentSseCodec codec;
@@ -103,7 +97,6 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     public void setDashboardAgent(DashboardAssistantAgent dashboardAgent) { this.dashboardAgent = dashboardAgent; }
     public void setDataScientistAgent(DataScientistAgent agent) { this.dataScientistAgent = agent; }
     public void setComplexityRouter(ComplexityRouter router) { this.complexityRouter = router; }
-    public void setHitlEnabled(boolean hitlEnabled) { this.hitlEnabled = hitlEnabled; }
     public void setEventSinkRegistry(AgentEventSinkRegistry registry) { this.eventSinkRegistry = registry; }
     public void setCodec(AgentSseCodec codec) { this.codec = codec; }
 
@@ -384,15 +377,6 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                                               AgentMessage message) {
         emitSse(threadId, "MANAGER", "AWAITING_CLARIFICATION",
                 Map.of("reason", assessment.reason()));
-        if (hitlEnabled) {
-            PlanStep clarifyStep = new PlanStep(1, "CLARIFY",
-                    "请澄清: " + assessment.reason(), "");
-            boolean approved = awaitHumanDecision(threadId, clarifyStep);
-            if (approved) {
-                // User provided clarification — re-assess with updated input
-                return ActionOutput.fail("用户已澄清，请重新提交问题", true);
-            }
-        }
         return ActionOutput.fail("问题不够明确，请提供更多细节: " + assessment.reason(), false);
     }
 
@@ -457,6 +441,15 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     private ActionOutput handleFullOrchestration(String threadId, String userInput,
                                                    AgentMessage message,
                                                    List<Map<String, String>> allStepResults) {
+        // A rejected plan must be discarded before PlannerAgent is called again.
+        // The feedback remains in the graph state and is forwarded into the
+        // planner prompt by PlannerAgent.
+        if (isAgenticGraph(message)
+                && "REPLAN_REQUIRED".equals(stringContext(message, "hitlStatus"))) {
+            planMemory.removeByConvId(threadId);
+            log.info("[Manager] HITL rejection received; clearing old plan and replanning threadId={}", threadId);
+        }
+
         // Enable multi-candidate mode for complex queries
         if (dataScientistAgent != null) {
             dataScientistAgent.setMultiCandidateMode(true);
@@ -505,6 +498,9 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
                 if (!planResult.success()) {
                     return ActionOutput.fail("PlannerAgent 计划生成失败: " + planResult.content());
                 }
+                if (isAgenticGraph(message)) {
+                    return routeAfterPlanning(threadId);
+                }
                 continue;
             }
 
@@ -512,14 +508,6 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             PlanStep currentPlan = todoPlans.get(0);
             currentPlan.setStatus(PlanStatus.RUNNING);
             emitPlanSnapshot(threadId);
-
-            // HITL gate
-            if (hitlEnabled && needsHumanReview(currentPlan)) {
-                boolean approved = awaitHumanDecision(threadId, currentPlan);
-                if (!approved) {
-                    return ActionOutput.fail("用户拒绝了计划步骤: " + currentPlan.getContent());
-                }
-            }
 
             // Phase 4: LLM-based speaker selection (Q6)
             Agent speaker = selectSpeaker(currentPlan, userInput);
@@ -628,6 +616,37 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
 
         return ActionOutput.success("所有步骤已完成",
                 Map.of("stepResults", allStepResults, "route", "full_orchestration"));
+    }
+
+    /**
+     * Agentic graph boundary after PlannerAgent. The actual risk decision is
+     * deliberately delegated to the graph-level HITL_GATE node so the graph
+     * can checkpoint before HITL without blocking this Manager invocation.
+     */
+    private ActionOutput routeAfterPlanning(String threadId) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("route", "HITL_GATE");
+        data.put("hitlStatus", "GATE_PENDING");
+        data.put("plan", serializePlan(threadId));
+        return ActionOutput.success("计划已生成，正在进行风险评估", data);
+    }
+
+    private String serializePlan(String threadId) {
+        try {
+            return MAPPER.writeValueAsString(planMemory.getByConvId(threadId));
+        } catch (Exception e) {
+            log.warn("[Manager] Failed to serialize plan for HITL gate: {}", e.getMessage());
+            return "[]";
+        }
+    }
+
+    private boolean isAgenticGraph(AgentMessage message) {
+        return Boolean.TRUE.equals(message.context().get("agenticGraph"));
+    }
+
+    private String stringContext(AgentMessage message, String key) {
+        Object value = message.context().get(key);
+        return value == null ? "" : String.valueOf(value);
     }
 
     // ========================================================================
@@ -755,32 +774,6 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     }
 
     // ========================================================================
-    //  HITL
-    // ========================================================================
-
-    private boolean needsHumanReview(PlanStep plan) {
-        return plan.getSerialNumber() == 1 && hitlEnabled;
-    }
-
-    private boolean awaitHumanDecision(String threadId, PlanStep plan) {
-        this.pendingThreadId = threadId;
-        this.hitlFuture = new CompletableFuture<>();
-        try {
-            return hitlFuture.get(300, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    public void resumeWithDecision(boolean approved) {
-        if (hitlFuture != null && !hitlFuture.isDone()) {
-            hitlFuture.complete(approved);
-        }
-    }
-
-    public String getPendingThreadId() { return pendingThreadId; }
-
-    // ========================================================================
     //  HTML fence extraction
     // ========================================================================
 
@@ -809,6 +802,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
             "evidence", "conversationHistory", "userMemory",
             "agentSystemPrompt", "executionDescription",
             "threadId", "sessionId",
+            "confirmationFeedback",
             // T8.3: forward the direct tool-invocation payload so McpToolAction
             // can read toolName/args as the source of truth.
             "toolInvocation"

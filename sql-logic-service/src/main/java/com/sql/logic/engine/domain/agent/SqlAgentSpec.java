@@ -85,6 +85,12 @@ public final class SqlAgentSpec {
         public static final String NEEDS_HUMAN_REVIEW = "needsHumanReview";
         public static final String CONFIRMATION_APPROVED = "confirmationApproved";
         public static final String CONFIRMATION_FEEDBACK = "confirmationFeedback";
+        /** True after the current plan has passed through the risk gate. */
+        public static final String HITL_GATE_EVALUATED = "hitlGateEvaluated";
+        /** Current lifecycle state of the agentic HITL boundary. */
+        public static final String HITL_STATUS = "hitlStatus";
+        /** Monotonic decision version used by the resume API for idempotency. */
+        public static final String HITL_VERSION = "hitlVersion";
 
         // ---- SQL Execution ----
         public static final String SQL_GENERATION_RESULT = "sqlGenerationResult";

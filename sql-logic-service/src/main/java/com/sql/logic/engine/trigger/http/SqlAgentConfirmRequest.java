@@ -19,4 +19,6 @@ public class SqlAgentConfirmRequest {
     private String feedback;
     /** For user-session cross-check (must match the logged-in user; optional if session auth suffices). */
     private Long userId;
+    /** Monotonic version returned in AWAITING_CONFIRMATION; prevents stale decisions. */
+    private Integer hitlVersion;
 }

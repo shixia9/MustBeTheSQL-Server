@@ -7,6 +7,7 @@ import com.sql.logic.engine.common.dto.SqlGenerateRequest;
 import com.sql.logic.engine.common.response.Result;
 import com.sql.logic.engine.domain.agent.AgentStateUtil;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.sql.logic.engine.domain.agent.core.AgenticRunner;
 import com.sql.logic.engine.domain.agent.core.AgenticRunner.AgentRunHandle;
 import com.sql.logic.engine.domain.agent.core.AgentEventSinkRegistry;
@@ -179,7 +180,13 @@ public class AgenticController {
         log.info("[AgenticController] Resuming agentic threadId={}, userId={}, approved={}",
                 request.getThreadId(), currentUserId, approved);
 
-        AgentRunHandle handle = agenticRunner.resume(request.getThreadId(), approved, feedback, currentUserId);
+        AgentRunHandle handle;
+        try {
+            handle = agenticRunner.resume(request.getThreadId(), approved, feedback, currentUserId,
+                    request.getHitlVersion());
+        } catch (IllegalArgumentException e) {
+            return Flux.just("{\"type\":\"ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
+        }
         if (handle == null) {
             return Flux.just("{\"type\":\"ERROR\",\"message\":\"No pending confirmation session for this threadId.\"}");
         }
@@ -327,16 +334,39 @@ public class AgenticController {
 
     private String awaitingConfirmationJson(AgentRunHandle handle, String threadId) {
         try {
+            StateSnapshot snapshot = agenticRunner.getCompiledGraph().getState(handle.getRunnableConfig());
+            var state = snapshot.state();
             Map<String, Object> event = new LinkedHashMap<>();
             event.put("type", "AWAITING_CONFIRMATION");
             event.put("threadId", threadId);
-            event.put("plan", "");
-            event.put("repairCount", 1);
+            Object plan = state.value(SqlAgentSpec.StateKey.PLAN, "");
+            event.put("plan", jsonValueOrText(plan));
+            event.put("reason", state.value("hitlGateReason", ""));
+            event.put("repairCount", readInt(state, SqlAgentSpec.StateKey.REPAIR_COUNT, 0));
+            event.put("hitlVersion", readInt(state, SqlAgentSpec.StateKey.HITL_VERSION, 0));
             event.put("needsReview", true);
             return objectMapper.writeValueAsString(event);
         } catch (Exception e) {
             return "{\"type\":\"AWAITING_CONFIRMATION\",\"threadId\":\"" + escape(threadId) + "\"}";
         }
+    }
+
+    private Object jsonValueOrText(Object value) {
+        if (value == null) return "";
+        if (!(value instanceof String text)) return value;
+        try {
+            if (text.trim().startsWith("{") || text.trim().startsWith("[")) {
+                return objectMapper.readTree(text);
+            }
+        } catch (Exception ignored) {}
+        return text;
+    }
+
+    private int readInt(com.alibaba.cloud.ai.graph.OverAllState state, String key, int fallback) {
+        Object value = state == null ? null : state.value(key, null);
+        if (value instanceof Number n) return n.intValue();
+        try { return value == null ? fallback : Integer.parseInt(String.valueOf(value)); }
+        catch (NumberFormatException e) { return fallback; }
     }
 
     private String completedJson(Long conversationId) {
