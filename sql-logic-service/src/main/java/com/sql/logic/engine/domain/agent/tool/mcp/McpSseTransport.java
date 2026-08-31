@@ -9,6 +9,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -176,7 +177,7 @@ public class McpSseTransport implements McpTransport {
 
     private String jsonRpcRequest(String method, Map<String, Object> params, String id) {
         try {
-            Map<String, Object> rpc = new java.util.LinkedHashMap<>();
+            Map<String, Object> rpc = new LinkedHashMap<>();
             rpc.put("jsonrpc", "2.0");
             rpc.put("method", method);
             rpc.put("params", params);
