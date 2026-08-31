@@ -28,6 +28,7 @@ public class HitlSessionRegistry {
     public static final long SESSION_TTL_MS = 30 * 60 * 1000L;
     private static final String KEY_PREFIX = "sql:agentic:hitl:session:";
     private static final String LOCK_PREFIX = "sql:agentic:hitl:lock:";
+    private static final String CONSUMED_PREFIX = "sql:agentic:hitl:consumed:";
 
     private final RedissonClient redissonClient;
     private final ObjectMapper objectMapper;
@@ -43,6 +44,7 @@ public class HitlSessionRegistry {
             SessionRecord record = SessionRecord.from(context);
             bucket(context.getThreadId()).set(objectMapper.writeValueAsString(record),
                     Duration.ofMillis(SESSION_TTL_MS));
+            consumedBucket(context.getThreadId()).delete();
         } catch (Exception e) {
             throw new IllegalStateException("Failed to persist HITL session", e);
         }
@@ -54,29 +56,70 @@ public class HitlSessionRegistry {
     }
 
     public void remove(String threadId) {
-        if (threadId != null && !threadId.isBlank()) bucket(threadId).delete();
+        if (threadId != null && !threadId.isBlank()) {
+            bucket(threadId).delete();
+            consumedBucket(threadId).set("1", Duration.ofMillis(SESSION_TTL_MS));
+        }
     }
 
     /** Atomically consumes a pending session; only the winner may resume the graph. */
     public Optional<AgentRunContext> claim(String threadId, Long userId) {
-        if (threadId == null || threadId.isBlank()) return Optional.empty();
+        ClaimResult result = claimDetailed(threadId, userId);
+        return result.status() == ClaimStatus.CLAIMED
+                ? Optional.of(result.context()) : Optional.empty();
+    }
+
+    /** Detailed claim result used by the agentic HTTP protocol. */
+    public ClaimResult claimDetailed(String threadId, Long userId) {
+        if (threadId == null || threadId.isBlank()) {
+            return ClaimResult.failure(ClaimStatus.EXPIRED, "The HITL session is missing or expired");
+        }
         RLock lock = redissonClient.getLock(LOCK_PREFIX + threadId);
         boolean acquired = false;
         try {
             acquired = lock.tryLock(5, 30, TimeUnit.SECONDS);
-            if (!acquired) return Optional.empty();
-            Optional<AgentRunContext> found = read(threadId);
-            if (found.isEmpty()) return Optional.empty();
-            AgentRunContext context = found.get();
-            if (userId != null && !userId.equals(context.getUserId())) return Optional.empty();
+            if (!acquired) return ClaimResult.failure(ClaimStatus.RESUME_IN_PROGRESS,
+                    "Another resume request is already claiming this session");
+            String json = bucket(threadId).get();
+            if (json == null || json.isBlank()) {
+                String consumed = consumedBucket(threadId).get();
+                return consumed != null
+                        ? ClaimResult.failure(ClaimStatus.ALREADY_CONSUMED,
+                        "The HITL decision has already been consumed")
+                        : ClaimResult.failure(ClaimStatus.EXPIRED,
+                        "The HITL session is missing or expired");
+            }
+            AgentRunContext context;
+            try {
+                context = objectMapper.readValue(json, SessionRecord.class).toContext();
+            } catch (Exception e) {
+                log.warn("[HitlSessionRegistry] Failed to decode session {}: {}", threadId, e.getMessage());
+                return ClaimResult.failure(ClaimStatus.STORAGE_ERROR,
+                        "The HITL session cannot be decoded");
+            }
+            if (userId != null && !userId.equals(context.getUserId())) {
+                return ClaimResult.failure(ClaimStatus.FORBIDDEN,
+                        "The HITL session belongs to another user");
+            }
             bucket(threadId).delete();
-            return found;
+            consumedBucket(threadId).set("1", Duration.ofMillis(SESSION_TTL_MS));
+            return ClaimResult.claimed(context);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return Optional.empty();
+            return ClaimResult.failure(ClaimStatus.RESUME_IN_PROGRESS,
+                    "Resume claim was interrupted");
+        } catch (Exception e) {
+            log.warn("[HitlSessionRegistry] Failed to claim session {}: {}", threadId, e.getMessage());
+            return ClaimResult.failure(ClaimStatus.STORAGE_ERROR,
+                    "HITL session storage is unavailable");
         } finally {
             if (acquired && lock.isHeldByCurrentThread()) lock.unlock();
         }
+    }
+
+    /** Restore a claimed session after a checkpoint update failure or stale version. */
+    public void restore(AgentRunContext context) {
+        register(context);
     }
 
     public boolean belongsTo(String threadId, Long userId) {
@@ -96,6 +139,24 @@ public class HitlSessionRegistry {
 
     private RBucket<String> bucket(String threadId) {
         return redissonClient.getBucket(KEY_PREFIX + threadId);
+    }
+
+    private RBucket<String> consumedBucket(String threadId) {
+        return redissonClient.getBucket(CONSUMED_PREFIX + threadId);
+    }
+
+    public enum ClaimStatus {
+        CLAIMED, FORBIDDEN, EXPIRED, ALREADY_CONSUMED, RESUME_IN_PROGRESS, STORAGE_ERROR
+    }
+
+    public record ClaimResult(ClaimStatus status, AgentRunContext context, String message) {
+        static ClaimResult claimed(AgentRunContext context) {
+            return new ClaimResult(ClaimStatus.CLAIMED, context, "");
+        }
+
+        static ClaimResult failure(ClaimStatus status, String message) {
+            return new ClaimResult(status, null, message);
+        }
     }
 
     /** Serializable envelope; sinks and trace objects intentionally stay process-local. */

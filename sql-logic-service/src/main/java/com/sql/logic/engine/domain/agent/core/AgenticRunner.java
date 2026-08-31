@@ -209,17 +209,28 @@ public class AgenticRunner {
     /** Resume with an optional optimistic HITL version check. */
     public AgentRunHandle resume(String threadId, boolean approved, String feedback,
                                  Long userId, Integer expectedHitlVersion) {
-        AgentRunContext context = hitlSessionRegistry.claim(threadId, userId).orElse(null);
-        if (context == null) {
-            log.warn("[AgenticRunner] resume: no pending session for threadId={}", threadId);
-            return null;
+        return resumeResult(threadId, approved, feedback, userId, expectedHitlVersion).handle();
+    }
+
+    /**
+     * Resume with a protocol-level result. The legacy resume methods above
+     * remain for callers that only need a handle.
+     */
+    public ResumeResult resumeResult(String threadId, boolean approved, String feedback,
+                                     Long userId, Integer expectedHitlVersion) {
+        HitlSessionRegistry.ClaimResult claim = hitlSessionRegistry.claimDetailed(threadId, userId);
+        if (claim.status() != HitlSessionRegistry.ClaimStatus.CLAIMED) {
+            log.warn("[AgenticRunner] resume rejected threadId={} status={}", threadId, claim.status());
+            return ResumeResult.failure(claim.status().name(), claim.message());
         }
+        AgentRunContext context = claim.context();
         RunnableConfig rc = context.getRunnableConfig();
         try {
             StateSnapshot pending = compiledGraph.getState(rc);
             int currentVersion = readInt(pending.state(), SqlAgentSpec.StateKey.HITL_VERSION, 0);
             if (expectedHitlVersion != null && expectedHitlVersion != currentVersion) {
-                throw new IllegalArgumentException("HITL version is stale");
+                hitlSessionRegistry.restore(context);
+                return ResumeResult.failure("STALE_VERSION", "HITL version is stale");
             }
             Map<String, Object> update = new LinkedHashMap<>();
             update.put(SqlAgentSpec.StateKey.CONFIRMATION_APPROVED, approved);
@@ -242,17 +253,26 @@ public class AgenticRunner {
                     .doOnError(e -> log.error("[AgenticRunner] Resume stream error (threadId={})", threadId, e));
 
             Flux<String> unified = buildUnifiedSse(graphFlux, startedSink, customSink, threadId, context);
-            return new AgentRunHandle(threadId, context, resumed, graphFlux, unified);
-        } catch (IllegalArgumentException e) {
-            hitlSessionRegistry.register(context);
-            throw e;
+            return ResumeResult.success(new AgentRunHandle(threadId, context, resumed, graphFlux, unified));
         } catch (Exception e) {
             // Claim is destructive only for the pending envelope. Restore it if
             // checkpoint update failed so a transient Redis error is retryable.
             hitlSessionRegistry.register(context);
             log.error("[AgenticRunner] Failed to resume threadId={}", threadId, e);
-            return null;
+            return ResumeResult.failure("CHECKPOINT_ERROR", "Failed to update HITL checkpoint");
         }
+    }
+
+    public record ResumeResult(AgentRunHandle handle, String code, String message) {
+        static ResumeResult success(AgentRunHandle handle) {
+            return new ResumeResult(handle, "", "");
+        }
+
+        static ResumeResult failure(String code, String message) {
+            return new ResumeResult(null, code, message);
+        }
+
+        public boolean succeeded() { return handle != null; }
     }
 
     private Flux<String> buildUnifiedSse(Flux<NodeOutput> graphFlux, Sinks.Many<String> startedSink,

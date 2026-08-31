@@ -25,6 +25,8 @@ import cn.dev33.satoken.stp.StpUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -156,22 +158,22 @@ public class AgenticController {
      * Resume a HITL-paused 6-Agent run.
      */
     @PostMapping(value = "/continue", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> continueAgent(@RequestBody SqlAgentConfirmRequest request) {
+    public ResponseEntity<Flux<String>> continueAgent(@RequestBody SqlAgentConfirmRequest request) {
         Long currentUserId = currentUserId();
         if (currentUserId == null) {
-            return Flux.error(new IllegalArgumentException("Invalid user ID in session"));
+            return errorResponse(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Invalid user ID in session");
         }
         if (request.getThreadId() == null || request.getThreadId().isBlank()) {
-            return Flux.error(new IllegalArgumentException("threadId is required"));
+            return errorResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "threadId is required");
         }
         if (request.getApproved() == null) {
-            return Flux.error(new IllegalArgumentException("approved is required"));
+            return errorResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "approved is required");
         }
 
         try {
             userAppService.checkBeforeGeneration(currentUserId);
         } catch (Exception e) {
-            return Flux.error(e);
+            return errorResponse(HttpStatus.FORBIDDEN, "GENERATION_NOT_ALLOWED", e.getMessage());
         }
 
         boolean approved = request.getApproved();
@@ -180,20 +182,16 @@ public class AgenticController {
         log.info("[AgenticController] Resuming agentic threadId={}, userId={}, approved={}",
                 request.getThreadId(), currentUserId, approved);
 
-        AgentRunHandle handle;
-        try {
-            handle = agenticRunner.resume(request.getThreadId(), approved, feedback, currentUserId,
-                    request.getHitlVersion());
-        } catch (IllegalArgumentException e) {
-            return Flux.just("{\"type\":\"ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
+        AgenticRunner.ResumeResult resume = agenticRunner.resumeResult(
+                request.getThreadId(), approved, feedback, currentUserId, request.getHitlVersion());
+        if (!resume.succeeded()) {
+            return errorResponse(httpStatusFor(resume.code()), resume.code(), resume.message());
         }
-        if (handle == null) {
-            return Flux.just("{\"type\":\"ERROR\",\"message\":\"No pending confirmation session for this threadId.\"}");
-        }
+        AgentRunHandle handle = resume.handle();
 
         String threadId = handle.getThreadId();
         Long conversationId = handle.getContext().getConversationId();
-        return handle.getUnifiedSseFlux()
+        Flux<String> stream = handle.getUnifiedSseFlux()
                 .concatWith(Flux.defer(() -> terminalEvent(handle, threadId, conversationId)))
                 .doFinally(signalType -> {
                     if (signalType != SignalType.CANCEL) {
@@ -205,6 +203,33 @@ public class AgenticController {
                     log.error("[AgenticController] SSE resume error (threadId={})", threadId, e);
                     return Flux.just("{\"type\":\"ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
                 });
+        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(stream);
+    }
+
+    private HttpStatus httpStatusFor(String code) {
+        return switch (code) {
+            case "FORBIDDEN" -> HttpStatus.FORBIDDEN;
+            case "EXPIRED" -> HttpStatus.NOT_FOUND;
+            case "ALREADY_CONSUMED", "STALE_VERSION", "RESUME_IN_PROGRESS" -> HttpStatus.CONFLICT;
+            case "STORAGE_ERROR", "CHECKPOINT_ERROR" -> HttpStatus.SERVICE_UNAVAILABLE;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+    }
+
+    private ResponseEntity<Flux<String>> errorResponse(HttpStatus status, String code, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("type", "ERROR");
+        body.put("code", code == null ? "UNKNOWN" : code);
+        body.put("message", message == null ? "Request failed" : message);
+        try {
+            return ResponseEntity.status(status)
+                    .contentType(MediaType.TEXT_EVENT_STREAM)
+                    .body(Flux.just(objectMapper.writeValueAsString(body)));
+        } catch (Exception e) {
+            return ResponseEntity.status(status)
+                    .contentType(MediaType.TEXT_EVENT_STREAM)
+                    .body(Flux.just("{\"type\":\"ERROR\",\"code\":\"UNKNOWN\"}"));
+        }
     }
 
     // ======================== Context Compaction (manual) ========================
