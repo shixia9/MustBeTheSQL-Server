@@ -48,6 +48,9 @@ public class AgentOrchestrator {
             strategies.put(SqlAgentSpec.StateKey.REPORT_RESULT, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.PLAN, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.SCHEMA_DDL, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.EVIDENCE, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.EVIDENCE_GLOSSARY, new ReplaceStrategy());
+            strategies.put(SqlAgentSpec.StateKey.EVIDENCE_FAQ, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.AUTO_CONFIRM, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.NEEDS_HUMAN_REVIEW, new ReplaceStrategy());
             strategies.put(SqlAgentSpec.StateKey.CONFIRMATION_APPROVED, new ReplaceStrategy());

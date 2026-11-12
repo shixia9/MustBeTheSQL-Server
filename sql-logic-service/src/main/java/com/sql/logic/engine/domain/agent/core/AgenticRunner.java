@@ -8,7 +8,10 @@ import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.redis.RedisSaver;
 import com.sql.logic.engine.application.service.DatabaseMetaDataService;
+import com.sql.logic.engine.application.service.RagEvidenceService;
 import com.sql.logic.engine.domain.agent.SqlAgentSpec;
+import com.sql.logic.engine.domain.agent.config.AgentRuntimeConfig;
+import com.sql.logic.engine.domain.agent.config.AgentRuntimeConfigService;
 import com.sql.logic.engine.domain.agentic.config.AgentOrchestrator;
 import com.sql.logic.engine.domain.agentic.enrichment.SchemaEnrichmentService;
 import com.sql.logic.engine.domain.memory.MemoryDomainService;
@@ -47,6 +50,8 @@ public class AgenticRunner {
     private final SchemaEnrichmentService schemaEnrichmentService;
     private final MemoryDomainService memoryDomainService;
     private final SkillInvocationResolver skillInvocationResolver;
+    private final RagEvidenceService ragEvidenceService;
+    private final AgentRuntimeConfigService agentRuntimeConfigService;
 
     public AgenticRunner(AgentOrchestrator orchestrator,
                          RedisSaver redisSaver,
@@ -60,7 +65,9 @@ public class AgenticRunner {
                          DatabaseMetaDataService databaseMetaDataService,
                          SchemaEnrichmentService schemaEnrichmentService,
                          MemoryDomainService memoryDomainService,
-                         SkillInvocationResolver skillInvocationResolver) {
+                         SkillInvocationResolver skillInvocationResolver,
+                         RagEvidenceService ragEvidenceService,
+                         AgentRuntimeConfigService agentRuntimeConfigService) {
         this.orchestrator = orchestrator;
         this.hitlSessionRegistry = hitlSessionRegistry;
         this.hitlMetrics = hitlMetrics;
@@ -72,6 +79,8 @@ public class AgenticRunner {
         this.schemaEnrichmentService = schemaEnrichmentService;
         this.memoryDomainService = memoryDomainService;
         this.skillInvocationResolver = skillInvocationResolver;
+        this.ragEvidenceService = ragEvidenceService;
+        this.agentRuntimeConfigService = agentRuntimeConfigService;
         try {
             this.compiledGraph = orchestrator.compile(CompileConfig.builder()
                     .saverConfig(SaverConfig.builder().register(redisSaver).build())
@@ -147,6 +156,23 @@ public class AgenticRunner {
         initialState.put(SqlAgentSpec.StateKey.CONVERSATION_ID, conversationId);
         initialState.put(SqlAgentSpec.StateKey.CONVERSATION_HISTORY,
                 CheckpointValueLimiter.limit(conversationHistory != null ? conversationHistory : ""));
+        RagEvidenceService.Evidence evidence = RagEvidenceService.Evidence.empty();
+        if ((toolInvocation == null || toolInvocation.isEmpty()) && userId != null && connectionId != null) {
+            try {
+                AgentRuntimeConfig config = agentRuntimeConfigService.resolve(userId);
+                if (config.ragEnabled()) {
+                    String ragQuery = ragEvidenceService.rewriteForHistory(input, conversationHistory,
+                            llmConfigId, userId);
+                    evidence = ragEvidenceService.recall(ragQuery, userId, connectionId,
+                            config.ragTopK(), config.ragScoreThreshold());
+                }
+            } catch (Exception e) {
+                log.warn("RAG preparation failed for connection {}: {}", connectionId, e.getMessage());
+            }
+        }
+        initialState.put(SqlAgentSpec.StateKey.EVIDENCE, CheckpointValueLimiter.limit(evidence.text()));
+        initialState.put(SqlAgentSpec.StateKey.EVIDENCE_GLOSSARY, evidence.glossary());
+        initialState.put(SqlAgentSpec.StateKey.EVIDENCE_FAQ, evidence.faq());
         initialState.put(SqlAgentSpec.StateKey.REPAIR_COUNT, 0);
         initialState.put(SqlAgentSpec.StateKey.HITL_VERSION, 0);
         initialState.put("htmlReport", htmlReport);

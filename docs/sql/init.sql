@@ -133,10 +133,12 @@ CREATE TABLE IF NOT EXISTS business_knowledge (
     question TEXT COMMENT 'FAQ question',
     answer TEXT COMMENT 'FAQ answer (e.g. reference SQL)',
     synonyms VARCHAR(500) DEFAULT NULL COMMENT 'Glossary synonyms (comma-separated)',
-    status TINYINT(1) DEFAULT 1 COMMENT '0: pending re-embed (embedding failed), 1: active',
+    status TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0: pending embedding, 1: active, 2: pending vector deletion',
+    knowledge_version BIGINT NOT NULL DEFAULT 1 COMMENT 'Monotonic content/index version',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_user_conn_type (user_id, connection_id, vector_type)
+    INDEX idx_user_conn_type (user_id, connection_id, vector_type),
+    INDEX idx_knowledge_retry (status, update_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='User-managed business knowledge (glossary + few-shot QA)';
 
 -- Agent execution history — records each agentic run's summary and per-node steps.

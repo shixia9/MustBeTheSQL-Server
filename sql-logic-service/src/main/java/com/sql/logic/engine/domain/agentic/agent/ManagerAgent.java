@@ -799,7 +799,7 @@ public class ManagerAgent extends ConversableAgent implements TeamMixin {
     private static final List<String> CONTEXT_FORWARD_KEYS = List.of(
             "userId", "connectionId", "llmConfigId", "workspaceId",
             "schemaDdl", "schemaInfo", "dialect", "schemaName",
-            "evidence", "conversationHistory", "userMemory",
+            "evidence", "evidenceGlossary", "evidenceFaq", "conversationHistory", "userMemory",
             "agentSystemPrompt", "executionDescription",
             "threadId", "sessionId",
             "confirmationFeedback",

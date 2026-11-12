@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.UUID;
 
 /**
@@ -64,18 +65,18 @@ public class KnowledgeEmbeddingService {
     }
 
     private Map<String, Object> metadataOf(BusinessKnowledge row) {
-        return Map.of(
-                SqlAgentSpec.Retrieval.DocumentMetadataKey.VECTOR_TYPE, row.getVectorType(),
-                SqlAgentSpec.Retrieval.DocumentMetadataKey.USER_ID, String.valueOf(row.getUserId()),
-                SqlAgentSpec.Retrieval.DocumentMetadataKey.CONNECTION_ID, String.valueOf(row.getConnectionId()),
-                SqlAgentSpec.Retrieval.DocumentMetadataKey.KNOWLEDGE_ID, String.valueOf(row.getId())
-        );
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put(SqlAgentSpec.Retrieval.DocumentMetadataKey.VECTOR_TYPE, row.getVectorType());
+        metadata.put(SqlAgentSpec.Retrieval.DocumentMetadataKey.USER_ID, String.valueOf(row.getUserId()));
+        metadata.put(SqlAgentSpec.Retrieval.DocumentMetadataKey.CONNECTION_ID, String.valueOf(row.getConnectionId()));
+        metadata.put(SqlAgentSpec.Retrieval.DocumentMetadataKey.KNOWLEDGE_ID, String.valueOf(row.getId()));
+        metadata.put(SqlAgentSpec.Retrieval.DocumentMetadataKey.KNOWLEDGE_VERSION,
+                String.valueOf(row.getKnowledgeVersion() == null ? 1 : row.getKnowledgeVersion()));
+        return metadata;
     }
 
     /**
-     * Upsert (replace) the vector for {@code row}. First delete the existing doc
-     * (idempotent) then add fresh — {@code vectorStore.add} does not upsert by id,
-     * so the delete-then-add keeps the vector_store row count flat across edits.
+     * Replace the vector for {@code row}. Failure is propagated so the row remains pending.
      */
     public void embedAndUpsert(BusinessKnowledge row) {
         String id = docId(row.getId());
@@ -83,14 +84,9 @@ public class KnowledgeEmbeddingService {
         if (text.isBlank()) {
             log.warn("[KnowledgeEmbeddingService] Skipped empty embedding text for row {} (vectorType={})",
                     row.getId(), row.getVectorType());
-            return;
+            throw new IllegalArgumentException("Knowledge embedding text is empty");
         }
-        try {
-            vectorStore.delete(List.of(id));
-        } catch (Exception e) {
-            // best-effort: row may not exist yet on first save
-            log.debug("[KnowledgeEmbeddingService] Pre-delete for {} ignored: {}", id, e.getMessage());
-        }
+        vectorStore.delete(List.of(id));
         Document doc = new Document(id, text, metadataOf(row));
         vectorStore.add(List.of(doc));
         log.info("[KnowledgeEmbeddingService] Embedded row {} (vectorType={}, conn={})",
@@ -99,12 +95,8 @@ public class KnowledgeEmbeddingService {
 
     /** Remove the vector for a knowledge row. */
     public void embedAndDelete(Long rowId) {
-        try {
-            vectorStore.delete(List.of(docId(rowId)));
-            log.info("[KnowledgeEmbeddingService] Deleted vector for row {}", rowId);
-        } catch (Exception e) {
-            log.warn("[KnowledgeEmbeddingService] Delete for row {} failed: {}", rowId, e.getMessage());
-        }
+        vectorStore.delete(List.of(docId(rowId)));
+        log.info("[KnowledgeEmbeddingService] Deleted vector for row {}", rowId);
     }
 
     /**

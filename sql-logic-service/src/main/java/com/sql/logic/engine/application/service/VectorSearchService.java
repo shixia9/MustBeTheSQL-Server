@@ -61,13 +61,21 @@ public class VectorSearchService {
     }
 
     public List<Document> recallGlossary(String query, Long userId, Long connectionId) {
+        return recallGlossary(query, userId, connectionId, GLOSSARY_TOP_K);
+    }
+
+    public List<Document> recallGlossary(String query, Long userId, Long connectionId, int topK) {
         return search(query, userId, connectionId,
-                SqlAgentSpec.Retrieval.VectorType.GLOSSARY_KNOWLEDGE, GLOSSARY_TOP_K);
+                SqlAgentSpec.Retrieval.VectorType.GLOSSARY_KNOWLEDGE, topK);
     }
 
     public List<Document> recallQuestion(String query, Long userId, Long connectionId) {
+        return recallQuestion(query, userId, connectionId, QUESTION_TOP_K);
+    }
+
+    public List<Document> recallQuestion(String query, Long userId, Long connectionId, int topK) {
         return search(query, userId, connectionId,
-                SqlAgentSpec.Retrieval.VectorType.QUESTION_KNOWLEDGE, QUESTION_TOP_K);
+                SqlAgentSpec.Retrieval.VectorType.QUESTION_KNOWLEDGE, topK);
     }
 
     /** Reserved for Phase 5.1 (vector schema recall) — defined, not yet wired. */

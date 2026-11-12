@@ -68,15 +68,18 @@ class AgentStateBridgeTest {
 
     @Test
     void toAgentMessageShouldExtractEvidenceAndMemory() {
+        var hits = java.util.List.of(Map.<String, Object>of("knowledgeId", 5L, "score", 0.9));
         OverAllState state = stateWith(Map.of(
                 SqlAgentSpec.StateKey.INPUT, "test",
                 SqlAgentSpec.StateKey.EVIDENCE, "some evidence text",
+                SqlAgentSpec.StateKey.EVIDENCE_FAQ, hits,
                 SqlAgentSpec.StateKey.USER_MEMORY, "user prefers short answers",
                 SqlAgentSpec.StateKey.CONVERSATION_HISTORY, "previous turn"
         ));
         AgentMessage msg = AgentStateBridge.toAgentMessage(state);
 
         assertEquals("some evidence text", msg.context().get("evidence"));
+        assertEquals(hits, msg.context().get("evidenceFaq"));
         assertEquals("user prefers short answers", msg.context().get("userMemory"));
         assertEquals("previous turn", msg.context().get("conversationHistory"));
     }

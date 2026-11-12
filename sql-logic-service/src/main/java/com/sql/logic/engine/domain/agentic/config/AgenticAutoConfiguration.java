@@ -4,7 +4,6 @@ import com.alibaba.cloud.ai.graph.checkpoint.savers.redis.RedisSaver;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sql.logic.engine.application.service.DatabaseMetaDataService;
-import com.sql.logic.engine.application.service.VectorSearchService;
 import com.sql.logic.engine.domain.agent.prompt.PromptManager;
 import com.sql.logic.engine.domain.agent.tool.ToolInvocationGuard;
 import com.sql.logic.engine.domain.sandbox.SandboxExecutionService;
@@ -34,7 +33,6 @@ import com.sql.logic.engine.domain.agentic.memory.*;
 import com.sql.logic.engine.domain.agentic.plan.PlanMemory;
 import com.sql.logic.engine.domain.agentic.plan.RedisPlanMemory;
 import com.sql.logic.engine.domain.agentic.profile.ProfileRenderer;
-import com.sql.logic.engine.domain.agentic.resource.KnowledgeResource;
 import com.sql.logic.engine.domain.agentic.routing.ComplexityRouter;
 import com.sql.logic.engine.domain.agentic.skill.SkillRegistry;
 import com.sql.logic.engine.domain.agentic.enrichment.SchemaEnrichmentService;
@@ -476,14 +474,6 @@ public class AgenticAutoConfiguration {
         agent.hire(toolAssistantAgent);
         agent.build();
         return agent;
-    }
-
-    // ======================== Resource Beans ========================
-
-    @Bean
-    @ConditionalOnClass(VectorSearchService.class)
-    public KnowledgeResource knowledgeResource(VectorSearchService vectorSearchService) {
-        return new KnowledgeResource(vectorSearchService, null, null);
     }
 
     // ======================== Orchestrator ========================

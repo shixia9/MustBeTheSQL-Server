@@ -120,7 +120,10 @@ public class DataScientistAgent extends ConversableAgent {
             }
         }
 
-        // Default: first registered action
+        // The first registered action is multi_candidate_sql; simple queries use the SQL action.
+        for (AgentAction action : actions) {
+            if ("sql_generation".equals(action.name())) return action.execute(message, this);
+        }
         return actions.get(0).execute(message, this);
     }
 

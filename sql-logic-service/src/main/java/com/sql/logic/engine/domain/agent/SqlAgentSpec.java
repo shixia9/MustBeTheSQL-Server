@@ -186,6 +186,7 @@ public final class SqlAgentSpec {
             public static final String USER_ID = "userId";
             public static final String CONNECTION_ID = "connectionId";
             public static final String KNOWLEDGE_ID = "knowledgeId";
+            public static final String KNOWLEDGE_VERSION = "knowledgeVersion";
         }
 
         public static final class VectorType {

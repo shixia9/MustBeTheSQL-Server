@@ -32,8 +32,10 @@ public class BusinessKnowledge {
     private String answer;
     /** Glossary synonyms, comma-separated (glossary rows only). */
     private String synonyms;
-    /** 0 = pending re-embed (embedding failed), 1 = active. */
+    /** 0 = pending embedding, 1 = active, 2 = pending deletion. */
     private Integer status;
+    /** Incremented on every edit to reject stale vector documents. */
+    private Long knowledgeVersion;
     private Date createTime;
     private Date updateTime;
 }

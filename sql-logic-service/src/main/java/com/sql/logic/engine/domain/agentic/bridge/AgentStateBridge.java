@@ -51,6 +51,8 @@ public final class AgentStateBridge {
 
                 // Evidence and memory
                 .putContext("evidence", getString(state, SqlAgentSpec.StateKey.EVIDENCE))
+                .putContext("evidenceGlossary", state.value(SqlAgentSpec.StateKey.EVIDENCE_GLOSSARY).orElse(java.util.List.of()))
+                .putContext("evidenceFaq", state.value(SqlAgentSpec.StateKey.EVIDENCE_FAQ).orElse(java.util.List.of()))
                 .putContext("userMemory", getString(state, SqlAgentSpec.StateKey.USER_MEMORY))
                 .putContext("conversationHistory", getString(state, SqlAgentSpec.StateKey.CONVERSATION_HISTORY))
 
